@@ -181,7 +181,6 @@ function syncGlobalKeybinds() {
       setLibraryState("Some keybinds are not supported as global shortcuts.");
     }
   }).catch(() => {
-    // Keep local keybind behavior if global registration fails.
   });
 }
 
@@ -198,7 +197,6 @@ function saveKeybinds() {
   try {
     window.localStorage.setItem(keybindStorageKey, JSON.stringify(importedKeybinds));
   } catch (error) {
-    // Ignore storage failures and continue runtime-only.
   }
 }
 
@@ -235,7 +233,6 @@ function loadMixerSettings() {
       selectedLocalPlaybackDeviceId = settings.localPlaybackDeviceId;
     }
   } catch (error) {
-    // Fall back to the defaults declared in HTML.
   }
 }
 
@@ -249,7 +246,6 @@ function saveMixerSettings() {
       localPlaybackDeviceId: selectedLocalPlaybackDeviceId
     }));
   } catch (error) {
-    // Ignore storage failures and keep current runtime values.
   }
 }
 
@@ -277,7 +273,6 @@ async function loadBackgroundSettings() {
     const result = await window.soundmuncher.getAppSettings();
     applyBackgroundSettingsToUi(result);
   } catch (error) {
-    // Keep checkbox defaults if the app settings bridge is unavailable.
   }
 }
 
@@ -369,7 +364,6 @@ function renderStopKeybindButton() {
   stopKeybindButton.classList.toggle("listening", keybindCapturePath === stopKeybindId);
 }
 
-// Imported audio library UI + cache helpers.
 function formatSize(bytes) {
   if (bytes >= 1024 * 1024) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -562,7 +556,6 @@ async function decodeImportedAudio(item) {
     return importedAudioBuffers.get(item.path);
   }
 
-  // Decode once and cache so repeated triggers do not re-fetch/re-decode.
   const response = await fetch(item.fileUrl);
   const data = await response.arrayBuffer();
   const decoded = await audioContext.decodeAudioData(data.slice(0));
@@ -596,19 +589,16 @@ function stopTrackedSound(entry) {
   try {
     entry.sourceNode.stop(0);
   } catch (error) {
-    // Source may have already ended.
   }
 
   try {
     entry.sourceNode.disconnect();
   } catch (error) {
-    // Disconnect is best-effort for already-finished nodes.
   }
 
   try {
     entry.outputNode?.disconnect();
   } catch (error) {
-    // Some source paths have no separate output node.
   }
 
   activeSoundNodes.delete(entry);
@@ -668,8 +658,6 @@ function syncMonitorAudibility() {
     return;
   }
 
-  // The monitor element is the full Discord mix. Keep it audible only for
-  // virtual cable endpoints; local soundboard monitoring uses appPlaybackGainNode.
   monitorElement.muted = !isVirtualOutputSelection();
 }
 
@@ -822,7 +810,6 @@ function withBlockedInputNotice(message, blockedInputCount) {
   return `${message} Hidden ${blockedInputCount} loopback/system input${plural}.`;
 }
 
-// Device discovery + dropdown synchronization for input/output routing.
 async function refreshOutputDevices() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -915,7 +902,6 @@ async function applyOutputDevice() {
   }
 
   try {
-    // setSinkId controls where the mixed monitor element plays back.
     await monitorElement.setSinkId(deviceId);
     syncMonitorAudibility();
 
@@ -983,7 +969,6 @@ async function applyLocalPlaybackDevice(options = {}) {
   }
 }
 
-// Inject a short synthetic tone into the sound lane to verify routing.
 async function sendTestTone() {
   if (!audioContext) {
     await setupMixer({ requestMic: false });
@@ -1048,7 +1033,6 @@ function updateMixerGains() {
     return;
   }
 
-  // Smooth parameter changes to avoid clicks when sliders move.
   const now = audioContext.currentTime;
   micGainNode.gain.setTargetAtTime(Number(micGainSlider.value), now, 0.01);
   soundGainNode.gain.setTargetAtTime(Number(soundGainSlider.value), now, 0.01);
@@ -1124,14 +1108,12 @@ function ensureMicGateUpdater() {
     return;
   }
 
-  // Use a timer instead of requestAnimationFrame so gating still works when the window is hidden.
   micGateIntervalId = window.setInterval(() => {
     updateMicNoiseReduction();
     updateMicNoiseGate();
   }, 50);
 }
 
-// Reads post-mix signal level and updates both on-screen meters.
 function updateLevelMeter() {
   if (!levelAnalyser || !levelData) {
     return;
@@ -1209,7 +1191,6 @@ function updateLevelMeter() {
 async function setupMixer(options = {}) {
   const { requestMic = true } = options;
 
-  // Build the audio graph once; later calls reuse the same nodes.
   if (!audioContext) {
     audioContext = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
 
@@ -1244,7 +1225,6 @@ async function setupMixer(options = {}) {
     micHighPassNode.frequency.value = 85;
     micHighPassNode.Q.value = 0.7;
 
-    // Remove low-frequency electrical hum from the mic path only.
     micNotchNode.type = "notch";
     micNotchNode.frequency.value = 60;
     micNotchNode.Q.value = 8;
@@ -1267,7 +1247,6 @@ async function setupMixer(options = {}) {
     micAirNode.frequency.value = 8500;
     micAirNode.gain.value = 2;
 
-    // Soften harsh top-end mic hiss without touching soundboard tone.
     micLowPassNode.type = "lowpass";
     micLowPassNode.frequency.value = 12000;
     micLowPassNode.Q.value = 0.7;
@@ -1292,17 +1271,12 @@ async function setupMixer(options = {}) {
     micFrequencyAnalyser.fftSize = 4096;
     micFrequencyAnalyser.smoothingTimeConstant = 0.72;
 
-    // Keep the master stage as a gentle safety limiter to avoid ducking the mic.
     compressorNode.threshold.value = -3;
     compressorNode.knee.value = 6;
     compressorNode.ratio.value = 1.3;
     compressorNode.attack.value = 0.002;
     compressorNode.release.value = 0.06;
 
-    // Signal flow:
-    // mic -> noise reduction + EQ/comp -> master
-    // soundboard/imports -> master
-    // master -> final comp -> analyser + mixed destination stream
     micGainNode.connect(micHighPassNode);
     micHighPassNode.connect(micNotchNode);
     micNotchNode.connect(micNoiseAnalyser);
@@ -1348,7 +1322,6 @@ async function setupMixer(options = {}) {
     await audioContext.resume();
   }
 
-  // Open mic only when requested so soundboard playback can work without permissions.
   if (requestMic && !micStream) {
     const selectedInputLabel = inputDeviceSelect.selectedOptions?.[0]?.textContent || "";
     const selectedInputDevice = getSelectedInputDevice();
@@ -1404,7 +1377,6 @@ async function setupMixer(options = {}) {
     try {
       await monitorElement.play();
     } catch (error) {
-      // Some systems require another user gesture to start stream playback.
     }
   }
 
@@ -1412,7 +1384,6 @@ async function setupMixer(options = {}) {
     try {
       await appPlaybackElement.play();
     } catch (error) {
-      // Local sound preview may also need the same user gesture.
     }
   }
 
@@ -1438,7 +1409,6 @@ async function ensureDeviceLabels() {
     const probeStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     probeStream.getTracks().forEach((track) => track.stop());
   } catch (error) {
-    // If labels cannot be unlocked yet, keep going with best-effort filtering.
   }
 }
 
@@ -1664,8 +1634,6 @@ async function switchMicInput() {
     }
   }
 }
-
-// UI wiring: mixer controls, device controls, and imported library actions.
 
 toggleMicCaptureButton?.addEventListener("click", () => {
   setMicCaptureEnabled(!isMicCaptureEnabled);

@@ -22,6 +22,7 @@ build/
 !installer/**/*.nsh
 
 # Bundled third-party installers/drivers
+drivers/
 drivers/*.exe
 drivers/*.msi
 drivers/*.zip

@@ -252,7 +252,6 @@ function loadAppSettings() {
       keepRunningInTray: parsed.keepRunningInTray !== false
     };
   } catch (error) {
-    // Defaults are used on first run or if settings cannot be read.
   }
 }
 
@@ -261,7 +260,6 @@ function saveAppSettings() {
     fs.mkdirSync(app.getPath("userData"), { recursive: true });
     fs.writeFileSync(getSettingsPath(), JSON.stringify(appSettings, null, 2));
   } catch (error) {
-    // Runtime settings still apply even if persistence fails.
   }
 }
 
@@ -277,7 +275,6 @@ function applyLoginItemSettings() {
       args: appSettings.startHidden ? ["--hidden"] : []
     });
   } catch (error) {
-    // Some development or restricted environments do not allow login item writes.
   }
 }
 
@@ -444,7 +441,6 @@ function writeTestTone(deviceId) {
     try {
       output.quit();
     } catch (error) {
-      // Ignore shutdown race on rapid repeated tests.
     }
   }, Math.ceil(durationSeconds * 1000) + 120);
 }
@@ -602,7 +598,6 @@ function registerAudioIpc() {
             break;
           }
         } catch (error) {
-          // Try next fallback accelerator.
         }
       }
 
