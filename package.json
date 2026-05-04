@@ -1,0 +1,65 @@
+{
+  "name": "soundmuncher",
+  "version": "1.0.0",
+  "description": "Desktop soundboard app powered by Electron",
+  "main": "main.js",
+  "author": "Nguyen",
+  "license": "ISC",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win",
+    "postinstall": "electron-builder install-app-deps",
+    "native:install": "npm.cmd install --prefix native",
+    "native:rebuild": "electron-rebuild -m native"
+  },
+  "build": {
+    "appId": "com.soundmuncher.app",
+    "productName": "SoundMuncher",
+    "icon": "logo.png",
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "include": "installer/vbcable.nsh"
+    },
+    "extraResources": [
+      {
+        "from": "drivers",
+        "to": "drivers",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "logo.png",
+      "package.json",
+      "node_modules/**/*"
+    ]
+  },
+  "dependencies": {
+    "naudiodon": "^2.3.6",
+    "uiohook-napi": "^1.5.5"
+  },
+  "devDependencies": {
+    "electron": "^36.0.0",
+    "electron-builder": "^26.8.1",
+    "electron-rebuild": "^3.2.9",
+    "node-gyp": "^10.2.0"
+  }
+}

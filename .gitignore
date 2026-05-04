@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+native/node_modules/
+
+# Build output
+dist/
+out/
+release/
+build/
+*.blockmap
+
+# Electron/native build artifacts
+*.node
+*.pdb
+*.ilk
+*.obj
+*.lib
+*.exp
+*.dll
+*.exe
+!drivers/README.md
+!installer/**/*.nsh
+
+# Bundled third-party installers/drivers
+drivers/*.exe
+drivers/*.msi
+drivers/*.zip
+drivers/*.7z
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+electron-builder-debug.yml
+electron-builder.env
+
+# Runtime/local data
+audio-library/
+*.local
+.env
+.env.*
+
+# Editor/OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak

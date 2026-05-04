@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SoundMuncher</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="noise"></div>
+    <main class="app-shell">
+      <header class="app-topbar">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true">
+            <img src="logo.png" alt="" />
+          </div>
+          <div class="brand-copy">
+            <h1>SoundMuncher</h1>
+            <p>Realtime soundboard and voice routing</p>
+          </div>
+        </div>
+
+        <div class="top-actions" aria-label="Library actions">
+          <button id="stopAllSounds" class="mixer-action danger-action" type="button" title="Stop all playing sounds">
+            <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="6" y="6" width="12" height="12" rx="1.5"></rect>
+            </svg>
+            Stop
+          </button>
+          <button id="stopKeybind" class="mixer-action stop-keybind-button" type="button" title="Bind stop shortcut">Bind Stop Key</button>
+          <button id="openLibrary" class="mixer-action icon-action" type="button" title="Open Folder" aria-label="Open library folder">
+            <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </button>
+          <button id="importAudio" class="mixer-action primary-action" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            Import Track
+          </button>
+        </div>
+      </header>
+
+      <section class="workspace" aria-label="Workspace">
+        <section class="library" aria-label="Imported audio library">
+          <div class="library-header">
+            <div>
+              <h2>Soundboard</h2>
+              <p id="libraryState" class="routing-tip">Import files to arm them to physical keys.</p>
+            </div>
+          </div>
+          <div id="importedList" class="imported-list"></div>
+        </section>
+
+        <aside class="mixer" aria-label="Mixer controls">
+          <div class="mixer-header">
+            <div>
+              <h2>Output Mixer</h2>
+              <p id="mixState" class="mix-state"></p>
+            </div>
+            <div class="mixer-actions">
+              <button id="toggleMicCapture" class="mixer-action active" type="button" title="Capture Microphone">Mic: On</button>
+              <button id="toggleMixToOutput" class="mixer-action active" type="button" title="Output Sound">Mix: On</button>
+              <button id="toggleSoundPlayback" class="mixer-action active" type="button" title="Hear soundboard locally">Hear: On</button>
+            </div>
+          </div>
+
+          <div class="meter" aria-live="polite" aria-label="Live level meter">
+            <div class="meter-head">
+              <span>Input Level</span>
+              <span id="dbValue">-inf dB</span>
+            </div>
+            <p class="meter-sub">Dominant Freq: <span id="hzValue">-- Hz</span></p>
+            <div class="meter-track" role="meter" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60" aria-labelledby="dbValue">
+              <div id="meterFill" class="meter-fill"></div>
+            </div>
+          </div>
+
+          <div class="mixer-grid">
+            <label class="mixer-control" for="micGain">
+              <span>Microphone</span>
+              <input id="micGain" type="range" min="0" max="1" step="0.01" value="0.75" />
+              <output id="micGainValue">75%</output>
+            </label>
+            <label class="mixer-control" for="soundGain">
+              <span>Soundboard</span>
+              <input id="soundGain" type="range" min="0" max="1" step="0.01" value="0.85" />
+              <output id="soundGainValue">85%</output>
+            </label>
+            <label class="mixer-control" for="masterGain">
+              <span>Main Output</span>
+              <input id="masterGain" type="range" min="0" max="1" step="0.01" value="0.9" />
+              <output id="masterGainValue">90%</output>
+            </label>
+          </div>
+
+          <div class="route-panel">
+            <div class="route-actions">
+              <label>Routing</label>
+              <div class="route-buttons">
+                <button id="refreshDevices" class="mixer-action compact-action" type="button">Refresh</button>
+                <button id="sendTone" class="mixer-action compact-action" type="button">Tone</button>
+              </div>
+            </div>
+            <div class="route-field">
+              <label for="inputDevice">Input Microphone</label>
+              <select id="inputDevice" class="device-select"></select>
+            </div>
+            <div class="route-field">
+              <label for="outputDevice">Output Virtual Cable</label>
+              <select id="outputDevice" class="device-select"></select>
+            </div>
+            <div class="route-field">
+              <label for="localPlaybackDevice">Hear Meme Sounds On</label>
+              <select id="localPlaybackDevice" class="device-select"></select>
+            </div>
+            <p id="routeState" class="routing-tip">Output to Virtual Cable. Set Discord input to that cable output. Set Discord output to headphones, not VB-CABLE or Default if Default is VB-CABLE.</p>
+          </div>
+
+          <div class="background-panel" aria-label="Background behavior">
+            <label>Background</label>
+            <label class="setting-toggle" for="keepRunningInTray">
+              <input id="keepRunningInTray" type="checkbox" checked />
+              <span>Keep running in tray when closed</span>
+            </label>
+            <label class="setting-toggle" for="launchOnStartup">
+              <input id="launchOnStartup" type="checkbox" />
+              <span>Launch on Windows startup</span>
+            </label>
+            <label class="setting-toggle" for="startHidden">
+              <input id="startHidden" type="checkbox" />
+              <span>Start hidden in background</span>
+            </label>
+          </div>
+        </aside>
+      </section>
+
+      <section class="guide" aria-label="SoundMuncher guide">
+        <div class="guide-header">
+          <h2>Quick Guide</h2>
+          <p>Set the cable once, import sounds, bind keys, and route what you hear separately from what Discord receives.</p>
+        </div>
+        <div class="guide-grid">
+          <article class="guide-card">
+            <h3>1. Discord Routing</h3>
+            <p>Set SoundMuncher output to CABLE Input. In Discord, set input to CABLE Output and output to headphones or speakers.</p>
+          </article>
+          <article class="guide-card">
+            <h3>2. Add Sounds</h3>
+            <p>Use Import Track to copy audio into the local library. Click a sound card to play it into the Discord mix.</p>
+          </article>
+          <article class="guide-card">
+            <h3>3. Keybinds</h3>
+            <p>Bind a key on any sound card for quick triggers. Bind Stop Key to stop every playing sound immediately.</p>
+          </article>
+          <article class="guide-card">
+            <h3>4. Mixer</h3>
+            <p>Microphone controls your voice level, Soundboard controls meme volume, and Main Output controls the final Discord feed.</p>
+          </article>
+          <article class="guide-card">
+            <h3>5. Hear Locally</h3>
+            <p>Use Hear Meme Sounds On to choose where your local preview plays. Pick headphones to avoid speaker bleed.</p>
+          </article>
+          <article class="guide-card">
+            <h3>6. Safety Checks</h3>
+            <p>Refresh devices after installing VB-CABLE. Use Tone to test routing before joining a voice channel.</p>
+          </article>
+        </div>
+      </section>
+
+      <footer class="status">
+        <div class="status-now">
+          <span class="status-label">Now Playing</span>
+          <span id="nowPlaying" class="status-value">Ready</span>
+        </div>
+        <div class="status-meter" aria-live="polite" aria-label="Footer level meter">
+          <span class="status-label">Out dB</span>
+          <div class="meter-track" id="meterTrackFooter" role="meter" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60" aria-label="Footer output level">
+            <div id="meterFillFooter" class="meter-fill footer-fill"></div>
+          </div>
+        </div>
+      </footer>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>
