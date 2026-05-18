@@ -2,6 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: file:; media-src 'self' blob: file:; connect-src 'self' file:; object-src 'none'; base-uri 'self'; form-action 'none';"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SoundMuncher</title>
     <link rel="stylesheet" href="styles.css" />
@@ -21,6 +25,8 @@
         </div>
 
         <div class="top-actions" aria-label="Library actions">
+          <button id="openSettings" class="mixer-action" type="button">Settings</button>
+          <button id="openRoutingWizard" class="mixer-action" type="button">Setup</button>
           <button id="stopAllSounds" class="mixer-action danger-action" type="button" title="Stop all playing sounds">
             <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <rect x="6" y="6" width="12" height="12" rx="1.5"></rect>
@@ -50,6 +56,32 @@
             <div>
               <h2>Soundboard</h2>
               <p id="libraryState" class="routing-tip">Import files to arm them to physical keys.</p>
+            </div>
+          </div>
+          <div class="library-tools" aria-label="Soundboard controls">
+            <div class="route-field">
+              <label for="boardSelect">Board</label>
+              <div class="inline-control">
+                <select id="boardSelect" class="device-select"></select>
+                <button id="addBoard" class="mixer-action compact-action" type="button">New</button>
+              </div>
+            </div>
+            <div class="route-field">
+              <label>View</label>
+              <button id="toggleFavoritesView" class="mixer-action compact-action" type="button">Favorites</button>
+            </div>
+            <div class="route-field">
+              <label for="soundSearch">Search</label>
+              <input id="soundSearch" class="text-input" type="search" placeholder="Find sounds" />
+            </div>
+            <div class="route-field">
+              <label for="soundSort">Sort</label>
+              <select id="soundSort" class="device-select">
+                <option value="name">Name</option>
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="size">Size</option>
+              </select>
             </div>
           </div>
           <div id="importedList" class="imported-list"></div>
@@ -127,7 +159,7 @@
               <span>Keep running in tray when closed</span>
             </label>
             <label class="setting-toggle" for="launchOnStartup">
-              <input id="launchOnStartup" type="checkbox" />
+              <input id="launchOnStartup" type="checkbox" checked />
               <span>Launch on Windows startup</span>
             </label>
             <label class="setting-toggle" for="startHidden">
@@ -184,6 +216,140 @@
         </div>
       </footer>
     </main>
+    <div id="soundEditorOverlay" class="modal-overlay" hidden>
+      <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="soundEditorTitle">
+        <div class="modal-head">
+          <div>
+            <h2 id="soundEditorTitle">Edit Sound</h2>
+            <p id="soundEditorFile" class="routing-tip"></p>
+          </div>
+          <button id="closeSoundEditor" class="mixer-action compact-action" type="button">Close</button>
+        </div>
+
+        <div class="modal-grid">
+          <label class="form-field" for="soundEditorName">
+            <span>Name</span>
+            <input id="soundEditorName" class="text-input" type="text" />
+          </label>
+          <label class="form-field" for="soundEditorBoard">
+            <span>Board</span>
+            <select id="soundEditorBoard" class="device-select"></select>
+          </label>
+          <label class="form-field" for="soundEditorColor">
+            <span>Color</span>
+            <input id="soundEditorColor" class="color-input" type="color" value="#4da8ff" />
+          </label>
+          <label class="form-field" for="soundEditorMode">
+            <span>Playback</span>
+            <select id="soundEditorMode" class="device-select">
+              <option value="overlap">Allow overlap</option>
+              <option value="restart">Restart if playing</option>
+              <option value="once">Play once</option>
+              <option value="loop">Toggle loop</option>
+            </select>
+          </label>
+          <label class="mixer-control modal-control" for="soundEditorVolume">
+            <span>Volume</span>
+            <input id="soundEditorVolume" type="range" min="0" max="1.5" step="0.01" value="1" />
+            <output id="soundEditorVolumeValue">100%</output>
+          </label>
+          <label class="form-field" for="soundEditorTrimStart">
+            <span>Trim Start (s)</span>
+            <input id="soundEditorTrimStart" class="text-input" type="number" min="0" step="0.01" value="0" />
+          </label>
+          <label class="form-field" for="soundEditorTrimEnd">
+            <span>Trim End (s)</span>
+            <input id="soundEditorTrimEnd" class="text-input" type="number" min="0" step="0.01" value="0" />
+          </label>
+          <label class="form-field" for="soundEditorFadeIn">
+            <span>Fade In (s)</span>
+            <input id="soundEditorFadeIn" class="text-input" type="number" min="0" step="0.01" value="0" />
+          </label>
+          <label class="form-field" for="soundEditorFadeOut">
+            <span>Fade Out (s)</span>
+            <input id="soundEditorFadeOut" class="text-input" type="number" min="0" step="0.01" value="0" />
+          </label>
+        </div>
+
+        <div class="modal-actions">
+          <button id="resetSoundEditor" class="mixer-action" type="button">Reset</button>
+          <button id="previewSoundEditor" class="mixer-action" type="button">Preview</button>
+          <button id="saveSoundEditor" class="mixer-action primary-action" type="button">Save</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="routingWizardOverlay" class="modal-overlay" hidden>
+      <section class="modal-panel wizard-panel" role="dialog" aria-modal="true" aria-labelledby="routingWizardTitle">
+        <div class="modal-head">
+          <div>
+            <h2 id="routingWizardTitle">Routing Setup</h2>
+            <p class="routing-tip">Select a real microphone, route SoundMuncher to a virtual input, then test before opening Discord.</p>
+          </div>
+          <button id="closeRoutingWizard" class="mixer-action compact-action" type="button">Close</button>
+        </div>
+        <div class="wizard-steps">
+          <article class="guide-card">
+            <h3>1. Detect Devices</h3>
+            <p>Refresh devices and auto-pick the safest microphone plus a likely virtual cable input.</p>
+          </article>
+          <article class="guide-card">
+            <h3>2. Test Mix</h3>
+            <p>Send a tone through the same mix Discord will receive.</p>
+          </article>
+          <article class="guide-card">
+            <h3>3. Discord</h3>
+            <p>Set Discord input to CABLE Output. Keep Discord output on headphones or speakers.</p>
+          </article>
+        </div>
+        <p id="routingWizardState" class="routing-tip"></p>
+        <div class="modal-actions">
+          <button id="wizardRefreshDevices" class="mixer-action" type="button">Refresh Devices</button>
+          <button id="wizardTestTone" class="mixer-action" type="button">Test Tone</button>
+          <button id="finishRoutingWizard" class="mixer-action primary-action" type="button">Done</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="settingsOverlay" class="modal-overlay" hidden>
+      <section class="modal-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="modal-head">
+          <div>
+            <h2 id="settingsTitle">Settings</h2>
+            <p class="routing-tip">Tune the workspace for quick Discord sessions.</p>
+          </div>
+          <button id="closeSettings" class="mixer-action compact-action" type="button">Close</button>
+        </div>
+        <div class="settings-grid">
+          <label class="setting-toggle prominent-toggle" for="compactModeToggle">
+            <input id="compactModeToggle" type="checkbox" />
+            <span>Compact mode</span>
+          </label>
+          <label class="form-field" for="uiThemeSelect">
+            <span>App Theme</span>
+            <select id="uiThemeSelect" class="device-select">
+              <option value="midnight">Midnight</option>
+              <option value="studio">Studio</option>
+              <option value="ember">Ember</option>
+              <option value="daylight">Daylight</option>
+            </select>
+          </label>
+          <label class="form-field" for="padThemeSelect">
+            <span>Pad Theme</span>
+            <select id="padThemeSelect" class="device-select">
+              <option value="spectrum">Spectrum</option>
+              <option value="neon">Neon</option>
+              <option value="candy">Candy</option>
+              <option value="mono">Mono</option>
+            </select>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="resetVisualSettings" class="mixer-action" type="button">Reset Visuals</button>
+          <button id="saveSettings" class="mixer-action primary-action" type="button">Done</button>
+        </div>
+      </section>
+    </div>
     <script src="renderer.js"></script>
   </body>
 </html>

@@ -5,10 +5,18 @@ SoundMuncher is an Electron soundboard for Discord voice chat. It mixes your rea
 ## Features
 
 - Import local audio files
+- Organize sounds into boards with search and sorting
+- Mark favorite and pinned sounds for faster access
+- Edit sound name, board, color, volume, trim, fade, and playback mode
+- Switch app and pad themes, or use compact mode for dense soundboard sessions
 - Trigger sounds from the app or with keybinds
+- Use single-key or modifier-combo keybinds where supported
 - Stop all currently playing sounds
+- Choose playback behavior per sound: overlap, restart, play once, or toggle loop
 - Mix microphone, soundboard, and main output volume
 - Route the Discord mix to VB-CABLE
+- Persist selected microphone, virtual output, and local hearing output
+- Use the routing setup wizard to refresh, pick, and test devices
 - Choose where you personally hear meme sounds
 - Run in the system tray
 - Optional launch on Windows startup

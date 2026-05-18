@@ -31,6 +31,42 @@ const importAudioButton = document.getElementById("importAudio");
 const openLibraryButton = document.getElementById("openLibrary");
 const importedList = document.getElementById("importedList");
 const libraryState = document.getElementById("libraryState");
+const boardSelect = document.getElementById("boardSelect");
+const addBoardButton = document.getElementById("addBoard");
+const soundSearchInput = document.getElementById("soundSearch");
+const soundSortSelect = document.getElementById("soundSort");
+const toggleFavoritesViewButton = document.getElementById("toggleFavoritesView");
+const soundEditorOverlay = document.getElementById("soundEditorOverlay");
+const closeSoundEditorButton = document.getElementById("closeSoundEditor");
+const saveSoundEditorButton = document.getElementById("saveSoundEditor");
+const resetSoundEditorButton = document.getElementById("resetSoundEditor");
+const previewSoundEditorButton = document.getElementById("previewSoundEditor");
+const soundEditorFile = document.getElementById("soundEditorFile");
+const soundEditorName = document.getElementById("soundEditorName");
+const soundEditorBoard = document.getElementById("soundEditorBoard");
+const soundEditorColor = document.getElementById("soundEditorColor");
+const soundEditorMode = document.getElementById("soundEditorMode");
+const soundEditorVolume = document.getElementById("soundEditorVolume");
+const soundEditorVolumeValue = document.getElementById("soundEditorVolumeValue");
+const soundEditorTrimStart = document.getElementById("soundEditorTrimStart");
+const soundEditorTrimEnd = document.getElementById("soundEditorTrimEnd");
+const soundEditorFadeIn = document.getElementById("soundEditorFadeIn");
+const soundEditorFadeOut = document.getElementById("soundEditorFadeOut");
+const openRoutingWizardButton = document.getElementById("openRoutingWizard");
+const routingWizardOverlay = document.getElementById("routingWizardOverlay");
+const closeRoutingWizardButton = document.getElementById("closeRoutingWizard");
+const finishRoutingWizardButton = document.getElementById("finishRoutingWizard");
+const wizardRefreshDevicesButton = document.getElementById("wizardRefreshDevices");
+const wizardTestToneButton = document.getElementById("wizardTestTone");
+const routingWizardState = document.getElementById("routingWizardState");
+const openSettingsButton = document.getElementById("openSettings");
+const settingsOverlay = document.getElementById("settingsOverlay");
+const closeSettingsButton = document.getElementById("closeSettings");
+const saveSettingsButton = document.getElementById("saveSettings");
+const resetVisualSettingsButton = document.getElementById("resetVisualSettings");
+const compactModeToggle = document.getElementById("compactModeToggle");
+const uiThemeSelect = document.getElementById("uiThemeSelect");
+const padThemeSelect = document.getElementById("padThemeSelect");
 
 let audioContext;
 let micStream;
@@ -90,10 +126,29 @@ let importedLibraryItems = [];
 const stopKeybindId = "__soundmuncher_stop_all__";
 const keybindStorageKey = "soundmuncher:keybinds";
 const mixerSettingsStorageKey = "soundmuncher:mixer-settings";
+const libraryMetadataStorageKey = "soundmuncher:library-metadata";
+const libraryViewStorageKey = "soundmuncher:library-view";
+const appPreferencesStorageKey = "soundmuncher:app-preferences";
+const defaultBoardName = "Main";
+const allBoardsValue = "__all__";
+const defaultAppPreferences = {
+  compactMode: false,
+  uiTheme: "midnight",
+  padTheme: "spectrum"
+};
 let importedKeybinds = {};
 let keybindCapturePath = "";
+let libraryMetadata = {};
+let boards = [defaultBoardName];
+let selectedBoard = allBoardsValue;
+let soundSearchQuery = "";
+let soundSortMode = "name";
+let editingSoundPath = "";
+let preferVirtualOutputOnce = false;
+let showFavoritesOnly = false;
+let appPreferences = { ...defaultAppPreferences };
 
-function codeToAccelerators(code) {
+function keyCodeToAcceleratorParts(code) {
   if (/^Key[A-Z]$/.test(code)) {
     return [code.slice(3)];
   }
@@ -152,6 +207,87 @@ function codeToAccelerators(code) {
   return symbolMap[code] ? [symbolMap[code]] : [];
 }
 
+function normalizeKeybindBinding(binding) {
+  if (!binding) {
+    return null;
+  }
+
+  const code = typeof binding === "string" ? binding : binding.code;
+  if (!code) {
+    return null;
+  }
+
+  const modifiers = typeof binding === "object" && binding.modifiers
+    ? binding.modifiers
+    : {};
+
+  return {
+    code,
+    modifiers: {
+      ctrl: Boolean(modifiers.ctrl),
+      shift: Boolean(modifiers.shift),
+      alt: Boolean(modifiers.alt),
+      meta: Boolean(modifiers.meta)
+    }
+  };
+}
+
+function getKeybindSignature(binding) {
+  const normalized = normalizeKeybindBinding(binding);
+  if (!normalized) {
+    return "";
+  }
+
+  return [
+    normalized.modifiers.ctrl ? "Ctrl" : "",
+    normalized.modifiers.shift ? "Shift" : "",
+    normalized.modifiers.alt ? "Alt" : "",
+    normalized.modifiers.meta ? "Meta" : "",
+    normalized.code
+  ].filter(Boolean).join("+");
+}
+
+function keybindFromKeyboardEvent(event) {
+  return {
+    code: event.code,
+    modifiers: {
+      ctrl: event.ctrlKey,
+      shift: event.shiftKey,
+      alt: event.altKey,
+      meta: event.metaKey
+    }
+  };
+}
+
+function keybindMatchesEvent(binding, event) {
+  const normalized = normalizeKeybindBinding(binding);
+  if (!normalized || normalized.code !== event.code) {
+    return false;
+  }
+
+  return normalized.modifiers.ctrl === event.ctrlKey
+    && normalized.modifiers.shift === event.shiftKey
+    && normalized.modifiers.alt === event.altKey
+    && normalized.modifiers.meta === event.metaKey;
+}
+
+function codeToAccelerators(binding) {
+  const normalized = normalizeKeybindBinding(binding);
+  if (!normalized) {
+    return [];
+  }
+
+  const keyParts = keyCodeToAcceleratorParts(normalized.code);
+  const modifierParts = [
+    normalized.modifiers.ctrl ? "Ctrl" : "",
+    normalized.modifiers.shift ? "Shift" : "",
+    normalized.modifiers.alt ? "Alt" : "",
+    normalized.modifiers.meta ? "Meta" : ""
+  ].filter(Boolean);
+
+  return keyParts.map((part) => [...modifierParts, part].join("+"));
+}
+
 function isModifierOnlyCode(code) {
   return code === "ControlLeft"
     || code === "ControlRight"
@@ -169,11 +305,13 @@ function syncGlobalKeybinds() {
   }
 
   const entries = Object.keys(importedKeybinds)
-    .map((path) => importedKeybinds[path]?.code)
+    .map((path) => normalizeKeybindBinding(importedKeybinds[path]))
     .filter(Boolean)
-    .map((code) => ({
-      code,
-      accelerators: codeToAccelerators(code)
+    .map((binding) => ({
+      code: binding.code,
+      modifiers: binding.modifiers,
+      preferGlobalShortcut: Object.values(binding.modifiers).some(Boolean),
+      accelerators: codeToAccelerators(binding)
     }));
 
   window.soundmuncher.registerGlobalKeybinds(entries).then((result) => {
@@ -188,6 +326,19 @@ function loadKeybinds() {
   try {
     const raw = window.localStorage.getItem(keybindStorageKey);
     importedKeybinds = raw ? JSON.parse(raw) : {};
+    Object.keys(importedKeybinds).forEach((path) => {
+      const normalized = normalizeKeybindBinding(importedKeybinds[path]);
+      if (!normalized) {
+        delete importedKeybinds[path];
+        return;
+      }
+
+      importedKeybinds[path] = {
+        code: normalized.code,
+        modifiers: normalized.modifiers,
+        label: getKeybindLabel(normalized)
+      };
+    });
   } catch (error) {
     importedKeybinds = {};
   }
@@ -232,6 +383,14 @@ function loadMixerSettings() {
     if (typeof settings?.localPlaybackDeviceId === "string") {
       selectedLocalPlaybackDeviceId = settings.localPlaybackDeviceId;
     }
+
+    if (typeof settings?.inputDeviceId === "string") {
+      selectedInputDeviceId = settings.inputDeviceId;
+    }
+
+    if (typeof settings?.outputDeviceId === "string") {
+      selectedOutputDeviceId = settings.outputDeviceId;
+    }
   } catch (error) {
   }
 }
@@ -243,10 +402,304 @@ function saveMixerSettings() {
       soundGain: Number(soundGainSlider.value),
       masterGain: Number(masterGainSlider.value),
       soundPlayback: isSoundPlaybackEnabled,
-      localPlaybackDeviceId: selectedLocalPlaybackDeviceId
+      localPlaybackDeviceId: selectedLocalPlaybackDeviceId,
+      inputDeviceId: selectedInputDeviceId,
+      outputDeviceId: selectedOutputDeviceId
     }));
   } catch (error) {
   }
+}
+
+function sanitizeBoardName(name) {
+  return String(name || "").trim().slice(0, 40);
+}
+
+function clampNumber(value, min, max, fallback = min) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, number));
+}
+
+function defaultMetadataForItem(item) {
+  return {
+    name: item?.name || "Untitled sound",
+    board: defaultBoardName,
+    color: "#4da8ff",
+    volume: 1,
+    trimStart: 0,
+    trimEnd: 0,
+    fadeIn: 0,
+    fadeOut: 0,
+    playbackMode: "overlap",
+    favorite: false,
+    pinned: false
+  };
+}
+
+function normalizeSoundMetadata(item, metadata = {}) {
+  const defaults = defaultMetadataForItem(item);
+  const board = sanitizeBoardName(metadata.board) || defaults.board;
+  const color = /^#[0-9a-f]{6}$/i.test(metadata.color || "") ? metadata.color : defaults.color;
+  const playbackModes = new Set(["overlap", "restart", "once", "loop"]);
+  const playbackMode = playbackModes.has(metadata.playbackMode) ? metadata.playbackMode : defaults.playbackMode;
+
+  return {
+    name: String(metadata.name || defaults.name).trim().slice(0, 96) || defaults.name,
+    board,
+    color,
+    volume: clampNumber(metadata.volume, 0, 1.5, defaults.volume),
+    trimStart: clampNumber(metadata.trimStart, 0, 3600, 0),
+    trimEnd: clampNumber(metadata.trimEnd, 0, 3600, 0),
+    fadeIn: clampNumber(metadata.fadeIn, 0, 30, 0),
+    fadeOut: clampNumber(metadata.fadeOut, 0, 30, 0),
+    playbackMode,
+    favorite: Boolean(metadata.favorite),
+    pinned: Boolean(metadata.pinned)
+  };
+}
+
+function getSoundMetadata(itemOrPath) {
+  const item = typeof itemOrPath === "string"
+    ? importedLibraryItems.find((candidate) => candidate.path === itemOrPath)
+    : itemOrPath;
+  const path = typeof itemOrPath === "string" ? itemOrPath : itemOrPath?.path;
+  return normalizeSoundMetadata(item, libraryMetadata[path] || {});
+}
+
+function saveLibraryMetadata() {
+  try {
+    window.localStorage.setItem(libraryMetadataStorageKey, JSON.stringify({
+      boards,
+      sounds: libraryMetadata
+    }));
+  } catch (error) {
+  }
+}
+
+function loadLibraryMetadata() {
+  try {
+    const raw = window.localStorage.getItem(libraryMetadataStorageKey);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const parsedBoards = Array.isArray(parsed.boards) ? parsed.boards.map(sanitizeBoardName).filter(Boolean) : [];
+    boards = Array.from(new Set([defaultBoardName, ...parsedBoards]));
+    libraryMetadata = typeof parsed.sounds === "object" && parsed.sounds ? parsed.sounds : {};
+  } catch (error) {
+    boards = [defaultBoardName];
+    libraryMetadata = {};
+  }
+}
+
+function saveLibraryView() {
+  try {
+    window.localStorage.setItem(libraryViewStorageKey, JSON.stringify({
+      selectedBoard,
+      soundSortMode,
+      showFavoritesOnly
+    }));
+  } catch (error) {
+  }
+}
+
+function loadLibraryView() {
+  try {
+    const raw = window.localStorage.getItem(libraryViewStorageKey);
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (typeof parsed.selectedBoard === "string") {
+      selectedBoard = parsed.selectedBoard;
+    }
+    if (typeof parsed.soundSortMode === "string") {
+      soundSortMode = parsed.soundSortMode;
+    }
+    if (typeof parsed.showFavoritesOnly === "boolean") {
+      showFavoritesOnly = parsed.showFavoritesOnly;
+    }
+  } catch (error) {
+  }
+}
+
+function saveAppPreferences() {
+  try {
+    window.localStorage.setItem(appPreferencesStorageKey, JSON.stringify(appPreferences));
+  } catch (error) {
+  }
+}
+
+function loadAppPreferences() {
+  try {
+    const raw = window.localStorage.getItem(appPreferencesStorageKey);
+    const parsed = raw ? JSON.parse(raw) : {};
+    const allowedThemes = new Set(["midnight", "studio", "ember", "daylight"]);
+    const allowedPadThemes = new Set(["spectrum", "neon", "candy", "mono"]);
+
+    appPreferences = {
+      compactMode: Boolean(parsed.compactMode),
+      uiTheme: allowedThemes.has(parsed.uiTheme) ? parsed.uiTheme : defaultAppPreferences.uiTheme,
+      padTheme: allowedPadThemes.has(parsed.padTheme) ? parsed.padTheme : defaultAppPreferences.padTheme
+    };
+  } catch (error) {
+    appPreferences = { ...defaultAppPreferences };
+  }
+}
+
+function applyAppPreferences() {
+  document.body.dataset.theme = appPreferences.uiTheme;
+  document.body.dataset.padTheme = appPreferences.padTheme;
+  document.body.classList.toggle("compact-mode", appPreferences.compactMode);
+
+  if (compactModeToggle) {
+    compactModeToggle.checked = appPreferences.compactMode;
+  }
+  if (uiThemeSelect) {
+    uiThemeSelect.value = appPreferences.uiTheme;
+  }
+  if (padThemeSelect) {
+    padThemeSelect.value = appPreferences.padTheme;
+  }
+}
+
+function updateFavoritesViewButton() {
+  if (!toggleFavoritesViewButton) {
+    return;
+  }
+
+  toggleFavoritesViewButton.classList.toggle("active", showFavoritesOnly);
+  toggleFavoritesViewButton.textContent = showFavoritesOnly ? "All Sounds" : "Favorites";
+}
+
+function hashString(value) {
+  let hash = 0;
+  const text = String(value || "");
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(index);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+function getPadThemePalette() {
+  const palettes = {
+    spectrum: ["#4da8ff", "#7dd3c7", "#80d489", "#e2b86f", "#ef6b63", "#bd8cff"],
+    neon: ["#00f5d4", "#00bbf9", "#fee440", "#f15bb5", "#9b5de5", "#70e000"],
+    candy: ["#ff8fab", "#ffc2d1", "#bde0fe", "#a2d2ff", "#cdb4db", "#fdffb6"],
+    mono: ["#c9d1d9", "#9aa4ad", "#7dd3c7", "#8fb3ff", "#d8dee9", "#adb5bd"]
+  };
+
+  return palettes[appPreferences.padTheme] || palettes.spectrum;
+}
+
+function getPadTone(item, metadata) {
+  const defaultColor = defaultMetadataForItem(item).color;
+  if (metadata.color && metadata.color !== defaultColor) {
+    return metadata.color;
+  }
+
+  const palette = getPadThemePalette();
+  return palette[hashString(`${metadata.board}:${item.path}`) % palette.length];
+}
+
+function ensureLibraryMetadataForItems() {
+  const paths = new Set(importedLibraryItems.map((item) => item.path));
+  Object.keys(libraryMetadata).forEach((path) => {
+    if (!paths.has(path)) {
+      delete libraryMetadata[path];
+    }
+  });
+
+  importedLibraryItems.forEach((item) => {
+    libraryMetadata[item.path] = getSoundMetadata(item);
+    if (!boards.includes(libraryMetadata[item.path].board)) {
+      boards.push(libraryMetadata[item.path].board);
+    }
+  });
+
+  if (selectedBoard !== allBoardsValue && !boards.includes(selectedBoard)) {
+    selectedBoard = allBoardsValue;
+  }
+
+  saveLibraryMetadata();
+}
+
+function renderBoardControls() {
+  const renderOptions = (select, includeAll) => {
+    if (!select) {
+      return;
+    }
+
+    select.innerHTML = "";
+    if (includeAll) {
+      const allOption = document.createElement("option");
+      allOption.value = allBoardsValue;
+      allOption.textContent = "All Boards";
+      select.appendChild(allOption);
+    }
+
+    boards.forEach((board) => {
+      const option = document.createElement("option");
+      option.value = board;
+      option.textContent = board;
+      select.appendChild(option);
+    });
+  };
+
+  renderOptions(boardSelect, true);
+  renderOptions(soundEditorBoard, false);
+
+  if (boardSelect) {
+    boardSelect.value = selectedBoard;
+  }
+
+  if (soundSortSelect) {
+    soundSortSelect.value = soundSortMode;
+  }
+}
+
+function getVisibleLibraryItems() {
+  const query = soundSearchQuery.trim().toLowerCase();
+  const visible = importedLibraryItems.filter((item) => {
+    const metadata = getSoundMetadata(item);
+    if (selectedBoard !== allBoardsValue && metadata.board !== selectedBoard) {
+      return false;
+    }
+
+    if (showFavoritesOnly && !metadata.favorite) {
+      return false;
+    }
+
+    if (!query) {
+      return true;
+    }
+
+    return metadata.name.toLowerCase().includes(query)
+      || item.name.toLowerCase().includes(query)
+      || metadata.board.toLowerCase().includes(query);
+  });
+
+  visible.sort((first, second) => {
+    const firstMetadata = getSoundMetadata(first);
+    const secondMetadata = getSoundMetadata(second);
+    const firstPriority = (firstMetadata.pinned ? 2 : 0) + (firstMetadata.favorite ? 1 : 0);
+    const secondPriority = (secondMetadata.pinned ? 2 : 0) + (secondMetadata.favorite ? 1 : 0);
+    if (firstPriority !== secondPriority) {
+      return secondPriority - firstPriority;
+    }
+
+    if (soundSortMode === "newest") {
+      return Number(second.updatedAt || 0) - Number(first.updatedAt || 0);
+    }
+    if (soundSortMode === "oldest") {
+      return Number(first.updatedAt || 0) - Number(second.updatedAt || 0);
+    }
+    if (soundSortMode === "size") {
+      return Number(second.sizeBytes || 0) - Number(first.sizeBytes || 0);
+    }
+
+    return firstMetadata.name.localeCompare(secondMetadata.name);
+  });
+
+  return visible;
 }
 
 function applyBackgroundSettingsToUi(settings = {}) {
@@ -313,6 +766,21 @@ function getKeyLabelFromCode(code) {
   return code.replace(/^Numpad/, "Num ").replace(/^Arrow/, "Arrow ");
 }
 
+function getKeybindLabel(binding) {
+  const normalized = normalizeKeybindBinding(binding);
+  if (!normalized) {
+    return "";
+  }
+
+  return [
+    normalized.modifiers.ctrl ? "Ctrl" : "",
+    normalized.modifiers.shift ? "Shift" : "",
+    normalized.modifiers.alt ? "Alt" : "",
+    normalized.modifiers.meta ? "Win" : "",
+    getKeyLabelFromCode(normalized.code)
+  ].filter(Boolean).join("+");
+}
+
 function beginKeybindCapture(path) {
   keybindCapturePath = path;
   renderImportedLibrary();
@@ -326,16 +794,23 @@ function cancelKeybindCapture() {
   renderStopKeybindButton();
 }
 
-function assignKeybind(path, code) {
+function assignKeybind(path, binding) {
+  const normalized = normalizeKeybindBinding(binding);
+  if (!normalized) {
+    return;
+  }
+
+  const signature = getKeybindSignature(normalized);
   Object.keys(importedKeybinds).forEach((existingPath) => {
-    if (importedKeybinds[existingPath]?.code === code) {
+    if (getKeybindSignature(importedKeybinds[existingPath]) === signature) {
       delete importedKeybinds[existingPath];
     }
   });
 
   importedKeybinds[path] = {
-    code,
-    label: getKeyLabelFromCode(code)
+    code: normalized.code,
+    modifiers: normalized.modifiers,
+    label: getKeybindLabel(normalized)
   };
 
   saveKeybinds();
@@ -376,6 +851,17 @@ function formatSize(bytes) {
   return `${bytes} B`;
 }
 
+function formatPlaybackMode(mode) {
+  const labels = {
+    overlap: "Overlap",
+    restart: "Restart",
+    once: "Play Once",
+    loop: "Loop"
+  };
+
+  return labels[mode] || "Overlap";
+}
+
 function setLibraryState(message) {
   if (libraryState) {
     libraryState.textContent = message;
@@ -387,6 +873,9 @@ function renderImportedLibrary() {
     return;
   }
 
+  renderBoardControls();
+  updateFavoritesViewButton();
+  const visibleItems = getVisibleLibraryItems();
   importedList.innerHTML = "";
 
   if (importedLibraryItems.length === 0) {
@@ -397,22 +886,51 @@ function renderImportedLibrary() {
     return;
   }
 
-  importedLibraryItems.forEach((item) => {
+  if (visibleItems.length === 0) {
+    const placeholder = document.createElement("p");
+    placeholder.className = "routing-tip";
+    placeholder.textContent = "No sounds match the current board or search.";
+    importedList.appendChild(placeholder);
+    return;
+  }
+
+  visibleItems.forEach((item) => {
+    const metadata = getSoundMetadata(item);
     const card = document.createElement("div");
     card.className = "imported-item";
+    card.classList.toggle("favorite", metadata.favorite);
+    card.classList.toggle("pinned", metadata.pinned);
+    card.style.setProperty("--tone", getPadTone(item, metadata));
 
     const trigger = document.createElement("button");
     trigger.className = "pad imported-pad";
     trigger.type = "button";
-    trigger.style.setProperty("--tone", "#4da8ff");
+
+    const padTop = document.createElement("div");
+    padTop.className = "pad-topline";
+
+    const boardTag = document.createElement("span");
+    boardTag.className = "pad-tag";
+    boardTag.textContent = metadata.pinned
+      ? `Pinned / ${metadata.board}`
+      : metadata.favorite
+        ? `Favorite / ${metadata.board}`
+        : metadata.board;
+
+    const keyTag = document.createElement("span");
+    keyTag.className = "pad-key";
+    keyTag.textContent = importedKeybinds[item.path]?.label || "No key";
+
+    padTop.appendChild(boardTag);
+    padTop.appendChild(keyTag);
 
     const name = document.createElement("p");
     name.className = "imported-name";
-    name.textContent = item.name;
+    name.textContent = metadata.name;
 
     const detail = document.createElement("p");
     detail.className = "imported-meta";
-    detail.textContent = formatSize(item.sizeBytes || 0);
+    detail.textContent = `${formatSize(item.sizeBytes || 0)} / ${formatPlaybackMode(metadata.playbackMode)}`;
 
     trigger.addEventListener("click", () => {
       playImportedSound(item);
@@ -444,7 +962,7 @@ function renderImportedLibrary() {
     const clearButton = document.createElement("button");
     clearButton.type = "button";
     clearButton.className = "mixer-action keybind-clear";
-    clearButton.textContent = "Clear";
+    clearButton.textContent = "Unbind";
     clearButton.disabled = !binding;
     clearButton.addEventListener("click", () => {
       clearKeybind(item.path);
@@ -455,6 +973,32 @@ function renderImportedLibrary() {
       setLibraryState("Keybind cleared.");
     });
 
+    const favoriteButton = document.createElement("button");
+    favoriteButton.type = "button";
+    favoriteButton.className = "mixer-action";
+    favoriteButton.classList.toggle("active", metadata.favorite);
+    favoriteButton.textContent = metadata.favorite ? "Favorited" : "Favorite";
+    favoriteButton.addEventListener("click", () => {
+      toggleSoundFlag(item, "favorite");
+    });
+
+    const pinButton = document.createElement("button");
+    pinButton.type = "button";
+    pinButton.className = "mixer-action";
+    pinButton.classList.toggle("active", metadata.pinned);
+    pinButton.textContent = metadata.pinned ? "Pinned" : "Pin";
+    pinButton.addEventListener("click", () => {
+      toggleSoundFlag(item, "pinned");
+    });
+
+    const editButton = document.createElement("button");
+    editButton.type = "button";
+    editButton.className = "mixer-action";
+    editButton.textContent = "Edit";
+    editButton.addEventListener("click", () => {
+      openSoundEditor(item);
+    });
+
     const removeButton = document.createElement("button");
     removeButton.type = "button";
     removeButton.className = "mixer-action imported-remove";
@@ -463,15 +1007,246 @@ function renderImportedLibrary() {
       removeImportedAudio(item);
     });
 
+    trigger.appendChild(padTop);
     trigger.appendChild(name);
     trigger.appendChild(detail);
     actions.appendChild(bindButton);
+    actions.appendChild(favoriteButton);
+    actions.appendChild(pinButton);
     actions.appendChild(clearButton);
+    actions.appendChild(editButton);
     actions.appendChild(removeButton);
     card.appendChild(trigger);
     card.appendChild(actions);
     importedList.appendChild(card);
   });
+}
+
+function toggleSoundFlag(item, flagName) {
+  if (flagName !== "favorite" && flagName !== "pinned") {
+    return;
+  }
+
+  const metadata = getSoundMetadata(item);
+  metadata[flagName] = !metadata[flagName];
+  libraryMetadata[item.path] = metadata;
+  saveLibraryMetadata();
+  renderImportedLibrary();
+
+  const label = flagName === "favorite" ? "favorite" : "pinned";
+  setLibraryState(metadata[flagName]
+    ? `${metadata.name} marked as ${label}.`
+    : `${metadata.name} removed from ${label} sounds.`);
+}
+
+function openSettings() {
+  if (!settingsOverlay) {
+    return;
+  }
+
+  applyAppPreferences();
+  settingsOverlay.hidden = false;
+}
+
+function closeSettings() {
+  if (settingsOverlay) {
+    settingsOverlay.hidden = true;
+  }
+}
+
+function updateAppPreference(updates) {
+  appPreferences = {
+    ...appPreferences,
+    ...updates
+  };
+  applyAppPreferences();
+  saveAppPreferences();
+  renderImportedLibrary();
+}
+
+function resetVisualSettings() {
+  appPreferences = { ...defaultAppPreferences };
+  applyAppPreferences();
+  saveAppPreferences();
+  renderImportedLibrary();
+  setLibraryState("Visual settings reset.");
+}
+
+function openSoundEditor(item) {
+  if (!soundEditorOverlay) {
+    return;
+  }
+
+  editingSoundPath = item.path;
+  const metadata = getSoundMetadata(item);
+  renderBoardControls();
+
+  if (soundEditorFile) {
+    soundEditorFile.textContent = item.name;
+  }
+  if (soundEditorName) {
+    soundEditorName.value = metadata.name;
+  }
+  if (soundEditorBoard) {
+    soundEditorBoard.value = metadata.board;
+  }
+  if (soundEditorColor) {
+    soundEditorColor.value = metadata.color;
+  }
+  if (soundEditorMode) {
+    soundEditorMode.value = metadata.playbackMode;
+  }
+  if (soundEditorVolume) {
+    soundEditorVolume.value = String(metadata.volume);
+  }
+  if (soundEditorVolumeValue) {
+    soundEditorVolumeValue.textContent = percent(metadata.volume);
+  }
+  if (soundEditorTrimStart) {
+    soundEditorTrimStart.value = String(metadata.trimStart);
+  }
+  if (soundEditorTrimEnd) {
+    soundEditorTrimEnd.value = String(metadata.trimEnd);
+  }
+  if (soundEditorFadeIn) {
+    soundEditorFadeIn.value = String(metadata.fadeIn);
+  }
+  if (soundEditorFadeOut) {
+    soundEditorFadeOut.value = String(metadata.fadeOut);
+  }
+
+  soundEditorOverlay.hidden = false;
+  soundEditorName?.focus();
+}
+
+function closeSoundEditor() {
+  editingSoundPath = "";
+  if (soundEditorOverlay) {
+    soundEditorOverlay.hidden = true;
+  }
+}
+
+function readSoundEditorMetadata(item) {
+  const existing = getSoundMetadata(item);
+  return normalizeSoundMetadata(item, {
+    ...existing,
+    name: soundEditorName?.value,
+    board: soundEditorBoard?.value,
+    color: soundEditorColor?.value,
+    volume: soundEditorVolume?.value,
+    trimStart: soundEditorTrimStart?.value,
+    trimEnd: soundEditorTrimEnd?.value,
+    fadeIn: soundEditorFadeIn?.value,
+    fadeOut: soundEditorFadeOut?.value,
+    playbackMode: soundEditorMode?.value
+  });
+}
+
+function saveSoundEditor() {
+  const item = importedLibraryItems.find((candidate) => candidate.path === editingSoundPath);
+  if (!item) {
+    closeSoundEditor();
+    return;
+  }
+
+  const metadata = readSoundEditorMetadata(item);
+  libraryMetadata[item.path] = metadata;
+  if (!boards.includes(metadata.board)) {
+    boards.push(metadata.board);
+  }
+
+  saveLibraryMetadata();
+  renderImportedLibrary();
+  setLibraryState(`Saved ${metadata.name}.`);
+  closeSoundEditor();
+}
+
+function resetSoundEditor() {
+  const item = importedLibraryItems.find((candidate) => candidate.path === editingSoundPath);
+  if (!item) {
+    return;
+  }
+
+  libraryMetadata[item.path] = defaultMetadataForItem(item);
+  saveLibraryMetadata();
+  openSoundEditor(item);
+  renderImportedLibrary();
+  setLibraryState("Sound settings reset.");
+}
+
+function previewSoundEditor() {
+  const item = importedLibraryItems.find((candidate) => candidate.path === editingSoundPath);
+  if (!item) {
+    return;
+  }
+
+  const previous = libraryMetadata[item.path];
+  libraryMetadata[item.path] = readSoundEditorMetadata(item);
+  playImportedSound(item);
+  if (previous) {
+    libraryMetadata[item.path] = previous;
+  } else {
+    delete libraryMetadata[item.path];
+  }
+}
+
+function addBoard() {
+  const name = sanitizeBoardName(window.prompt("New board name"));
+  if (!name) {
+    return;
+  }
+
+  if (!boards.includes(name)) {
+    boards.push(name);
+    saveLibraryMetadata();
+  }
+
+  selectedBoard = name;
+  saveLibraryView();
+  renderImportedLibrary();
+  setLibraryState(`Board selected: ${name}.`);
+}
+
+function openRoutingWizard() {
+  if (!routingWizardOverlay) {
+    return;
+  }
+
+  routingWizardOverlay.hidden = false;
+  if (routingWizardState) {
+    routingWizardState.textContent = "Start by refreshing devices. SoundMuncher will keep loopback/system inputs hidden.";
+  }
+}
+
+function closeRoutingWizard() {
+  if (routingWizardOverlay) {
+    routingWizardOverlay.hidden = true;
+  }
+}
+
+async function runWizardDeviceRefresh() {
+  if (routingWizardState) {
+    routingWizardState.textContent = "Refreshing audio devices...";
+  }
+
+  preferVirtualOutputOnce = true;
+  await refreshOutputDevices();
+
+  if (routingWizardState) {
+    routingWizardState.textContent = `Selected mic: ${inputDeviceSelect.selectedOptions?.[0]?.textContent || "none"}. Output: ${selectedOutputLabel()}.`;
+  }
+}
+
+async function runWizardTestTone() {
+  if (routingWizardState) {
+    routingWizardState.textContent = "Sending test tone into the Discord mix...";
+  }
+
+  await sendTestTone();
+
+  if (routingWizardState) {
+    routingWizardState.textContent = "If Discord input is CABLE Output, the tone should appear on its input meter.";
+  }
 }
 
 async function loadImportedLibrary() {
@@ -482,6 +1257,7 @@ async function loadImportedLibrary() {
 
   try {
     importedLibraryItems = await window.soundmuncher.listImportedFiles();
+    ensureLibraryMetadataForItems();
     renderImportedLibrary();
 
     if (importedLibraryItems.length > 0) {
@@ -538,6 +1314,8 @@ async function removeImportedAudio(item) {
     }
 
     importedAudioBuffers.delete(item.path);
+    delete libraryMetadata[item.path];
+    saveLibraryMetadata();
     clearKeybind(item.path);
     if (keybindCapturePath === item.path) {
       keybindCapturePath = "";
@@ -563,16 +1341,27 @@ async function decodeImportedAudio(item) {
   return decoded;
 }
 
-function trackSoundNode(sourceNode, outputNode = null) {
+function trackSoundNode(sourceNode, outputNode = null, itemPath = "") {
   const entry = {
     sourceNode,
     outputNode,
+    itemPath,
     stopped: false
   };
 
   activeSoundNodes.add(entry);
 
   sourceNode.addEventListener?.("ended", () => {
+    try {
+      sourceNode.disconnect();
+    } catch (error) {
+    }
+
+    try {
+      outputNode?.disconnect();
+    } catch (error) {
+    }
+
     activeSoundNodes.delete(entry);
   }, { once: true });
 
@@ -604,6 +1393,16 @@ function stopTrackedSound(entry) {
   activeSoundNodes.delete(entry);
 }
 
+function stopSoundsByPath(itemPath) {
+  Array.from(activeSoundNodes)
+    .filter((entry) => entry.itemPath === itemPath)
+    .forEach(stopTrackedSound);
+}
+
+function hasActiveSoundForPath(itemPath) {
+  return Array.from(activeSoundNodes).some((entry) => entry.itemPath === itemPath && !entry.stopped);
+}
+
 function stopAllSounds() {
   if (activeSoundNodes.size === 0) {
     nowPlaying.textContent = "Ready";
@@ -621,14 +1420,59 @@ async function playImportedSound(item) {
       await setupMixer({ requestMic: false });
     }
 
-    const buffer = await decodeImportedAudio(item);
-    const source = audioContext.createBufferSource();
-    source.buffer = buffer;
-    source.connect(soundGainNode);
-    trackSoundNode(source);
-    source.start();
+    const metadata = getSoundMetadata(item);
+    if (metadata.playbackMode === "once" && hasActiveSoundForPath(item.path)) {
+      setLibraryState(`${metadata.name} is already playing.`);
+      return;
+    }
 
-    nowPlaying.textContent = `${item.name} (Imported)`;
+    if (metadata.playbackMode === "restart" && hasActiveSoundForPath(item.path)) {
+      stopSoundsByPath(item.path);
+    }
+
+    if (metadata.playbackMode === "loop" && hasActiveSoundForPath(item.path)) {
+      stopSoundsByPath(item.path);
+      nowPlaying.textContent = `${metadata.name} loop stopped`;
+      return;
+    }
+
+    const buffer = await decodeImportedAudio(item);
+    const trimStart = Math.min(metadata.trimStart, Math.max(0, buffer.duration - 0.01));
+    const trimEnd = Math.min(metadata.trimEnd, Math.max(0, buffer.duration - trimStart - 0.01));
+    const playableDuration = Math.max(0.01, buffer.duration - trimStart - trimEnd);
+    const source = audioContext.createBufferSource();
+    const outputGain = audioContext.createGain();
+    const now = audioContext.currentTime;
+
+    source.buffer = buffer;
+    source.loop = metadata.playbackMode === "loop";
+    if (source.loop) {
+      source.loopStart = trimStart;
+      source.loopEnd = trimStart + playableDuration;
+    }
+
+    outputGain.gain.setValueAtTime(Math.max(0.0001, metadata.volume), now);
+    if (metadata.fadeIn > 0) {
+      outputGain.gain.setValueAtTime(0.0001, now);
+      outputGain.gain.linearRampToValueAtTime(Math.max(0.0001, metadata.volume), now + Math.min(metadata.fadeIn, playableDuration));
+    }
+
+    if (!source.loop && metadata.fadeOut > 0) {
+      const fadeStart = now + Math.max(0, playableDuration - Math.min(metadata.fadeOut, playableDuration));
+      outputGain.gain.setValueAtTime(Math.max(0.0001, metadata.volume), fadeStart);
+      outputGain.gain.linearRampToValueAtTime(0.0001, now + playableDuration);
+    }
+
+    source.connect(outputGain);
+    outputGain.connect(soundGainNode);
+    trackSoundNode(source, outputGain, item.path);
+    if (source.loop) {
+      source.start(now, trimStart);
+    } else {
+      source.start(now, trimStart, playableDuration);
+    }
+
+    nowPlaying.textContent = `${metadata.name} (Imported)`;
   } catch (error) {
     setLibraryState(`Could not play ${item.name}.`);
   }
@@ -720,7 +1564,7 @@ function getPreferredOutputDevice(outputDevices) {
   }
 
   const currentOutputId = selectedOutputDeviceId || outputDeviceSelect.value;
-  if (currentOutputId) {
+  if (currentOutputId && !preferVirtualOutputOnce) {
     const existingSelection = outputDevices.find((device) => device.deviceId === currentOutputId);
     if (existingSelection) {
       return existingSelection;
@@ -816,6 +1660,7 @@ async function refreshOutputDevices() {
     availableInputDevices = devices.filter((device) => device.kind === "audioinput");
     availableOutputDevices = devices.filter((device) => device.kind === "audiooutput");
     const preferredOutput = getPreferredOutputDevice(availableOutputDevices);
+    preferVirtualOutputOnce = false;
     const preferredLocalPlayback = getPreferredLocalPlaybackDevice(availableOutputDevices);
 
     outputDeviceSelect.innerHTML = "";
@@ -848,6 +1693,7 @@ async function refreshOutputDevices() {
     }
 
     const { safeInputCount, blockedInputCount } = populateInputDevicesForOutput(preferredOutput);
+    saveMixerSettings();
 
     if (availableOutputDevices.length === 0) {
       setRouteState(withBlockedInputNotice("No audio output devices detected.", blockedInputCount));
@@ -869,6 +1715,7 @@ async function refreshOutputDevices() {
       await applyLocalPlaybackDevice({ silent: true });
     }
   } catch (error) {
+    preferVirtualOutputOnce = false;
     setRouteState("Failed to detect media devices. Grant microphone permission and refresh again.");
   }
 }
@@ -904,6 +1751,7 @@ async function applyOutputDevice() {
   try {
     await monitorElement.setSinkId(deviceId);
     syncMonitorAudibility();
+    saveMixerSettings();
 
     if (needsMicReconnect) {
       stopMicCapture();
@@ -1464,7 +2312,7 @@ function handleKeybindKeydown(event) {
       return;
     }
 
-    assignKeybind(keybindCapturePath, event.code);
+    assignKeybind(keybindCapturePath, keybindFromKeyboardEvent(event));
     const label = importedKeybinds[keybindCapturePath]?.label || event.code;
     cancelKeybindCapture();
     setLibraryState(`Keybind saved: ${label}.`);
@@ -1475,20 +2323,20 @@ function handleKeybindKeydown(event) {
     return;
   }
 
-  const stopped = triggerStopByCode(event.code);
+  const stopped = triggerStopByEvent(event);
   if (stopped) {
     event.preventDefault();
     return;
   }
 
-  const triggered = triggerImportedSoundByCode(event.code);
+  const triggered = triggerImportedSoundByEvent(event);
   if (triggered) {
     event.preventDefault();
   }
 }
 
-function triggerStopByCode(code) {
-  if (!code || importedKeybinds[stopKeybindId]?.code !== code) {
+function triggerStopByEvent(event) {
+  if (!event || !keybindMatchesEvent(importedKeybinds[stopKeybindId], event)) {
     return false;
   }
 
@@ -1496,8 +2344,8 @@ function triggerStopByCode(code) {
   return true;
 }
 
-function triggerImportedSoundByCode(code) {
-  const targetPath = Object.keys(importedKeybinds).find((path) => importedKeybinds[path]?.code === code);
+function triggerImportedSoundByEvent(event) {
+  const targetPath = Object.keys(importedKeybinds).find((path) => keybindMatchesEvent(importedKeybinds[path], event));
   if (!targetPath) {
     return false;
   }
@@ -1602,6 +2450,7 @@ async function setSoundPlaybackEnabled(enabled) {
 
 async function switchMicInput() {
   selectedInputDeviceId = inputDeviceSelect.value;
+  saveMixerSettings();
 
   const selectedLabel = inputDeviceSelect.selectedOptions?.[0]?.textContent || "";
   const selectedInputDevice = getSelectedInputDevice();
@@ -1658,6 +2507,53 @@ sendToneButton.addEventListener("click", sendTestTone);
 inputDeviceSelect.addEventListener("change", switchMicInput);
 outputDeviceSelect.addEventListener("change", applyOutputDevice);
 localPlaybackDeviceSelect?.addEventListener("change", applyLocalPlaybackDevice);
+boardSelect?.addEventListener("change", () => {
+  selectedBoard = boardSelect.value;
+  saveLibraryView();
+  renderImportedLibrary();
+});
+addBoardButton?.addEventListener("click", addBoard);
+soundSearchInput?.addEventListener("input", () => {
+  soundSearchQuery = soundSearchInput.value;
+  renderImportedLibrary();
+});
+soundSortSelect?.addEventListener("change", () => {
+  soundSortMode = soundSortSelect.value;
+  saveLibraryView();
+  renderImportedLibrary();
+});
+toggleFavoritesViewButton?.addEventListener("click", () => {
+  showFavoritesOnly = !showFavoritesOnly;
+  saveLibraryView();
+  renderImportedLibrary();
+});
+closeSoundEditorButton?.addEventListener("click", closeSoundEditor);
+saveSoundEditorButton?.addEventListener("click", saveSoundEditor);
+resetSoundEditorButton?.addEventListener("click", resetSoundEditor);
+previewSoundEditorButton?.addEventListener("click", previewSoundEditor);
+soundEditorVolume?.addEventListener("input", () => {
+  if (soundEditorVolumeValue) {
+    soundEditorVolumeValue.textContent = percent(Number(soundEditorVolume.value));
+  }
+});
+openRoutingWizardButton?.addEventListener("click", openRoutingWizard);
+closeRoutingWizardButton?.addEventListener("click", closeRoutingWizard);
+finishRoutingWizardButton?.addEventListener("click", closeRoutingWizard);
+wizardRefreshDevicesButton?.addEventListener("click", runWizardDeviceRefresh);
+wizardTestToneButton?.addEventListener("click", runWizardTestTone);
+openSettingsButton?.addEventListener("click", openSettings);
+closeSettingsButton?.addEventListener("click", closeSettings);
+saveSettingsButton?.addEventListener("click", closeSettings);
+resetVisualSettingsButton?.addEventListener("click", resetVisualSettings);
+compactModeToggle?.addEventListener("change", () => {
+  updateAppPreference({ compactMode: compactModeToggle.checked });
+});
+uiThemeSelect?.addEventListener("change", () => {
+  updateAppPreference({ uiTheme: uiThemeSelect.value });
+});
+padThemeSelect?.addEventListener("change", () => {
+  updateAppPreference({ padTheme: padThemeSelect.value });
+});
 keepRunningInTrayCheckbox?.addEventListener("change", () => {
   saveBackgroundSettings({ keepRunningInTray: keepRunningInTrayCheckbox.checked });
 });
@@ -1693,10 +2589,15 @@ if (openLibraryButton) {
 });
 
 loadMixerSettings();
+loadLibraryMetadata();
+loadLibraryView();
+loadAppPreferences();
+applyAppPreferences();
 updateGainLabels();
 updateToggleButtonLabels();
 loadKeybinds();
 renderStopKeybindButton();
+renderBoardControls();
 syncGlobalKeybinds();
 
 async function initializeApp() {
@@ -1720,11 +2621,19 @@ window.soundmuncher?.onGlobalKeybindTriggered?.((payload) => {
     return;
   }
 
-  if (triggerStopByCode(code)) {
+  const eventLike = {
+    code,
+    ctrlKey: Boolean(payload?.modifiers?.ctrl),
+    shiftKey: Boolean(payload?.modifiers?.shift),
+    altKey: Boolean(payload?.modifiers?.alt),
+    metaKey: Boolean(payload?.modifiers?.meta)
+  };
+
+  if (triggerStopByEvent(eventLike)) {
     return;
   }
 
-  triggerImportedSoundByCode(code);
+  triggerImportedSoundByEvent(eventLike);
 });
 if (navigator.mediaDevices?.addEventListener) {
   navigator.mediaDevices.addEventListener("devicechange", refreshOutputDevices);

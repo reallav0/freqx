@@ -10,7 +10,7 @@ let keyHook = null;
 let tray = null;
 let isQuitting = false;
 let appSettings = {
-  launchOnStartup: false,
+  launchOnStartup: true,
   startHidden: false,
   keepRunningInTray: true
 };
@@ -28,13 +28,13 @@ try {
   keyHook = null;
 }
 
-function emitGlobalKeyCode(code) {
+function emitGlobalKeyCode(code, modifiers = {}) {
   const targetWindow = mainWindow && !mainWindow.isDestroyed()
     ? mainWindow
     : BrowserWindow.getAllWindows()[0];
   const webContents = targetWindow?.webContents;
   if (webContents && !webContents.isDestroyed()) {
-    webContents.send("keybinds:trigger", { code });
+    webContents.send("keybinds:trigger", { code, modifiers });
   }
 }
 
@@ -233,8 +233,29 @@ function createUiohookBridge(uiohook, uiohookKey) {
 
 function configurePermissions() {
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    callback(permission === "media");
+    const isMainWindow = Boolean(mainWindow && !mainWindow.isDestroyed() && webContents === mainWindow.webContents);
+    callback(isMainWindow && permission === "media");
   });
+
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    const isMainWindow = Boolean(mainWindow && !mainWindow.isDestroyed() && webContents === mainWindow.webContents);
+    return isMainWindow && permission === "media";
+  });
+}
+
+function getRendererUrl() {
+  return pathToFileURL(path.join(__dirname, "index.html")).href;
+}
+
+function isTrustedIpcSender(event) {
+  const frameUrl = event?.senderFrame?.url || event?.sender?.getURL?.() || "";
+  return frameUrl === getRendererUrl();
+}
+
+function assertTrustedIpcSender(event) {
+  if (!isTrustedIpcSender(event)) {
+    throw new Error("Blocked IPC call from untrusted renderer.");
+  }
 }
 
 function getSettingsPath() {
@@ -247,7 +268,7 @@ function loadAppSettings() {
     const parsed = JSON.parse(raw);
     appSettings = {
       ...appSettings,
-      launchOnStartup: Boolean(parsed.launchOnStartup),
+      launchOnStartup: parsed.launchOnStartup !== false,
       startHidden: Boolean(parsed.startHidden),
       keepRunningInTray: parsed.keepRunningInTray !== false
     };
@@ -369,6 +390,14 @@ function createWindow() {
 
   mainWindow.removeMenu();
 
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (url !== getRendererUrl()) {
+      event.preventDefault();
+    }
+  });
+
   mainWindow.on("minimize", (event) => {
     if (!appSettings.keepRunningInTray) {
       return;
@@ -411,6 +440,10 @@ function writeTestTone(deviceId) {
     throw new Error("naudiodon is not available in this Electron runtime.");
   }
 
+  if (!Number.isFinite(deviceId)) {
+    throw new Error("A valid output device id is required.");
+  }
+
   const sampleRate = 48000;
   const durationSeconds = 1.1;
   const channelCount = 2;
@@ -446,7 +479,8 @@ function writeTestTone(deviceId) {
 }
 
 function registerAudioIpc() {
-  ipcMain.handle("audio:list-output-devices", () => {
+  ipcMain.handle("audio:list-output-devices", (event) => {
+    assertTrustedIpcSender(event);
     return {
       hasNaudiodon: Boolean(portAudio),
       devices: getOutputDevices()
@@ -454,17 +488,20 @@ function registerAudioIpc() {
   });
 
   ipcMain.handle("audio:send-test-tone", (event, deviceId) => {
+    assertTrustedIpcSender(event);
     writeTestTone(Number(deviceId));
     return { ok: true };
   });
 
-  ipcMain.handle("audio:open-library-folder", async () => {
+  ipcMain.handle("audio:open-library-folder", async (event) => {
+    assertTrustedIpcSender(event);
     const libraryDir = getLibraryDirectory();
     shell.openPath(libraryDir);
     return { ok: true };
   });
 
-  ipcMain.handle("audio:import-files", async () => {
+  ipcMain.handle("audio:import-files", async (event) => {
+    assertTrustedIpcSender(event);
     const { canceled, filePaths } = await dialog.showOpenDialog({
       title: "Import Audio Files",
       properties: ["openFile", "multiSelections"],
@@ -492,7 +529,8 @@ function registerAudioIpc() {
     return { imported, canceled: false };
   });
 
-  ipcMain.handle("audio:list-imported-files", async () => {
+  ipcMain.handle("audio:list-imported-files", async (event) => {
+    assertTrustedIpcSender(event);
     const libraryDir = getLibraryDirectory();
     const dirEntries = await fs.promises.readdir(libraryDir, { withFileTypes: true });
     const supportedExtensions = new Set([".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".opus"]);
@@ -508,6 +546,7 @@ function registerAudioIpc() {
   });
 
   ipcMain.handle("audio:remove-imported-file", async (event, filePath) => {
+    assertTrustedIpcSender(event);
     const targetPath = typeof filePath === "string" ? filePath : "";
     if (!targetPath) {
       return { ok: false, error: "invalid-path" };
@@ -543,6 +582,7 @@ function registerAudioIpc() {
   });
 
   ipcMain.handle("keybinds:register-global", (event, entries) => {
+    assertTrustedIpcSender(event);
     for (const entry of globalKeybindRegistrations) {
       globalShortcut.unregister(entry.accelerator);
     }
@@ -552,22 +592,23 @@ function registerAudioIpc() {
       keyHook.clearAll();
     }
 
-    const list = Array.isArray(entries) ? entries : [];
+    const list = Array.isArray(entries) ? entries.slice(0, 256) : [];
     const failed = [];
     const native = [];
     const globalShortcutResults = [];
 
     list.forEach((entry) => {
-      const accelerators = Array.isArray(entry?.accelerators)
-        ? entry.accelerators.filter(Boolean)
-        : [entry?.accelerator].filter(Boolean);
-      const code = entry?.code;
+      const accelerators = (Array.isArray(entry?.accelerators)
+        ? entry.accelerators
+        : [entry?.accelerator])
+        .filter((accelerator) => typeof accelerator === "string" && accelerator.length <= 80);
+      const code = typeof entry?.code === "string" && entry.code.length <= 40 ? entry.code : "";
 
       if (!code) {
         return;
       }
 
-      if (keyHook?.available) {
+      if (keyHook?.available && !entry?.preferGlobalShortcut) {
         const hooked = keyHook.watch(code, (domCode) => {
           emitGlobalKeyCode(domCode);
         });
@@ -588,7 +629,7 @@ function registerAudioIpc() {
       for (const accelerator of accelerators) {
         try {
           const success = globalShortcut.register(accelerator, () => {
-            emitGlobalKeyCode(code);
+            emitGlobalKeyCode(code, entry?.modifiers || {});
           });
 
           if (success) {
@@ -616,12 +657,16 @@ function registerAudioIpc() {
     };
   });
 
-  ipcMain.handle("app-settings:get", () => ({
-    ...appSettings,
-    loginItem: app.getLoginItemSettings()
-  }));
+  ipcMain.handle("app-settings:get", (event) => {
+    assertTrustedIpcSender(event);
+    return {
+      ...appSettings,
+      loginItem: app.getLoginItemSettings()
+    };
+  });
 
   ipcMain.handle("app-settings:set", (event, updates) => {
+    assertTrustedIpcSender(event);
     const allowedKeys = new Set(["launchOnStartup", "startHidden", "keepRunningInTray"]);
     const next = typeof updates === "object" && updates ? updates : {};
 
