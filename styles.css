@@ -195,6 +195,21 @@ body[data-theme="daylight"] {
   font-size: 0.88rem;
 }
 
+.brand-link {
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  font-size: inherit;
+  font-weight: 800;
+  line-height: inherit;
+  text-decoration: none;
+}
+
+.brand-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
 .top-actions,
 .mixer-actions,
 .route-buttons {

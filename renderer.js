@@ -1,6 +1,7 @@
 const nowPlaying = document.getElementById("nowPlaying");
 const stopAllSoundsButton = document.getElementById("stopAllSounds");
 const stopKeybindButton = document.getElementById("stopKeybind");
+const openWebsiteLink = document.getElementById("openWebsiteLink");
 const toggleMicCaptureButton = document.getElementById("toggleMicCapture");
 const toggleMixToOutputButton = document.getElementById("toggleMixToOutput");
 const toggleSoundPlaybackButton = document.getElementById("toggleSoundPlayback");
@@ -1214,7 +1215,7 @@ function openRoutingWizard() {
 
   routingWizardOverlay.hidden = false;
   if (routingWizardState) {
-    routingWizardState.textContent = "Start by refreshing devices. SoundMuncher will keep loopback/system inputs hidden.";
+    routingWizardState.textContent = "Start by refreshing devices. freqx will keep loopback/system inputs hidden.";
   }
 }
 
@@ -2492,6 +2493,11 @@ toggleMixToOutputButton?.addEventListener("click", () => {
 });
 toggleSoundPlaybackButton?.addEventListener("click", () => {
   setSoundPlaybackEnabled(!isSoundPlaybackEnabled);
+});
+openWebsiteLink?.addEventListener("click", async () => {
+  if (window.soundmuncher?.openWebsite) {
+    await window.soundmuncher.openWebsite();
+  }
 });
 stopAllSoundsButton?.addEventListener("click", stopAllSounds);
 stopKeybindButton?.addEventListener("click", () => {

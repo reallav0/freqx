@@ -9,6 +9,7 @@ let mainWindow;
 let keyHook = null;
 let tray = null;
 let isQuitting = false;
+const websiteUrl = "https://freqx.app";
 let appSettings = {
   launchOnStartup: true,
   startHidden: false,
@@ -324,7 +325,7 @@ function updateTrayMenu() {
 
   tray.setContextMenu(Menu.buildFromTemplate([
     {
-      label: "Show SoundMuncher",
+      label: "Show freqx",
       click: showMainWindow
     },
     {
@@ -361,7 +362,7 @@ function createTray() {
     height: 16
   });
   tray = new Tray(trayIcon);
-  tray.setToolTip("SoundMuncher");
+  tray.setToolTip("freqx");
   tray.on("click", showMainWindow);
   tray.on("double-click", showMainWindow);
   updateTrayMenu();
@@ -376,7 +377,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 620,
     backgroundColor: "#f5f4ef",
-    title: "SoundMuncher",
+    title: "freqx",
     icon: path.join(__dirname, "logo.png"),
     autoHideMenuBar: true,
     show: !shouldStartHidden,
@@ -479,6 +480,12 @@ function writeTestTone(deviceId) {
 }
 
 function registerAudioIpc() {
+  ipcMain.handle("app:open-website", async (event) => {
+    assertTrustedIpcSender(event);
+    await shell.openExternal(websiteUrl);
+    return { ok: true };
+  });
+
   ipcMain.handle("audio:list-output-devices", (event) => {
     assertTrustedIpcSender(event);
     return {

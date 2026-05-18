@@ -1,6 +1,8 @@
-# SoundMuncher
+# freqx
 
-SoundMuncher is an Electron soundboard for Discord voice chat. It mixes your real microphone with imported sound effects and sends the final mix to VB-CABLE.
+freqx is an Electron soundboard for Discord voice chat. It mixes your real microphone with imported sound effects and sends the final mix to VB-CABLE.
+
+Website: <https://freqx.app>
 
 ## Features
 
@@ -27,7 +29,7 @@ SoundMuncher is an Electron soundboard for Discord voice chat. It mixes your rea
 Use this setup:
 
 ```text
-Real microphone -> SoundMuncher -> CABLE Input -> Discord input as CABLE Output
+Real microphone -> freqx -> CABLE Input -> Discord input as CABLE Output
 ```
 
 Discord settings:
@@ -68,7 +70,7 @@ dist/
 Use this file for distribution:
 
 ```text
-dist/SoundMuncher Setup 1.0.0.exe
+dist/freqx Setup 1.0.0.exe
 ```
 
 ## Bundling VB-CABLE
