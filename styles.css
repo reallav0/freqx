@@ -890,6 +890,34 @@ input[type="range"]::-webkit-slider-thumb:hover {
   padding: 0 12px;
 }
 
+.update-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 12px;
+}
+
+.update-title {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.update-panel .routing-tip {
+  margin: 4px 0 0;
+}
+
+.update-actions {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .form-field {
   display: grid;
   gap: 6px;
@@ -1174,7 +1202,14 @@ body.compact-mode .mixer-grid {
     flex-direction: column;
   }
 
+  .update-panel,
+  .update-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .route-buttons,
+  .update-actions .mixer-action,
   .route-buttons .mixer-action {
     width: 100%;
   }

@@ -73,17 +73,35 @@ Use this file for distribution:
 dist/freqx Setup 1.0.0.exe
 ```
 
+## GitHub Update Checks
+
+The app checks `https://github.com/reallav0/freqx` for the latest public
+GitHub release and compares the release tag with the local `package.json`
+version. Use release tags like `v1.0.1`, and upload the installer asset to the
+release so the in-app Download button can open it.
+
+To point a local build at another repository without editing `package.json`,
+set `FREQX_UPDATE_REPOSITORY` to `owner/repo` before launching the app.
+
 ## Bundling VB-CABLE
 
-Place the official VB-CABLE installer files in:
+Place the full official VB-CABLE zip in:
 
 ```text
 drivers/
 ```
 
-Supported filenames:
+The installer will extract the zip during install, temporarily trust the
+package signer for the Windows driver prompt, and run the official setup in
+hidden install mode. You can also extract the zip into `drivers/` before
+building. Do not copy only the setup executable; VB-CABLE needs the companion
+driver files from the same package, such as the `.inf`, `.sys`, and catalog
+files.
+
+Supported package/setup filenames:
 
 ```text
+*.zip
 VBCABLE_Setup_x64.exe
 VBCABLE_Setup.exe
 ```
@@ -98,4 +116,5 @@ Only redistribute VB-CABLE if the VB-Audio license or explicit permission allows
 - `index.html` - app UI
 - `styles.css` - app styling
 - `installer/vbcable.nsh` - NSIS hook for bundled VB-CABLE installer
-- `drivers/` - optional local driver installer files
+- `installer/install-vbcable-driver.ps1` - silent VB-CABLE setup helper
+- `drivers/` - optional local unzipped driver package files

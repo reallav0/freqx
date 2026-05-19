@@ -1,9 +1,11 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("soundmuncher", {
-  appName: "freqx",
+  appName: "Freqx",
   websiteUrl: "https://freqx.app",
   openWebsite: () => ipcRenderer.invoke("app:open-website"),
+  checkForUpdates: () => ipcRenderer.invoke("app:check-for-updates"),
+  openUpdatePage: (url) => ipcRenderer.invoke("app:open-update-page", url),
   listOutputDevices: () => ipcRenderer.invoke("audio:list-output-devices"),
   sendTestTone: (deviceId) => ipcRenderer.invoke("audio:send-test-tone", deviceId),
   importAudioFiles: () => ipcRenderer.invoke("audio:import-files"),

@@ -68,6 +68,9 @@ const resetVisualSettingsButton = document.getElementById("resetVisualSettings")
 const compactModeToggle = document.getElementById("compactModeToggle");
 const uiThemeSelect = document.getElementById("uiThemeSelect");
 const padThemeSelect = document.getElementById("padThemeSelect");
+const checkUpdatesButton = document.getElementById("checkUpdates");
+const openUpdatePageButton = document.getElementById("openUpdatePage");
+const updateState = document.getElementById("updateState");
 
 let audioContext;
 let micStream;
@@ -148,6 +151,7 @@ let editingSoundPath = "";
 let preferVirtualOutputOnce = false;
 let showFavoritesOnly = false;
 let appPreferences = { ...defaultAppPreferences };
+let latestUpdateUrl = "";
 
 function keyCodeToAcceleratorParts(code) {
   if (/^Key[A-Z]$/.test(code)) {
@@ -740,6 +744,82 @@ async function saveBackgroundSettings(updates) {
     applyBackgroundSettingsToUi(result?.settings || updates);
   } catch (error) {
     setRouteState("Failed to save background setting.");
+  }
+}
+
+function setUpdatePageButton(url) {
+  latestUpdateUrl = typeof url === "string" ? url : "";
+
+  if (openUpdatePageButton) {
+    openUpdatePageButton.hidden = !latestUpdateUrl;
+  }
+}
+
+async function checkForUpdates() {
+  if (!window.soundmuncher?.checkForUpdates) {
+    if (updateState) {
+      updateState.textContent = "Update checks are not available in this build.";
+    }
+    return;
+  }
+
+  if (checkUpdatesButton) {
+    checkUpdatesButton.disabled = true;
+  }
+  setUpdatePageButton("");
+  if (updateState) {
+    updateState.textContent = "Checking GitHub for updates...";
+  }
+
+  try {
+    const result = await window.soundmuncher.checkForUpdates();
+
+    if (!result?.ok) {
+      if (updateState) {
+        updateState.textContent = result?.message || "Could not check GitHub for updates.";
+      }
+      return;
+    }
+
+    const currentVersion = result.currentVersion ? `v${result.currentVersion}` : "current version";
+    const latestVersion = result.latestVersion ? `v${result.latestVersion}` : "latest release";
+
+    if (result.updateAvailable) {
+      if (updateState) {
+        updateState.textContent = `${latestVersion} is available. You are running ${currentVersion}.`;
+      }
+      setUpdatePageButton(result.downloadUrl || result.releaseUrl);
+      return;
+    }
+
+    if (updateState) {
+      updateState.textContent = `freqx is up to date (${currentVersion}).`;
+    }
+  } catch (error) {
+    if (updateState) {
+      updateState.textContent = "Could not check GitHub for updates.";
+    }
+  } finally {
+    if (checkUpdatesButton) {
+      checkUpdatesButton.disabled = false;
+    }
+  }
+}
+
+async function openUpdatePage() {
+  if (!latestUpdateUrl || !window.soundmuncher?.openUpdatePage) {
+    return;
+  }
+
+  try {
+    const result = await window.soundmuncher.openUpdatePage(latestUpdateUrl);
+    if (!result?.ok && updateState) {
+      updateState.textContent = "Could not open the GitHub update page.";
+    }
+  } catch (error) {
+    if (updateState) {
+      updateState.textContent = "Could not open the GitHub update page.";
+    }
   }
 }
 
@@ -2551,6 +2631,8 @@ openSettingsButton?.addEventListener("click", openSettings);
 closeSettingsButton?.addEventListener("click", closeSettings);
 saveSettingsButton?.addEventListener("click", closeSettings);
 resetVisualSettingsButton?.addEventListener("click", resetVisualSettings);
+checkUpdatesButton?.addEventListener("click", checkForUpdates);
+openUpdatePageButton?.addEventListener("click", openUpdatePage);
 compactModeToggle?.addEventListener("change", () => {
   updateAppPreference({ compactMode: compactModeToggle.checked });
 });

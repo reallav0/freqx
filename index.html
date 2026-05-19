@@ -119,13 +119,13 @@
             </label>
             <label class="mixer-control" for="soundGain">
               <span>Soundboard</span>
-              <input id="soundGain" type="range" min="0" max="1" step="0.01" value="0.85" />
-              <output id="soundGainValue">85%</output>
+              <input id="soundGain" type="range" min="0" max="1" step="0.01" value="0.5" />
+              <output id="soundGainValue">50%</output>
             </label>
             <label class="mixer-control" for="masterGain">
               <span>Main Output</span>
-              <input id="masterGain" type="range" min="0" max="1" step="0.01" value="0.9" />
-              <output id="masterGainValue">90%</output>
+              <input id="masterGain" type="range" min="0" max="1" step="0.01" value="1" />
+              <output id="masterGainValue">100%</output>
             </label>
           </div>
 
@@ -343,6 +343,16 @@
               <option value="mono">Mono</option>
             </select>
           </label>
+          <div class="update-panel modal-control" aria-live="polite">
+            <div>
+              <span class="update-title">Updates</span>
+              <p id="updateState" class="routing-tip">Check GitHub for a newer freqx release.</p>
+            </div>
+            <div class="update-actions">
+              <button id="checkUpdates" class="mixer-action compact-action" type="button">Check</button>
+              <button id="openUpdatePage" class="mixer-action primary-action compact-action" type="button" hidden>Download</button>
+            </div>
+          </div>
         </div>
         <div class="modal-actions">
           <button id="resetVisualSettings" class="mixer-action" type="button">Reset Visuals</button>

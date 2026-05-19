@@ -1,7 +1,7 @@
 {
   "name": "freqx",
   "version": "1.0.0",
-  "description": "freqx desktop soundboard app powered by Electron",
+  "description": "Freqx desktop soundboard app",
   "main": "main.js",
   "author": "Nguyen",
   "license": "ISC",

@@ -1,7 +1,9 @@
 const { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, session, shell } = require("electron");
 const fs = require("fs");
+const https = require("https");
 const path = require("path");
 const { pathToFileURL } = require("url");
+const packageMetadata = require("./package.json");
 
 let portAudio = null;
 let globalKeybindRegistrations = [];
@@ -10,11 +12,14 @@ let keyHook = null;
 let tray = null;
 let isQuitting = false;
 const websiteUrl = "https://freqx.app";
+const githubUpdateRepository = getConfiguredGitHubRepository();
 let appSettings = {
   launchOnStartup: true,
   startHidden: false,
   keepRunningInTray: true
 };
+
+configureDevelopmentStoragePaths();
 
 try {
   portAudio = require("naudiodon");
@@ -27,6 +32,16 @@ try {
   keyHook = createUiohookBridge(uIOhook, UiohookKey);
 } catch (error) {
   keyHook = null;
+}
+
+function configureDevelopmentStoragePaths() {
+  if (app.isPackaged) {
+    return;
+  }
+
+  const devUserDataPath = path.join(app.getPath("appData"), "freqx-dev");
+  app.setPath("userData", devUserDataPath);
+  app.setPath("sessionData", path.join(devUserDataPath, "session"));
 }
 
 function emitGlobalKeyCode(code, modifiers = {}) {
@@ -259,6 +274,232 @@ function assertTrustedIpcSender(event) {
   }
 }
 
+function getConfiguredGitHubRepository() {
+  const candidates = [
+    process.env.FREQX_UPDATE_REPOSITORY,
+    packageMetadata?.repository?.url,
+    packageMetadata?.repository
+  ];
+
+  for (const candidate of candidates) {
+    const repository = normalizeGitHubRepository(candidate);
+    if (repository) {
+      return repository;
+    }
+  }
+
+  return "";
+}
+
+function normalizeGitHubRepository(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (typeof value === "object") {
+    return normalizeGitHubRepository(value.url);
+  }
+
+  const raw = String(value).trim();
+  const shorthandMatch = raw.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
+  if (shorthandMatch) {
+    return `${shorthandMatch[1]}/${shorthandMatch[2]}`;
+  }
+
+  const sshMatch = raw.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/i);
+  if (sshMatch) {
+    return `${sshMatch[1]}/${sshMatch[2].replace(/\.git$/i, "")}`;
+  }
+
+  try {
+    const parsedUrl = new URL(raw.replace(/^git\+/, ""));
+    if (parsedUrl.hostname.toLowerCase() !== "github.com") {
+      return "";
+    }
+
+    const parts = parsedUrl.pathname
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/\.git$/i, "")
+      .split("/");
+
+    if (parts.length >= 2 && parts[0] && parts[1]) {
+      return `${parts[0]}/${parts[1]}`;
+    }
+  } catch (error) {
+  }
+
+  return "";
+}
+
+function normalizeVersion(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const match = raw.match(/\d+(?:\.\d+){0,3}(?:-[0-9A-Za-z.-]+)?/);
+  return match ? match[0] : "";
+}
+
+function parseComparableVersion(value) {
+  const normalized = normalizeVersion(value);
+  if (!normalized) {
+    return null;
+  }
+
+  const [numberPart, prereleasePart = ""] = normalized.split("-", 2);
+  const numbers = numberPart
+    .split(".")
+    .slice(0, 4)
+    .map((part) => Number.parseInt(part, 10))
+    .map((part) => (Number.isFinite(part) ? part : 0));
+
+  while (numbers.length < 4) {
+    numbers.push(0);
+  }
+
+  return {
+    numbers,
+    prerelease: prereleasePart
+  };
+}
+
+function compareVersions(currentVersion, latestVersion) {
+  const current = parseComparableVersion(currentVersion);
+  const latest = parseComparableVersion(latestVersion);
+
+  if (!current || !latest) {
+    return String(currentVersion || "").localeCompare(String(latestVersion || ""));
+  }
+
+  for (let index = 0; index < current.numbers.length; index += 1) {
+    if (current.numbers[index] < latest.numbers[index]) {
+      return -1;
+    }
+
+    if (current.numbers[index] > latest.numbers[index]) {
+      return 1;
+    }
+  }
+
+  if (current.prerelease && !latest.prerelease) {
+    return -1;
+  }
+
+  if (!current.prerelease && latest.prerelease) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function fetchJson(url) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": `${packageMetadata.name || "freqx"}-${app.getVersion()}`
+      },
+      timeout: 12000
+    }, (response) => {
+      let body = "";
+
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        body += chunk;
+        if (body.length > 1024 * 1024) {
+          request.destroy(new Error("GitHub response was too large."));
+        }
+      });
+
+      response.on("end", () => {
+        let parsed;
+        try {
+          parsed = body ? JSON.parse(body) : {};
+        } catch (error) {
+          reject(new Error("GitHub returned an invalid response."));
+          return;
+        }
+
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          const rateLimited = response.statusCode === 403 && response.headers["x-ratelimit-remaining"] === "0";
+          const message = rateLimited
+            ? "GitHub rate limit reached. Try again later."
+            : parsed?.message || `GitHub returned HTTP ${response.statusCode}.`;
+          reject(new Error(message));
+          return;
+        }
+
+        resolve(parsed);
+      });
+    });
+
+    request.on("timeout", () => {
+      request.destroy(new Error("GitHub update check timed out."));
+    });
+
+    request.on("error", reject);
+  });
+}
+
+function findReleaseDownloadUrl(release) {
+  const releaseUrl = typeof release?.html_url === "string" ? release.html_url : "";
+  const assets = Array.isArray(release?.assets) ? release.assets : [];
+  const installerAsset = assets.find((asset) => {
+    const name = typeof asset?.name === "string" ? asset.name : "";
+    return /\.(exe|msi)$/i.test(name) && /(setup|installer|freqx|xoundboard)/i.test(name);
+  }) || assets.find((asset) => {
+    const name = typeof asset?.name === "string" ? asset.name : "";
+    return /\.(exe|msi)$/i.test(name);
+  });
+
+  return typeof installerAsset?.browser_download_url === "string"
+    ? installerAsset.browser_download_url
+    : releaseUrl;
+}
+
+async function getLatestGitHubRelease(repository) {
+  const [owner, repo] = repository.split("/");
+  let release;
+
+  try {
+    release = await fetchJson(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/latest`);
+  } catch (error) {
+    if (error?.message === "Not Found") {
+      throw new Error(`No public GitHub release found for ${repository}.`);
+    }
+    throw error;
+  }
+
+  const latestVersion = normalizeVersion(release?.tag_name || release?.name || "");
+
+  if (!latestVersion) {
+    throw new Error("Latest GitHub release has no version tag.");
+  }
+
+  return {
+    tagName: release.tag_name || latestVersion,
+    latestVersion,
+    releaseName: release.name || release.tag_name || latestVersion,
+    releaseUrl: release.html_url || `https://github.com/${repository}/releases/latest`,
+    downloadUrl: findReleaseDownloadUrl(release),
+    publishedAt: release.published_at || ""
+  };
+}
+
+function isAllowedGitHubUpdateUrl(url) {
+  if (!githubUpdateRepository || typeof url !== "string") {
+    return false;
+  }
+
+  try {
+    const parsedUrl = new URL(url);
+    const [owner, repo] = githubUpdateRepository.split("/");
+    const allowedPrefix = `/${owner}/${repo}/`.toLowerCase();
+    return parsedUrl.protocol === "https:"
+      && parsedUrl.hostname.toLowerCase() === "github.com"
+      && parsedUrl.pathname.toLowerCase().startsWith(allowedPrefix);
+  } catch (error) {
+    return false;
+  }
+}
+
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
 }
@@ -483,6 +724,53 @@ function registerAudioIpc() {
   ipcMain.handle("app:open-website", async (event) => {
     assertTrustedIpcSender(event);
     await shell.openExternal(websiteUrl);
+    return { ok: true };
+  });
+
+  ipcMain.handle("app:check-for-updates", async (event) => {
+    assertTrustedIpcSender(event);
+    const currentVersion = app.getVersion();
+
+    if (!githubUpdateRepository) {
+      return {
+        ok: false,
+        configured: false,
+        currentVersion,
+        error: "missing-repository",
+        message: "No GitHub update repository is configured."
+      };
+    }
+
+    try {
+      const latestRelease = await getLatestGitHubRelease(githubUpdateRepository);
+      return {
+        ok: true,
+        configured: true,
+        repository: githubUpdateRepository,
+        currentVersion,
+        updateAvailable: compareVersions(currentVersion, latestRelease.latestVersion) < 0,
+        ...latestRelease
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        configured: true,
+        repository: githubUpdateRepository,
+        currentVersion,
+        error: "check-failed",
+        message: error?.message || "Could not check GitHub for updates."
+      };
+    }
+  });
+
+  ipcMain.handle("app:open-update-page", async (event, url) => {
+    assertTrustedIpcSender(event);
+
+    if (!isAllowedGitHubUpdateUrl(url)) {
+      return { ok: false, error: "blocked-url" };
+    }
+
+    await shell.openExternal(url);
     return { ok: true };
   });
 
