@@ -467,6 +467,11 @@ h2 {
   overflow: auto;
 }
 
+.imported-list.drop-target {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 4px;
+}
+
 .imported-list > .routing-tip {
   grid-column: 1 / -1;
   display: grid;

@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("soundmuncher", {
   appName: "Freqx",
@@ -9,6 +9,14 @@ contextBridge.exposeInMainWorld("soundmuncher", {
   listOutputDevices: () => ipcRenderer.invoke("audio:list-output-devices"),
   sendTestTone: (deviceId) => ipcRenderer.invoke("audio:send-test-tone", deviceId),
   importAudioFiles: () => ipcRenderer.invoke("audio:import-files"),
+  importAudioFilePaths: (filePaths) => ipcRenderer.invoke("audio:import-file-paths", filePaths),
+  getPathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch (error) {
+      return "";
+    }
+  },
   listImportedFiles: () => ipcRenderer.invoke("audio:list-imported-files"),
   removeImportedFile: (filePath) => ipcRenderer.invoke("audio:remove-imported-file", filePath),
   openLibraryFolder: () => ipcRenderer.invoke("audio:open-library-folder"),

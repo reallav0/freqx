@@ -1,4 +1,5 @@
 const { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, session, shell } = require("electron");
+const { execFile } = require("child_process");
 const fs = require("fs");
 const https = require("https");
 const path = require("path");
@@ -14,6 +15,7 @@ let isQuitting = false;
 const appUserModelId = "app.freqx.desktop";
 const websiteUrl = "https://freqx.app";
 const githubUpdateRepository = getConfiguredGitHubRepository();
+const supportedAudioExtensions = new Set([".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".opus"]);
 let appSettings = {
   launchOnStartup: true,
   startHidden: false,
@@ -731,6 +733,171 @@ function writeTestTone(deviceId) {
   }, Math.ceil(durationSeconds * 1000) + 120);
 }
 
+function isLikelyLocalWindowsPath(filePath) {
+  if (process.platform !== "win32") {
+    return true;
+  }
+
+  return /^[A-Za-z]:[\\/]/.test(filePath || "");
+}
+
+function getImportDialogDefaultPath() {
+  const candidates = ["music", "downloads", "documents", "home"];
+
+  for (const name of candidates) {
+    try {
+      const candidatePath = app.getPath(name);
+      if (candidatePath && isLikelyLocalWindowsPath(candidatePath) && fs.existsSync(candidatePath)) {
+        return candidatePath;
+      }
+    } catch (error) {
+    }
+  }
+
+  return app.getPath("home");
+}
+
+function isSupportedAudioPath(filePath) {
+  return supportedAudioExtensions.has(path.extname(filePath).toLowerCase());
+}
+
+function getPowerShellPath() {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const powerShellPath = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  return fs.existsSync(powerShellPath) ? powerShellPath : "powershell.exe";
+}
+
+function showWindowsAudioImportDialog() {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = 'Import Audio Files'
+$dialog.InitialDirectory = [Environment]::GetEnvironmentVariable('FREQX_IMPORT_INITIAL_DIR', 'Process')
+$dialog.Filter = 'Audio Files (*.mp3;*.wav;*.ogg;*.m4a;*.flac;*.aac;*.opus)|*.mp3;*.wav;*.ogg;*.m4a;*.flac;*.aac;*.opus|All Files (*.*)|*.*'
+$dialog.Multiselect = $true
+$dialog.CheckFileExists = $true
+$dialog.CheckPathExists = $true
+$result = $dialog.ShowDialog()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+  $dialog.FileNames | ConvertTo-Json -Compress
+}
+`;
+
+  return new Promise((resolve, reject) => {
+    execFile(getPowerShellPath(), [
+      "-NoProfile",
+      "-STA",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      script
+    ], {
+      env: {
+        ...process.env,
+        FREQX_IMPORT_INITIAL_DIR: getImportDialogDefaultPath()
+      },
+      maxBuffer: 1024 * 1024,
+      timeout: 30 * 60 * 1000,
+      windowsHide: true
+    }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(stderr?.trim() || error.message || "Windows file picker failed."));
+        return;
+      }
+
+      const output = stdout.trim().replace(/^\uFEFF/, "");
+      if (!output) {
+        resolve({ canceled: true, filePaths: [] });
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(output);
+        const filePaths = (Array.isArray(parsed) ? parsed : [parsed])
+          .filter((filePath) => typeof filePath === "string" && filePath.length > 0);
+        resolve({ canceled: filePaths.length === 0, filePaths });
+      } catch (parseError) {
+        reject(new Error("Windows file picker returned invalid file paths."));
+      }
+    });
+  });
+}
+
+function showAudioImportDialog() {
+  if (process.platform === "win32") {
+    return showWindowsAudioImportDialog();
+  }
+
+  const dialogOptions = {
+    title: "Import Audio Files",
+    defaultPath: getImportDialogDefaultPath(),
+    properties: ["openFile", "multiSelections", "dontAddToRecent"],
+    filters: [
+      {
+        name: "Audio Files",
+        extensions: ["mp3", "wav", "ogg", "m4a", "flac", "aac", "opus"]
+      }
+    ]
+  };
+  const dialogParent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  return dialogParent
+    ? dialog.showOpenDialog(dialogParent, dialogOptions)
+    : dialog.showOpenDialog(dialogOptions);
+}
+
+async function importAudioFilePaths(filePaths) {
+  const seen = new Set();
+  const sourcePaths = [];
+  const rawPaths = Array.isArray(filePaths) ? filePaths : [];
+
+  rawPaths.forEach((filePath) => {
+    if (typeof filePath !== "string" || filePath.length === 0 || filePath.length > 4096) {
+      return;
+    }
+
+    const resolvedPath = path.resolve(filePath);
+    const key = process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    sourcePaths.push(resolvedPath);
+  });
+
+  const imported = [];
+  const skipped = [];
+  const libraryDir = getLibraryDirectory();
+
+  for (const sourcePath of sourcePaths) {
+    if (!isSupportedAudioPath(sourcePath)) {
+      skipped.push({ path: sourcePath, reason: "unsupported-file" });
+      continue;
+    }
+
+    try {
+      const stat = await fs.promises.stat(sourcePath);
+      if (!stat.isFile()) {
+        skipped.push({ path: sourcePath, reason: "not-a-file" });
+        continue;
+      }
+
+      const destinationPath = createUniqueDestinationPath(libraryDir, sourcePath);
+      await fs.promises.copyFile(sourcePath, destinationPath);
+      imported.push(toLibraryItem(destinationPath));
+    } catch (error) {
+      skipped.push({
+        path: sourcePath,
+        reason: "copy-failed",
+        message: error?.message || "Could not import file."
+      });
+    }
+  }
+
+  return { imported, skipped, canceled: false };
+}
+
 function registerAudioIpc() {
   ipcMain.handle("app:open-website", async (event) => {
     assertTrustedIpcSender(event);
@@ -808,43 +975,29 @@ function registerAudioIpc() {
 
   ipcMain.handle("audio:import-files", async (event) => {
     assertTrustedIpcSender(event);
-    const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: "Import Audio Files",
-      properties: ["openFile", "multiSelections"],
-      filters: [
-        {
-          name: "Audio Files",
-          extensions: ["mp3", "wav", "ogg", "m4a", "flac", "aac", "opus"]
-        }
-      ]
-    });
+    const { canceled, filePaths } = await showAudioImportDialog();
 
     if (canceled || filePaths.length === 0) {
       return { imported: [], canceled: true };
     }
 
-    const imported = [];
-    const libraryDir = getLibraryDirectory();
+    return importAudioFilePaths(filePaths);
+  });
 
-    for (const sourcePath of filePaths) {
-      const destinationPath = createUniqueDestinationPath(libraryDir, sourcePath);
-      await fs.promises.copyFile(sourcePath, destinationPath);
-      imported.push(toLibraryItem(destinationPath));
-    }
-
-    return { imported, canceled: false };
+  ipcMain.handle("audio:import-file-paths", async (event, filePaths) => {
+    assertTrustedIpcSender(event);
+    return importAudioFilePaths(filePaths);
   });
 
   ipcMain.handle("audio:list-imported-files", async (event) => {
     assertTrustedIpcSender(event);
     const libraryDir = getLibraryDirectory();
     const dirEntries = await fs.promises.readdir(libraryDir, { withFileTypes: true });
-    const supportedExtensions = new Set([".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".opus"]);
 
     const files = dirEntries
       .filter((entry) => entry.isFile())
       .map((entry) => path.join(libraryDir, entry.name))
-      .filter((filePath) => supportedExtensions.has(path.extname(filePath).toLowerCase()))
+      .filter((filePath) => isSupportedAudioPath(filePath))
       .map((filePath) => toLibraryItem(filePath));
 
     files.sort((first, second) => first.name.localeCompare(second.name));
@@ -861,13 +1014,12 @@ function registerAudioIpc() {
     const libraryDir = getLibraryDirectory();
     const resolvedLibraryDir = path.resolve(libraryDir);
     const resolvedTargetPath = path.resolve(targetPath);
-    const supportedExtensions = new Set([".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".opus"]);
 
     if (!isPathInsideDirectory(resolvedLibraryDir, resolvedTargetPath)) {
       return { ok: false, error: "outside-library" };
     }
 
-    if (!supportedExtensions.has(path.extname(resolvedTargetPath).toLowerCase())) {
+    if (!isSupportedAudioPath(resolvedTargetPath)) {
       return { ok: false, error: "unsupported-file" };
     }
 

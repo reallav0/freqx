@@ -31,6 +31,7 @@ const meterTrackFooter = document.getElementById("meterTrackFooter");
 const importAudioButton = document.getElementById("importAudio");
 const openLibraryButton = document.getElementById("openLibrary");
 const importedList = document.getElementById("importedList");
+const libraryPanel = document.querySelector(".library");
 const libraryState = document.getElementById("libraryState");
 const boardSelect = document.getElementById("boardSelect");
 const addBoardButton = document.getElementById("addBoard");
@@ -1351,6 +1352,31 @@ async function loadImportedLibrary() {
   }
 }
 
+async function completeAudioImport(result, canceledMessage = "Import canceled.") {
+  if (!result || result.canceled) {
+    setLibraryState(canceledMessage);
+    return;
+  }
+
+  const importedCount = Array.isArray(result.imported) ? result.imported.length : 0;
+  const skippedCount = Array.isArray(result.skipped) ? result.skipped.length : 0;
+
+  if (importedCount > 0) {
+    importedAudioBuffers.clear();
+    await loadImportedLibrary();
+  }
+
+  if (importedCount > 0 && skippedCount > 0) {
+    setLibraryState(`Imported ${importedCount} file(s). Skipped ${skippedCount} unsupported or unreadable file(s).`);
+  } else if (importedCount > 0) {
+    setLibraryState(`Imported ${importedCount} file(s) into local library.`);
+  } else if (skippedCount > 0) {
+    setLibraryState(`Skipped ${skippedCount} unsupported or unreadable file(s).`);
+  } else {
+    setLibraryState("No supported audio files selected.");
+  }
+}
+
 async function importAudioFiles() {
   if (!window.soundmuncher?.importAudioFiles) {
     setLibraryState("Audio import bridge unavailable.");
@@ -1360,20 +1386,73 @@ async function importAudioFiles() {
   try {
     importAudioButton.disabled = true;
     const result = await window.soundmuncher.importAudioFiles();
-
-    if (!result || result.canceled) {
-      setLibraryState("Import canceled.");
-      return;
-    }
-
-    importedAudioBuffers.clear();
-    await loadImportedLibrary();
-    setLibraryState(`Imported ${result.imported.length} file(s) into local library.`);
+    await completeAudioImport(result);
   } catch (error) {
     setLibraryState("Import failed. Check file permissions and try again.");
   } finally {
     importAudioButton.disabled = false;
   }
+}
+
+function setLibraryDropActive(active) {
+  importedList?.classList.toggle("drop-target", Boolean(active));
+}
+
+function hasDraggedFiles(event) {
+  return Array.from(event?.dataTransfer?.types || []).includes("Files");
+}
+
+function getDroppedFilePaths(event) {
+  return Array.from(event?.dataTransfer?.files || [])
+    .map((file) => window.soundmuncher?.getPathForFile?.(file) || file.path || "")
+    .filter(Boolean);
+}
+
+async function importDroppedAudioFiles(filePaths) {
+  if (!window.soundmuncher?.importAudioFilePaths) {
+    setLibraryState("Audio import bridge unavailable.");
+    return;
+  }
+
+  if (!filePaths.length) {
+    setLibraryState("No supported audio files dropped.");
+    return;
+  }
+
+  try {
+    const result = await window.soundmuncher.importAudioFilePaths(filePaths);
+    await completeAudioImport(result, "No audio files dropped.");
+  } catch (error) {
+    setLibraryState("Import failed. Check file permissions and try again.");
+  }
+}
+
+function handleImportDragOver(event) {
+  if (!hasDraggedFiles(event)) {
+    return;
+  }
+
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+  setLibraryDropActive(true);
+}
+
+function handleImportDragLeave(event) {
+  if (event.relatedTarget instanceof Node && libraryPanel?.contains(event.relatedTarget)) {
+    return;
+  }
+
+  setLibraryDropActive(false);
+}
+
+async function handleImportDrop(event) {
+  if (!hasDraggedFiles(event)) {
+    return;
+  }
+
+  event.preventDefault();
+  setLibraryDropActive(false);
+  await importDroppedAudioFiles(getDroppedFilePaths(event));
 }
 
 async function removeImportedAudio(item) {
@@ -2656,6 +2735,9 @@ startHiddenCheckbox?.addEventListener("change", () => {
   saveBackgroundSettings({ startHidden: startHiddenCheckbox.checked });
 });
 importAudioButton.addEventListener("click", importAudioFiles);
+libraryPanel?.addEventListener("dragover", handleImportDragOver);
+libraryPanel?.addEventListener("dragleave", handleImportDragLeave);
+libraryPanel?.addEventListener("drop", handleImportDrop);
 if (openLibraryButton) {
   openLibraryButton.addEventListener("click", async () => {
     if (window.soundmuncher?.openLibraryFolder) {
