@@ -4,6 +4,10 @@
   "description": "Freqx desktop soundboard app",
   "main": "main.js",
   "author": "Nguyen",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/reallav0/freqx.git"
+  },
   "license": "ISC",
   "scripts": {
     "start": "electron .",
@@ -17,8 +21,10 @@
   "build": {
     "appId": "app.freqx.desktop",
     "productName": "freqx",
-    "icon": "logo.png",
+    "icon": "logo.ico",
+    "afterPack": "scripts/afterPack.js",
     "win": {
+      "icon": "logo.ico",
       "target": [
         "nsis",
         "portable"
@@ -30,6 +36,9 @@
       "perMachine": true,
       "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
+      "installerIcon": "logo.ico",
+      "uninstallerIcon": "logo.ico",
+      "deleteAppDataOnUninstall": true,
       "include": "installer/vbcable.nsh"
     },
     "extraResources": [
@@ -48,6 +57,7 @@
       "index.html",
       "styles.css",
       "logo.png",
+      "logo.ico",
       "package.json",
       "node_modules/**/*"
     ]

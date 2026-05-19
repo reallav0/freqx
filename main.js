@@ -11,6 +11,7 @@ let mainWindow;
 let keyHook = null;
 let tray = null;
 let isQuitting = false;
+const appUserModelId = "app.freqx.desktop";
 const websiteUrl = "https://freqx.app";
 const githubUpdateRepository = getConfiguredGitHubRepository();
 let appSettings = {
@@ -20,6 +21,12 @@ let appSettings = {
 };
 
 configureDevelopmentStoragePaths();
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
 
 try {
   portAudio = require("naudiodon");
@@ -593,12 +600,16 @@ function updateTrayMenu() {
   ]));
 }
 
+function getAppIconPath() {
+  return path.join(__dirname, process.platform === "win32" ? "logo.ico" : "logo.png");
+}
+
 function createTray() {
   if (tray) {
     return;
   }
 
-  const trayIcon = nativeImage.createFromPath(path.join(__dirname, "logo.png")).resize({
+  const trayIcon = nativeImage.createFromPath(getAppIconPath()).resize({
     width: 16,
     height: 16
   });
@@ -619,7 +630,7 @@ function createWindow() {
     minHeight: 620,
     backgroundColor: "#f5f4ef",
     title: "freqx",
-    icon: path.join(__dirname, "logo.png"),
+    icon: getAppIconPath(),
     autoHideMenuBar: true,
     show: !shouldStartHidden,
     webPreferences: {
@@ -1031,28 +1042,40 @@ function toLibraryItem(filePath) {
   };
 }
 
-app.whenReady().then(() => {
-  loadAppSettings();
-  applyLoginItemSettings();
-  configurePermissions();
-  registerAudioIpc();
-  createTray();
-  createWindow();
-
-  app.on("activate", () => {
-    showMainWindow();
+if (hasSingleInstanceLock) {
+  app.on("second-instance", () => {
+    if (app.isReady()) {
+      showMainWindow();
+    }
   });
-});
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin" && !appSettings.keepRunningInTray) {
-    app.quit();
-  }
-});
+  app.whenReady().then(() => {
+    if (process.platform === "win32") {
+      app.setAppUserModelId(appUserModelId);
+    }
 
-app.on("will-quit", () => {
-  globalShortcut.unregisterAll();
-  if (keyHook) {
-    keyHook.stop();
-  }
-});
+    loadAppSettings();
+    applyLoginItemSettings();
+    configurePermissions();
+    registerAudioIpc();
+    createTray();
+    createWindow();
+
+    app.on("activate", () => {
+      showMainWindow();
+    });
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin" && !appSettings.keepRunningInTray) {
+      app.quit();
+    }
+  });
+
+  app.on("will-quit", () => {
+    globalShortcut.unregisterAll();
+    if (keyHook) {
+      keyHook.stop();
+    }
+  });
+}

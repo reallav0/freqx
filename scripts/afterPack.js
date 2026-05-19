@@ -11,11 +11,20 @@ exports.default = async function afterPack(context) {
   const appExePath = path.join(context.appOutDir, `${productFilename}.exe`);
   const iconPath = path.join(context.packager.projectDir, "logo.ico");
   const rceditPath = path.join(context.packager.projectDir, "node_modules", "electron-winstaller", "vendor", "rcedit.exe");
+  const missingPaths = [
+    [appExePath, "packaged executable"],
+    [iconPath, "Windows icon"],
+    [rceditPath, "rcedit"]
+  ].filter(([filePath]) => !fs.existsSync(filePath));
 
-  if (!fs.existsSync(appExePath) || !fs.existsSync(iconPath) || !fs.existsSync(rceditPath)) {
-    return;
+  if (missingPaths.length > 0) {
+    const missing = missingPaths
+      .map(([filePath, label]) => `${label}: ${filePath}`)
+      .join("; ");
+    throw new Error(`Cannot stamp Windows executable icon. Missing ${missing}`);
   }
 
+  console.log(`Stamping Windows icon on ${appExePath}`);
   execFileSync(rceditPath, [appExePath, "--set-icon", iconPath], {
     stdio: "inherit"
   });
