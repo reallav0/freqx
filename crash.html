@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: file:; connect-src 'self' file:; object-src 'none'; base-uri 'self'; form-action 'none';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>freqx crash report</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="crash-page-body">
+    <div class="noise"></div>
+    <main class="crash-page" aria-labelledby="crashTitle">
+      <section class="crash-panel crash-page-panel">
+        <div class="crash-kicker">Crash recovery</div>
+        <h1 id="crashTitle">freqx stopped unexpectedly</h1>
+        <p id="crashMessage" class="crash-message">The app recovered to this crash screen. The details were saved to the crash log.</p>
+        <dl class="crash-meta">
+          <div>
+            <dt>Crash ID</dt>
+            <dd id="crashId">Loading</dd>
+          </div>
+          <div>
+            <dt>Time</dt>
+            <dd id="crashTime">Loading</dd>
+          </div>
+          <div>
+            <dt>Log</dt>
+            <dd id="crashLogPath">Loading crash log path...</dd>
+          </div>
+        </dl>
+        <pre id="crashStack" class="crash-stack"></pre>
+        <div class="crash-actions">
+          <button id="reloadAfterCrash" class="mixer-action primary-action" type="button">Reload App</button>
+          <button id="openCrashLog" class="mixer-action" type="button">Open Log</button>
+          <button id="copyCrashDetails" class="mixer-action" type="button">Copy Details</button>
+          <button id="quitAfterCrash" class="mixer-action danger-action" type="button">Quit</button>
+        </div>
+      </section>
+    </main>
+    <script src="crash.js"></script>
+  </body>
+</html>

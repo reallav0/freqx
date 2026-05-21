@@ -24,9 +24,9 @@
           </div>
         </div>
 
-        <div class="top-actions" aria-label="Library actions">
+        <div class="top-actions" aria-label="App actions">
           <button id="openSettings" class="mixer-action" type="button">Settings</button>
-          <button id="openRoutingWizard" class="mixer-action" type="button">Setup</button>
+          <button id="openWalkthrough" class="mixer-action" type="button">Walkthrough</button>
           <button id="stopAllSounds" class="mixer-action danger-action" type="button" title="Stop all playing sounds">
             <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <rect x="6" y="6" width="12" height="12" rx="1.5"></rect>
@@ -170,39 +170,6 @@
         </aside>
       </section>
 
-      <section class="guide" aria-label="freqx guide">
-        <div class="guide-header">
-          <h2>Quick Guide</h2>
-          <p>Set the cable once, import sounds, bind keys, and route what you hear separately from what Discord receives.</p>
-        </div>
-        <div class="guide-grid">
-          <article class="guide-card">
-            <h3>1. Discord Routing</h3>
-            <p>Set freqx output to CABLE Input. In Discord, set input to CABLE Output and output to headphones or speakers.</p>
-          </article>
-          <article class="guide-card">
-            <h3>2. Add Sounds</h3>
-            <p>Use Import Track to copy audio into the local library. Click a sound card to play it into the Discord mix.</p>
-          </article>
-          <article class="guide-card">
-            <h3>3. Keybinds</h3>
-            <p>Bind a key on any sound card for quick triggers. Bind Stop Key to stop every playing sound immediately.</p>
-          </article>
-          <article class="guide-card">
-            <h3>4. Mixer</h3>
-            <p>Microphone controls your voice level, Soundboard controls meme volume, and Main Output controls the final Discord feed.</p>
-          </article>
-          <article class="guide-card">
-            <h3>5. Hear Locally</h3>
-            <p>Use Hear Meme Sounds On to choose where your local preview plays. Pick headphones to avoid speaker bleed.</p>
-          </article>
-          <article class="guide-card">
-            <h3>6. Safety Checks</h3>
-            <p>Refresh devices after installing VB-CABLE. Use Tone to test routing before joining a voice channel.</p>
-          </article>
-        </div>
-      </section>
-
       <footer class="status">
         <div class="status-now">
           <span class="status-label">Now Playing</span>
@@ -279,34 +246,30 @@
       </section>
     </div>
 
-    <div id="routingWizardOverlay" class="modal-overlay" hidden>
-      <section class="modal-panel wizard-panel" role="dialog" aria-modal="true" aria-labelledby="routingWizardTitle">
+    <div id="walkthroughOverlay" class="modal-overlay" hidden>
+      <section class="modal-panel walkthrough-panel" role="dialog" aria-modal="true" aria-labelledby="walkthroughTitle">
         <div class="modal-head">
           <div>
-            <h2 id="routingWizardTitle">Routing Setup</h2>
-            <p class="routing-tip">Select a real microphone, route freqx to a virtual input, then test before opening Discord.</p>
+            <h2 id="walkthroughTitle">Setup walkthrough</h2>
+            <p id="walkthroughSubtitle" class="routing-tip">Set up the mic, output route, local hearing path, and first sound trigger.</p>
           </div>
-          <button id="closeRoutingWizard" class="mixer-action compact-action" type="button">Close</button>
+          <button id="closeWalkthrough" class="mixer-action compact-action" type="button">Close</button>
         </div>
-        <div class="wizard-steps">
-          <article class="guide-card">
-            <h3>1. Detect Devices</h3>
-            <p>Refresh devices and auto-pick the safest microphone plus a likely virtual cable input.</p>
-          </article>
-          <article class="guide-card">
-            <h3>2. Test Mix</h3>
-            <p>Send a tone through the same mix Discord will receive.</p>
-          </article>
-          <article class="guide-card">
-            <h3>3. Discord</h3>
-            <p>Set Discord input to CABLE Output. Keep Discord output on headphones or speakers.</p>
-          </article>
+        <div id="walkthroughProgress" class="walkthrough-progress" aria-label="Walkthrough progress"></div>
+        <div class="walkthrough-content">
+          <div>
+            <span id="walkthroughStepCount" class="walkthrough-step-count"></span>
+            <h3 id="walkthroughStepTitle"></h3>
+            <p id="walkthroughStepBody" class="walkthrough-body"></p>
+          </div>
+          <div id="walkthroughChecklist" class="walkthrough-checklist"></div>
+          <div id="walkthroughInlineActions" class="walkthrough-inline-actions"></div>
+          <p id="walkthroughState" class="routing-tip"></p>
         </div>
-        <p id="routingWizardState" class="routing-tip"></p>
-        <div class="modal-actions">
-          <button id="wizardRefreshDevices" class="mixer-action" type="button">Refresh Devices</button>
-          <button id="wizardTestTone" class="mixer-action" type="button">Test Tone</button>
-          <button id="finishRoutingWizard" class="mixer-action primary-action" type="button">Done</button>
+        <div class="modal-actions walkthrough-actions">
+          <button id="walkthroughBack" class="mixer-action" type="button">Back</button>
+          <button id="walkthroughSkip" class="mixer-action" type="button">Skip</button>
+          <button id="walkthroughNext" class="mixer-action primary-action" type="button">Next</button>
         </div>
       </section>
     </div>
@@ -360,6 +323,34 @@
         </div>
       </section>
     </div>
+    <section id="crashScreen" class="crash-screen" aria-labelledby="crashTitle" aria-live="assertive" hidden>
+      <div class="crash-panel" role="alertdialog" aria-modal="true">
+        <div class="crash-kicker">Application error</div>
+        <h2 id="crashTitle">freqx hit a fatal error</h2>
+        <p id="crashMessage" class="crash-message">An unexpected error stopped the app. The details were saved to the crash log.</p>
+        <dl class="crash-meta">
+          <div>
+            <dt>Crash ID</dt>
+            <dd id="crashId">Pending</dd>
+          </div>
+          <div>
+            <dt>Time</dt>
+            <dd id="crashTime">Pending</dd>
+          </div>
+          <div>
+            <dt>Log</dt>
+            <dd id="crashLogPath">Saving crash log...</dd>
+          </div>
+        </dl>
+        <pre id="crashStack" class="crash-stack"></pre>
+        <div class="crash-actions">
+          <button id="reloadAfterCrash" class="mixer-action primary-action" type="button">Reload App</button>
+          <button id="openCrashLog" class="mixer-action" type="button">Open Log</button>
+          <button id="copyCrashDetails" class="mixer-action" type="button">Copy Details</button>
+          <button id="quitAfterCrash" class="mixer-action danger-action" type="button">Quit</button>
+        </div>
+      </div>
+    </section>
     <script src="renderer.js"></script>
   </body>
 </html>

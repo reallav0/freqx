@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, session, shell } = require("electron");
+const { app, BrowserWindow, Menu, Tray, crashReporter, dialog, globalShortcut, ipcMain, nativeImage, session, shell } = require("electron");
 const { execFile } = require("child_process");
 const fs = require("fs");
 const https = require("https");
@@ -12,6 +12,10 @@ let mainWindow;
 let keyHook = null;
 let tray = null;
 let isQuitting = false;
+let isShowingCrashScreen = false;
+let shouldShowCrashScreenOnReady = false;
+let lastCrashReport = null;
+let nativeCrashReporterStarted = false;
 const appUserModelId = "app.freqx.desktop";
 const websiteUrl = "https://freqx.app";
 const githubUpdateRepository = getConfiguredGitHubRepository();
@@ -28,6 +32,11 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
   app.quit();
+}
+
+if (hasSingleInstanceLock) {
+  nativeCrashReporterStarted = startNativeCrashReporter();
+  registerProcessCrashHandlers();
 }
 
 try {
@@ -51,6 +60,262 @@ function configureDevelopmentStoragePaths() {
   const devUserDataPath = path.join(app.getPath("appData"), "freqx-dev");
   app.setPath("userData", devUserDataPath);
   app.setPath("sessionData", path.join(devUserDataPath, "session"));
+}
+
+function startNativeCrashReporter() {
+  try {
+    crashReporter.start({
+      uploadToServer: false
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function registerProcessCrashHandlers() {
+  process.on("uncaughtException", (error) => {
+    handleMainProcessCrash("main-uncaught-exception", error);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    handleMainProcessCrash("main-unhandled-rejection", reason);
+  });
+
+  app.on("child-process-gone", (event, details) => {
+    if (isQuitting || details?.reason === "clean-exit") {
+      return;
+    }
+
+    const processType = String(details?.type || "").toLowerCase();
+    if (processType === "renderer") {
+      return;
+    }
+
+    recordCrashReport(createCrashReport("electron-child-process-gone", null, {
+      details
+    }));
+  });
+}
+
+function handleMainProcessCrash(type, error) {
+  const report = recordCrashReport(createCrashReport(type, error));
+  sendFatalErrorToRenderer(report);
+  loadCrashScreen(report);
+}
+
+function limitCrashText(value, maxLength = 20000) {
+  const text = value === undefined || value === null ? "" : String(value);
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}\n... truncated ...`;
+}
+
+function normalizeCrashError(error) {
+  if (error instanceof Error) {
+    return {
+      name: limitCrashText(error.name || "Error", 240),
+      message: limitCrashText(error.message || "Unknown error"),
+      stack: limitCrashText(error.stack || "")
+    };
+  }
+
+  if (error && typeof error === "object") {
+    return {
+      name: limitCrashText(error.name || "Error", 240),
+      message: limitCrashText(error.message || JSON.stringify(toCrashSafeValue(error))),
+      stack: limitCrashText(error.stack || "")
+    };
+  }
+
+  return {
+    name: "Error",
+    message: limitCrashText(error || "Unknown error"),
+    stack: ""
+  };
+}
+
+function toCrashSafeValue(value, seen = new WeakSet(), depth = 0) {
+  if (value instanceof Error) {
+    return normalizeCrashError(value);
+  }
+
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return limitCrashText(value, 4000);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "function") {
+    return "[Function]";
+  }
+
+  if (typeof value !== "object") {
+    return limitCrashText(value, 4000);
+  }
+
+  if (seen.has(value)) {
+    return "[Circular]";
+  }
+
+  if (depth >= 5) {
+    return "[MaxDepth]";
+  }
+
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 50).map((item) => toCrashSafeValue(item, seen, depth + 1));
+  }
+
+  return Object.fromEntries(Object.entries(value).slice(0, 80).map(([key, item]) => [
+    limitCrashText(key, 120),
+    toCrashSafeValue(item, seen, depth + 1)
+  ]));
+}
+
+function getCrashLogDirectory() {
+  return path.join(app.getPath("userData"), "crash-logs");
+}
+
+function getCrashLogPath() {
+  return path.join(getCrashLogDirectory(), "freqx-crash.log");
+}
+
+function getCrashDumpsPath() {
+  try {
+    return app.getPath("crashDumps");
+  } catch (error) {
+    return "";
+  }
+}
+
+function createCrashReport(type, error, details = {}) {
+  const normalizedError = normalizeCrashError(error);
+  const crashType = limitCrashText(type || "app-error", 160);
+
+  return {
+    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+    type: crashType,
+    process: crashType.startsWith("renderer") ? "renderer" : "main",
+    timestamp: new Date().toISOString(),
+    name: normalizedError.name,
+    message: normalizedError.message,
+    stack: normalizedError.stack,
+    details: toCrashSafeValue(details),
+    app: {
+      name: app.getName(),
+      version: app.getVersion(),
+      packaged: app.isPackaged
+    },
+    runtime: {
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      platform: process.platform,
+      arch: process.arch
+    }
+  };
+}
+
+function formatCrashReportForLog(report) {
+  const parts = [
+    "",
+    "============================================================",
+    `[${report.timestamp}] ${report.type} (${report.id})`,
+    `Process: ${report.process}`,
+    `App: ${report.app?.name || "freqx"} ${report.app?.version || ""}`,
+    `Runtime: Electron ${report.runtime?.electron || ""}, Node ${report.runtime?.node || ""}, ${report.runtime?.platform || ""}/${report.runtime?.arch || ""}`,
+    `Message: ${report.message || "Unknown error"}`
+  ];
+
+  if (report.stack) {
+    parts.push("Stack:");
+    parts.push(report.stack);
+  }
+
+  if (report.details && Object.keys(report.details).length > 0) {
+    parts.push("Details:");
+    parts.push(JSON.stringify(report.details, null, 2));
+  }
+
+  if (report.crashDumpsPath) {
+    parts.push(`Native crash dumps: ${report.crashDumpsPath}`);
+  }
+
+  return `${parts.join("\n")}\n`;
+}
+
+function appendCrashLog(report) {
+  try {
+    fs.mkdirSync(getCrashLogDirectory(), { recursive: true });
+    fs.appendFileSync(getCrashLogPath(), formatCrashReportForLog(report), "utf8");
+  } catch (error) {
+  }
+}
+
+function recordCrashReport(report) {
+  const completeReport = {
+    ...report,
+    logPath: getCrashLogPath(),
+    crashDumpsPath: getCrashDumpsPath(),
+    nativeCrashReporterStarted
+  };
+
+  lastCrashReport = completeReport;
+  appendCrashLog(completeReport);
+  return completeReport;
+}
+
+function getCrashReportForRenderer(report = lastCrashReport) {
+  if (!report) {
+    return {
+      ok: true,
+      report: null,
+      logPath: getCrashLogPath(),
+      crashDumpsPath: getCrashDumpsPath(),
+      nativeCrashReporterStarted
+    };
+  }
+
+  return {
+    ok: true,
+    report,
+    logPath: getCrashLogPath(),
+    crashDumpsPath: getCrashDumpsPath(),
+    nativeCrashReporterStarted
+  };
+}
+
+function normalizeRendererCrashPayload(payload) {
+  const safePayload = toCrashSafeValue(payload || {});
+  const type = typeof safePayload.type === "string" && safePayload.type.startsWith("renderer-")
+    ? safePayload.type
+    : "renderer-error";
+
+  return createCrashReport(type, {
+    name: safePayload.name || "RendererError",
+    message: safePayload.message || "Renderer error",
+    stack: safePayload.stack || ""
+  }, {
+    renderer: safePayload
+  });
+}
+
+function sendFatalErrorToRenderer(report) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send("app:fatal-error", getCrashReportForRenderer(report));
 }
 
 function emitGlobalKeyCode(code, modifiers = {}) {
@@ -268,13 +533,33 @@ function configurePermissions() {
   });
 }
 
-function getRendererUrl() {
-  return pathToFileURL(path.join(__dirname, "index.html")).href;
+function getRendererUrl(fileName = "index.html") {
+  return pathToFileURL(path.join(__dirname, fileName)).href;
+}
+
+function stripUrlState(url) {
+  try {
+    const parsedUrl = new URL(url);
+    parsedUrl.search = "";
+    parsedUrl.hash = "";
+    return parsedUrl.href;
+  } catch (error) {
+    return "";
+  }
+}
+
+function isTrustedRendererUrl(url) {
+  const baseUrl = stripUrlState(url);
+  return baseUrl === getRendererUrl("index.html") || baseUrl === getRendererUrl("crash.html");
+}
+
+function isCrashScreenUrl(url) {
+  return stripUrlState(url) === getRendererUrl("crash.html");
 }
 
 function isTrustedIpcSender(event) {
   const frameUrl = event?.senderFrame?.url || event?.sender?.getURL?.() || "";
-  return frameUrl === getRendererUrl();
+  return isTrustedRendererUrl(frameUrl);
 }
 
 function assertTrustedIpcSender(event) {
@@ -622,8 +907,52 @@ function createTray() {
   updateTrayMenu();
 }
 
-function createWindow() {
-  const shouldStartHidden = appSettings.startHidden || process.argv.includes("--hidden");
+function loadCrashScreen(report) {
+  if (!app.isReady()) {
+    shouldShowCrashScreenOnReady = true;
+    return;
+  }
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow({ showCrashScreen: true });
+    return;
+  }
+
+  isShowingCrashScreen = true;
+  mainWindow.show();
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  loadWindowFile("crash.html", {
+    originalReportId: report?.id
+  });
+}
+
+function loadWindowFile(fileName, details = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.loadFile(fileName).catch((error) => {
+    const isCrashFile = fileName === "crash.html";
+    const report = recordCrashReport(createCrashReport(
+      isCrashFile ? "crash-screen-load-failed" : "renderer-load-promise-failed",
+      error,
+      {
+        fileName,
+        ...details
+      }
+    ));
+
+    if (!isCrashFile) {
+      loadCrashScreen(report);
+    }
+  });
+}
+
+function createWindow(options = {}) {
+  const shouldStartHidden = !options.showCrashScreen && (appSettings.startHidden || process.argv.includes("--hidden"));
 
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -648,9 +977,50 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    if (url !== getRendererUrl()) {
+    if (!isTrustedRendererUrl(url)) {
       event.preventDefault();
     }
+  });
+
+  mainWindow.webContents.on("did-finish-load", () => {
+    isShowingCrashScreen = isCrashScreenUrl(mainWindow.webContents.getURL());
+  });
+
+  mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame || isShowingCrashScreen || isCrashScreenUrl(validatedURL)) {
+      return;
+    }
+
+    const report = recordCrashReport(createCrashReport("renderer-load-failed", null, {
+      errorCode,
+      errorDescription,
+      validatedURL
+    }));
+    loadCrashScreen(report);
+  });
+
+  mainWindow.webContents.on("preload-error", (event, preloadPath, error) => {
+    const report = recordCrashReport(createCrashReport("renderer-preload-error", error, {
+      preloadPath
+    }));
+    loadCrashScreen(report);
+  });
+
+  mainWindow.webContents.on("render-process-gone", (event, details) => {
+    if (isQuitting || details?.reason === "clean-exit") {
+      return;
+    }
+
+    const report = recordCrashReport(createCrashReport("renderer-process-gone", null, {
+      details
+    }));
+    loadCrashScreen(report);
+  });
+
+  mainWindow.on("unresponsive", () => {
+    recordCrashReport(createCrashReport("renderer-unresponsive", null, {
+      url: mainWindow?.webContents?.getURL?.() || ""
+    }));
   });
 
   mainWindow.on("minimize", (event) => {
@@ -671,7 +1041,16 @@ function createWindow() {
     hideMainWindow();
   });
 
-  mainWindow.loadFile("index.html");
+  if (options.showCrashScreen || shouldShowCrashScreenOnReady) {
+    shouldShowCrashScreenOnReady = false;
+    isShowingCrashScreen = true;
+    loadWindowFile("crash.html");
+  } else {
+    isShowingCrashScreen = false;
+    loadWindowFile("index.html");
+  }
+
+  return mainWindow;
 }
 
 function getOutputDevices() {
@@ -899,6 +1278,53 @@ async function importAudioFilePaths(filePaths) {
 }
 
 function registerAudioIpc() {
+  ipcMain.handle("app:report-crash", (event, payload) => {
+    assertTrustedIpcSender(event);
+    const report = recordCrashReport(normalizeRendererCrashPayload(payload));
+    return getCrashReportForRenderer(report);
+  });
+
+  ipcMain.handle("app:get-crash-report", (event) => {
+    assertTrustedIpcSender(event);
+    return getCrashReportForRenderer();
+  });
+
+  ipcMain.handle("app:open-crash-log", async (event) => {
+    assertTrustedIpcSender(event);
+    const logPath = getCrashLogPath();
+
+    try {
+      fs.mkdirSync(getCrashLogDirectory(), { recursive: true });
+      if (!fs.existsSync(logPath)) {
+        fs.writeFileSync(logPath, "", "utf8");
+      }
+      shell.showItemInFolder(logPath);
+      return { ok: true, logPath };
+    } catch (error) {
+      return {
+        ok: false,
+        logPath,
+        message: error?.message || "Could not open crash log."
+      };
+    }
+  });
+
+  ipcMain.handle("app:reload-after-crash", (event) => {
+    assertTrustedIpcSender(event);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      isShowingCrashScreen = false;
+      loadWindowFile("index.html");
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle("app:quit-after-crash", (event) => {
+    assertTrustedIpcSender(event);
+    isQuitting = true;
+    app.quit();
+    return { ok: true };
+  });
+
   ipcMain.handle("app:open-website", async (event) => {
     assertTrustedIpcSender(event);
     await shell.openExternal(websiteUrl);

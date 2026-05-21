@@ -1,6 +1,6 @@
 {
   "name": "freqx",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "Freqx desktop soundboard app",
   "main": "main.js",
   "author": "Nguyen",
@@ -54,6 +54,8 @@
       "main.js",
       "preload.js",
       "renderer.js",
+      "crash.html",
+      "crash.js",
       "index.html",
       "styles.css",
       "logo.png",

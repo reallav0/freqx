@@ -3,6 +3,11 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 contextBridge.exposeInMainWorld("soundmuncher", {
   appName: "Freqx",
   websiteUrl: "https://freqx.app",
+  reportCrash: (payload) => ipcRenderer.invoke("app:report-crash", payload),
+  getCrashReport: () => ipcRenderer.invoke("app:get-crash-report"),
+  openCrashLog: () => ipcRenderer.invoke("app:open-crash-log"),
+  reloadAfterCrash: () => ipcRenderer.invoke("app:reload-after-crash"),
+  quitAfterCrash: () => ipcRenderer.invoke("app:quit-after-crash"),
   openWebsite: () => ipcRenderer.invoke("app:open-website"),
   checkForUpdates: () => ipcRenderer.invoke("app:check-for-updates"),
   openUpdatePage: (url) => ipcRenderer.invoke("app:open-update-page", url),
@@ -31,6 +36,16 @@ contextBridge.exposeInMainWorld("soundmuncher", {
     ipcRenderer.on("keybinds:trigger", listener);
     return () => {
       ipcRenderer.removeListener("keybinds:trigger", listener);
+    };
+  },
+  onFatalError: (handler) => {
+    const listener = (event, payload) => {
+      handler(payload);
+    };
+
+    ipcRenderer.on("app:fatal-error", listener);
+    return () => {
+      ipcRenderer.removeListener("app:fatal-error", listener);
     };
   }
 });

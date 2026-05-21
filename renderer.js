@@ -1,3 +1,218 @@
+let visibleCrashReport = null;
+let visibleCrashLogPath = "";
+let crashScreenControlsBound = false;
+
+function limitRendererCrashText(value, maxLength = 16000) {
+  const text = value === undefined || value === null ? "" : String(value);
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength)}\n... truncated ...`;
+}
+
+function stringifyRendererCrashValue(value) {
+  const seen = new WeakSet();
+
+  try {
+    return JSON.stringify(value, (key, item) => {
+      if (item instanceof Error) {
+        return {
+          name: item.name,
+          message: item.message,
+          stack: item.stack
+        };
+      }
+
+      if (item && typeof item === "object") {
+        if (seen.has(item)) {
+          return "[Circular]";
+        }
+        seen.add(item);
+      }
+
+      if (typeof item === "function") {
+        return "[Function]";
+      }
+
+      return item;
+    });
+  } catch (error) {
+    return String(value);
+  }
+}
+
+function normalizeRendererCrashError(error) {
+  if (error instanceof Error) {
+    return {
+      name: limitRendererCrashText(error.name || "Error", 240),
+      message: limitRendererCrashText(error.message || "Unknown error"),
+      stack: limitRendererCrashText(error.stack || "")
+    };
+  }
+
+  if (error && typeof error === "object") {
+    return {
+      name: limitRendererCrashText(error.name || "Error", 240),
+      message: limitRendererCrashText(error.message || stringifyRendererCrashValue(error)),
+      stack: limitRendererCrashText(error.stack || "")
+    };
+  }
+
+  return {
+    name: "Error",
+    message: limitRendererCrashText(error || "Unknown error"),
+    stack: ""
+  };
+}
+
+function formatRendererCrashTime(value) {
+  if (!value) {
+    return "Unknown";
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+function setCrashText(id, value) {
+  const element = document.getElementById(id);
+  if (element) {
+    element.textContent = value || "";
+  }
+}
+
+function formatRendererCrashDetails(report) {
+  if (!report) {
+    return "Crash details are unavailable.";
+  }
+
+  return [
+    `${report.name || "Error"}: ${report.message || "Unknown error"}`,
+    report.stack || "",
+    report.details ? JSON.stringify(report.details, null, 2) : ""
+  ].filter(Boolean).join("\n\n");
+}
+
+function bindCrashScreenControls() {
+  if (crashScreenControlsBound) {
+    return;
+  }
+
+  crashScreenControlsBound = true;
+
+  document.getElementById("reloadAfterCrash")?.addEventListener("click", () => {
+    window.soundmuncher?.reloadAfterCrash?.();
+  });
+
+  document.getElementById("openCrashLog")?.addEventListener("click", () => {
+    window.soundmuncher?.openCrashLog?.();
+  });
+
+  document.getElementById("quitAfterCrash")?.addEventListener("click", () => {
+    window.soundmuncher?.quitAfterCrash?.();
+  });
+
+  document.getElementById("copyCrashDetails")?.addEventListener("click", async () => {
+    const text = [
+      `Crash ID: ${visibleCrashReport?.id || "Unavailable"}`,
+      `Time: ${visibleCrashReport?.timestamp || "Unavailable"}`,
+      `Log: ${visibleCrashLogPath || "Unavailable"}`,
+      formatRendererCrashDetails(visibleCrashReport)
+    ].join("\n\n");
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setCrashText("crashLogPath", visibleCrashLogPath ? `${visibleCrashLogPath} (details copied)` : "Details copied");
+    } catch (error) {
+      setCrashText("crashLogPath", visibleCrashLogPath || "Could not copy crash details");
+    }
+  });
+}
+
+function showCrashScreen(reportPayload) {
+  const report = reportPayload?.report || reportPayload || null;
+  const crashScreen = document.getElementById("crashScreen");
+  if (!crashScreen || !report) {
+    return;
+  }
+
+  visibleCrashReport = report;
+  visibleCrashLogPath = reportPayload?.logPath || report.logPath || visibleCrashLogPath;
+  bindCrashScreenControls();
+
+  setCrashText("crashId", report.id || "Unavailable");
+  setCrashText("crashTime", formatRendererCrashTime(report.timestamp));
+  setCrashText("crashLogPath", visibleCrashLogPath || "Saving crash log...");
+  setCrashText("crashMessage", report.message || "freqx hit a fatal error.");
+  setCrashText("crashStack", formatRendererCrashDetails(report));
+
+  crashScreen.hidden = false;
+}
+
+async function reportRendererFatalError(error, context = {}) {
+  const normalizedError = normalizeRendererCrashError(error);
+  const payload = {
+    type: context.type || "renderer-error",
+    ...normalizedError,
+    timestamp: new Date().toISOString(),
+    url: window.location.href,
+    userAgent: navigator.userAgent,
+    context
+  };
+
+  showCrashScreen({
+    report: {
+      id: "pending",
+      timestamp: payload.timestamp,
+      ...payload,
+      details: {
+        renderer: payload
+      }
+    }
+  });
+
+  if (!window.soundmuncher?.reportCrash) {
+    return;
+  }
+
+  try {
+    showCrashScreen(await window.soundmuncher.reportCrash(payload));
+  } catch (reportError) {
+    const fallback = normalizeRendererCrashError(reportError);
+    setCrashText("crashLogPath", fallback.message || "Could not write crash log");
+  }
+}
+
+window.addEventListener("error", (event) => {
+  const target = event.target;
+  if (target && target !== window) {
+    const source = target.currentSrc || target.src || target.href || target.tagName || "resource";
+    reportRendererFatalError(new Error(`Resource failed to load: ${source}`), {
+      type: "renderer-resource-error",
+      source
+    });
+    return;
+  }
+
+  reportRendererFatalError(event.error || new Error(event.message || "Renderer error"), {
+    type: "renderer-error",
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno
+  });
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  reportRendererFatalError(event.reason || new Error("Unhandled promise rejection"), {
+    type: "renderer-unhandled-rejection"
+  });
+});
+
+window.soundmuncher?.onFatalError?.((payload) => {
+  showCrashScreen(payload);
+});
+
 const nowPlaying = document.getElementById("nowPlaying");
 const stopAllSoundsButton = document.getElementById("stopAllSounds");
 const stopKeybindButton = document.getElementById("stopKeybind");
@@ -54,13 +269,19 @@ const soundEditorTrimStart = document.getElementById("soundEditorTrimStart");
 const soundEditorTrimEnd = document.getElementById("soundEditorTrimEnd");
 const soundEditorFadeIn = document.getElementById("soundEditorFadeIn");
 const soundEditorFadeOut = document.getElementById("soundEditorFadeOut");
-const openRoutingWizardButton = document.getElementById("openRoutingWizard");
-const routingWizardOverlay = document.getElementById("routingWizardOverlay");
-const closeRoutingWizardButton = document.getElementById("closeRoutingWizard");
-const finishRoutingWizardButton = document.getElementById("finishRoutingWizard");
-const wizardRefreshDevicesButton = document.getElementById("wizardRefreshDevices");
-const wizardTestToneButton = document.getElementById("wizardTestTone");
-const routingWizardState = document.getElementById("routingWizardState");
+const openWalkthroughButton = document.getElementById("openWalkthrough");
+const walkthroughOverlay = document.getElementById("walkthroughOverlay");
+const closeWalkthroughButton = document.getElementById("closeWalkthrough");
+const walkthroughProgress = document.getElementById("walkthroughProgress");
+const walkthroughStepCount = document.getElementById("walkthroughStepCount");
+const walkthroughStepTitle = document.getElementById("walkthroughStepTitle");
+const walkthroughStepBody = document.getElementById("walkthroughStepBody");
+const walkthroughChecklist = document.getElementById("walkthroughChecklist");
+const walkthroughInlineActions = document.getElementById("walkthroughInlineActions");
+const walkthroughState = document.getElementById("walkthroughState");
+const walkthroughBackButton = document.getElementById("walkthroughBack");
+const walkthroughSkipButton = document.getElementById("walkthroughSkip");
+const walkthroughNextButton = document.getElementById("walkthroughNext");
 const openSettingsButton = document.getElementById("openSettings");
 const settingsOverlay = document.getElementById("settingsOverlay");
 const closeSettingsButton = document.getElementById("closeSettings");
@@ -134,6 +355,7 @@ const mixerSettingsStorageKey = "soundmuncher:mixer-settings";
 const libraryMetadataStorageKey = "soundmuncher:library-metadata";
 const libraryViewStorageKey = "soundmuncher:library-view";
 const appPreferencesStorageKey = "soundmuncher:app-preferences";
+const walkthroughStorageKey = "soundmuncher:walkthrough-complete:v1";
 const defaultBoardName = "Main";
 const allBoardsValue = "__all__";
 const defaultAppPreferences = {
@@ -153,6 +375,8 @@ let preferVirtualOutputOnce = false;
 let showFavoritesOnly = false;
 let appPreferences = { ...defaultAppPreferences };
 let latestUpdateUrl = "";
+let activeWalkthroughStep = 0;
+let walkthroughActionMessage = "";
 
 function keyCodeToAcceleratorParts(code) {
   if (/^Key[A-Z]$/.test(code)) {
@@ -1289,45 +1513,247 @@ function addBoard() {
   setLibraryState(`Board selected: ${name}.`);
 }
 
-function openRoutingWizard() {
-  if (!routingWizardOverlay) {
+function getSelectedInputLabel() {
+  return inputDeviceSelect?.selectedOptions?.[0]?.textContent || "No microphone selected";
+}
+
+function hasCompletedWalkthrough() {
+  try {
+    return window.localStorage.getItem(walkthroughStorageKey) === "true";
+  } catch (error) {
+    return false;
+  }
+}
+
+function markWalkthroughComplete() {
+  try {
+    window.localStorage.setItem(walkthroughStorageKey, "true");
+  } catch (error) {
+  }
+}
+
+function setWalkthroughState(message) {
+  walkthroughActionMessage = message || "";
+  if (walkthroughState) {
+    walkthroughState.textContent = walkthroughActionMessage;
+  }
+}
+
+async function refreshDevicesFromWalkthrough() {
+  setWalkthroughState("Refreshing audio devices...");
+  preferVirtualOutputOnce = true;
+  await refreshOutputDevices();
+  setWalkthroughState(`Selected mic: ${getSelectedInputLabel()}. Output: ${selectedOutputLabel()}.`);
+  renderWalkthroughStep();
+}
+
+async function testMixFromWalkthrough() {
+  setWalkthroughState("Sending a test tone into the mix...");
+  await sendTestTone();
+  setWalkthroughState("Test tone sent. In Discord, the input meter should move when its input is set to the virtual cable output.");
+}
+
+async function importFromWalkthrough() {
+  setWalkthroughState("Choose one or more audio files to add to the soundboard.");
+  await importAudioFiles();
+  setWalkthroughState(importedLibraryItems.length > 0
+    ? `${importedLibraryItems.length} sound(s) are ready. Click any sound card to bind a key.`
+    : "No sounds imported yet. Use Import Track when you are ready.");
+  renderWalkthroughStep();
+}
+
+const walkthroughSteps = [
+  {
+    title: "Set the signal path",
+    body: "freqx combines your real microphone with soundboard audio, then sends that mix to a virtual cable for Discord.",
+    checklist: () => [
+      "Allow microphone access when Windows asks.",
+      "Use a real microphone as Input Microphone.",
+      "Use CABLE Input or another virtual input as Output Virtual Cable.",
+      "Keep Discord output on headphones or speakers.",
+      "Make sure there all the the audio is pure with no processing in 3rd party application."
+    ]
+  },
+  {
+    title: "Detect mic and outputs",
+    body: "Refresh devices after installing or changing audio cables. freqx will hide loopback and system-capture inputs.",
+    checklist: () => [
+      `${availableInputDevices.length} microphone endpoint(s) detected.`,
+      `${availableOutputDevices.length} output endpoint(s) detected.`,
+      `Current mic: ${getSelectedInputLabel()}.`
+    ],
+    actionLabel: "Refresh Devices",
+    action: refreshDevicesFromWalkthrough
+  },
+  {
+    title: "Confirm routing choices",
+    body: "Use the mixer panel to choose the real mic, the virtual cable destination, and where you personally hear soundboard playback.",
+    checklist: () => [
+      `Input Microphone: ${getSelectedInputLabel()}.`,
+      `Output Virtual Cable: ${selectedOutputLabel()}.`,
+      `Hear Meme Sounds On: ${selectedLocalPlaybackLabel()}.`
+    ]
+  },
+  {
+    title: "Test the Discord feed",
+    body: "Set Discord input to the virtual cable output, then send a short tone from freqx to confirm the input meter moves.",
+    checklist: () => [
+      "Discord input should be CABLE Output or the matching virtual output.",
+      "Discord output should stay on headphones or speakers.",
+      "Speaker playback can leak back into a microphone."
+    ],
+    actionLabel: "Send Test Tone",
+    action: testMixFromWalkthrough
+  },
+  {
+    title: "Add sounds and bind keys",
+    body: "Import sounds into the local library, then use each sound card to bind a trigger key or tune playback settings.",
+    checklist: () => [
+      `${importedLibraryItems.length} imported sound(s) in the library.`,
+      "Click a sound card to play it into the mix.",
+      "Use Bind on a sound card for quick triggers."
+    ],
+    actionLabel: "Import Track",
+    action: importFromWalkthrough
+  }
+];
+
+function createWalkthroughChecklistItem(text) {
+  const item = document.createElement("div");
+  item.className = "walkthrough-check";
+  const marker = document.createElement("span");
+  marker.setAttribute("aria-hidden", "true");
+  marker.textContent = "";
+  const label = document.createElement("p");
+  label.textContent = text;
+  item.appendChild(marker);
+  item.appendChild(label);
+  return item;
+}
+
+function renderWalkthroughProgress() {
+  if (!walkthroughProgress) {
     return;
   }
 
-  routingWizardOverlay.hidden = false;
-  if (routingWizardState) {
-    routingWizardState.textContent = "Start by refreshing devices. freqx will keep loopback/system inputs hidden.";
+  walkthroughProgress.innerHTML = "";
+  walkthroughSteps.forEach((step, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "walkthrough-progress-dot";
+    button.textContent = String(index + 1);
+    button.title = step.title;
+    button.classList.toggle("active", index === activeWalkthroughStep);
+    button.classList.toggle("complete", index < activeWalkthroughStep);
+    button.addEventListener("click", () => {
+      setWalkthroughStep(index);
+    });
+    walkthroughProgress.appendChild(button);
+  });
+}
+
+function renderWalkthroughInlineAction(step) {
+  if (!walkthroughInlineActions) {
+    return;
+  }
+
+  walkthroughInlineActions.innerHTML = "";
+  if (!step.actionLabel || typeof step.action !== "function") {
+    return;
+  }
+
+  const actionButton = document.createElement("button");
+  actionButton.type = "button";
+  actionButton.className = "mixer-action primary-action";
+  actionButton.textContent = step.actionLabel;
+  actionButton.addEventListener("click", async () => {
+    actionButton.disabled = true;
+    try {
+      await step.action();
+    } catch (error) {
+      setWalkthroughState(error?.message || "Action failed. Check device permissions and try again.");
+    } finally {
+      actionButton.disabled = false;
+    }
+  });
+  walkthroughInlineActions.appendChild(actionButton);
+}
+
+function renderWalkthroughStep() {
+  if (!walkthroughOverlay) {
+    return;
+  }
+
+  const step = walkthroughSteps[activeWalkthroughStep];
+  if (!step) {
+    return;
+  }
+
+  if (walkthroughStepCount) {
+    walkthroughStepCount.textContent = `Step ${activeWalkthroughStep + 1} of ${walkthroughSteps.length}`;
+  }
+  if (walkthroughStepTitle) {
+    walkthroughStepTitle.textContent = step.title;
+  }
+  if (walkthroughStepBody) {
+    walkthroughStepBody.textContent = step.body;
+  }
+  if (walkthroughChecklist) {
+    walkthroughChecklist.innerHTML = "";
+    step.checklist().forEach((item) => {
+      walkthroughChecklist.appendChild(createWalkthroughChecklistItem(item));
+    });
+  }
+  if (walkthroughBackButton) {
+    walkthroughBackButton.disabled = activeWalkthroughStep === 0;
+  }
+  if (walkthroughNextButton) {
+    walkthroughNextButton.textContent = activeWalkthroughStep === walkthroughSteps.length - 1 ? "Done" : "Next";
+  }
+  if (walkthroughState) {
+    walkthroughState.textContent = walkthroughActionMessage;
+  }
+
+  renderWalkthroughProgress();
+  renderWalkthroughInlineAction(step);
+}
+
+function setWalkthroughStep(stepIndex) {
+  activeWalkthroughStep = Math.max(0, Math.min(walkthroughSteps.length - 1, stepIndex));
+  walkthroughActionMessage = "";
+  renderWalkthroughStep();
+}
+
+function openWalkthrough() {
+  if (!walkthroughOverlay) {
+    return;
+  }
+
+  activeWalkthroughStep = 0;
+  walkthroughActionMessage = "";
+  renderWalkthroughStep();
+  walkthroughOverlay.hidden = false;
+}
+
+function closeWalkthrough(options = {}) {
+  if (options.complete) {
+    markWalkthroughComplete();
+  }
+
+  if (walkthroughOverlay) {
+    walkthroughOverlay.hidden = true;
   }
 }
 
-function closeRoutingWizard() {
-  if (routingWizardOverlay) {
-    routingWizardOverlay.hidden = true;
+function maybeOpenWalkthroughOnce() {
+  if (!hasCompletedWalkthrough()) {
+    openWalkthrough();
   }
 }
 
-async function runWizardDeviceRefresh() {
-  if (routingWizardState) {
-    routingWizardState.textContent = "Refreshing audio devices...";
-  }
-
-  preferVirtualOutputOnce = true;
-  await refreshOutputDevices();
-
-  if (routingWizardState) {
-    routingWizardState.textContent = `Selected mic: ${inputDeviceSelect.selectedOptions?.[0]?.textContent || "none"}. Output: ${selectedOutputLabel()}.`;
-  }
-}
-
-async function runWizardTestTone() {
-  if (routingWizardState) {
-    routingWizardState.textContent = "Sending test tone into the Discord mix...";
-  }
-
-  await sendTestTone();
-
-  if (routingWizardState) {
-    routingWizardState.textContent = "If Discord input is CABLE Output, the tone should appear on its input meter.";
+function refreshWalkthroughIfOpen() {
+  if (walkthroughOverlay && !walkthroughOverlay.hidden) {
+    renderWalkthroughStep();
   }
 }
 
@@ -2667,11 +3093,23 @@ stopKeybindButton?.addEventListener("click", () => {
     beginKeybindCapture(stopKeybindId);
   }
 });
-refreshDevicesButton.addEventListener("click", refreshOutputDevices);
+refreshDevicesButton.addEventListener("click", async () => {
+  await refreshOutputDevices();
+  refreshWalkthroughIfOpen();
+});
 sendToneButton.addEventListener("click", sendTestTone);
-inputDeviceSelect.addEventListener("change", switchMicInput);
-outputDeviceSelect.addEventListener("change", applyOutputDevice);
-localPlaybackDeviceSelect?.addEventListener("change", applyLocalPlaybackDevice);
+inputDeviceSelect.addEventListener("change", async () => {
+  await switchMicInput();
+  refreshWalkthroughIfOpen();
+});
+outputDeviceSelect.addEventListener("change", async () => {
+  await applyOutputDevice();
+  refreshWalkthroughIfOpen();
+});
+localPlaybackDeviceSelect?.addEventListener("change", async () => {
+  await applyLocalPlaybackDevice();
+  refreshWalkthroughIfOpen();
+});
 boardSelect?.addEventListener("change", () => {
   selectedBoard = boardSelect.value;
   saveLibraryView();
@@ -2701,11 +3139,24 @@ soundEditorVolume?.addEventListener("input", () => {
     soundEditorVolumeValue.textContent = percent(Number(soundEditorVolume.value));
   }
 });
-openRoutingWizardButton?.addEventListener("click", openRoutingWizard);
-closeRoutingWizardButton?.addEventListener("click", closeRoutingWizard);
-finishRoutingWizardButton?.addEventListener("click", closeRoutingWizard);
-wizardRefreshDevicesButton?.addEventListener("click", runWizardDeviceRefresh);
-wizardTestToneButton?.addEventListener("click", runWizardTestTone);
+openWalkthroughButton?.addEventListener("click", openWalkthrough);
+closeWalkthroughButton?.addEventListener("click", () => {
+  closeWalkthrough({ complete: true });
+});
+walkthroughBackButton?.addEventListener("click", () => {
+  setWalkthroughStep(activeWalkthroughStep - 1);
+});
+walkthroughSkipButton?.addEventListener("click", () => {
+  closeWalkthrough({ complete: true });
+});
+walkthroughNextButton?.addEventListener("click", () => {
+  if (activeWalkthroughStep >= walkthroughSteps.length - 1) {
+    closeWalkthrough({ complete: true });
+    return;
+  }
+
+  setWalkthroughStep(activeWalkthroughStep + 1);
+});
 openSettingsButton?.addEventListener("click", openSettings);
 closeSettingsButton?.addEventListener("click", closeSettings);
 saveSettingsButton?.addEventListener("click", closeSettings);
@@ -2734,7 +3185,10 @@ launchOnStartupCheckbox?.addEventListener("change", () => {
 startHiddenCheckbox?.addEventListener("change", () => {
   saveBackgroundSettings({ startHidden: startHiddenCheckbox.checked });
 });
-importAudioButton.addEventListener("click", importAudioFiles);
+importAudioButton.addEventListener("click", async () => {
+  await importAudioFiles();
+  refreshWalkthroughIfOpen();
+});
 libraryPanel?.addEventListener("dragover", handleImportDragOver);
 libraryPanel?.addEventListener("dragleave", handleImportDragLeave);
 libraryPanel?.addEventListener("drop", handleImportDrop);
@@ -2777,9 +3231,14 @@ async function initializeApp() {
   await setMicCaptureEnabled(true);
   await setMixToOutputEnabled(true);
   await loadImportedLibrary();
+  maybeOpenWalkthroughOnce();
 }
 
-initializeApp();
+initializeApp().catch((error) => {
+  reportRendererFatalError(error, {
+    type: "renderer-initialization-error"
+  });
+});
 window.addEventListener("keydown", handleKeybindKeydown);
 window.soundmuncher?.onGlobalKeybindTriggered?.((payload) => {
   const code = payload?.code;
