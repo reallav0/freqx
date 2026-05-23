@@ -20,6 +20,7 @@ const appUserModelId = "app.freqx.desktop";
 const websiteUrl = "https://freqx.app";
 const githubUpdateRepository = getConfiguredGitHubRepository();
 const supportedAudioExtensions = new Set([".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".opus"]);
+const enableNativeKeyHook = process.env.FREQX_ENABLE_NATIVE_KEY_HOOK === "1";
 let appSettings = {
   launchOnStartup: true,
   startHidden: false,
@@ -27,6 +28,7 @@ let appSettings = {
 };
 
 configureDevelopmentStoragePaths();
+configureRuntimeStability();
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -45,11 +47,13 @@ try {
   portAudio = null;
 }
 
-try {
-  const { uIOhook, UiohookKey } = require("uiohook-napi");
-  keyHook = createUiohookBridge(uIOhook, UiohookKey);
-} catch (error) {
-  keyHook = null;
+if (enableNativeKeyHook) {
+  try {
+    const { uIOhook, UiohookKey } = require("uiohook-napi");
+    keyHook = createUiohookBridge(uIOhook, UiohookKey);
+  } catch (error) {
+    keyHook = null;
+  }
 }
 
 function configureDevelopmentStoragePaths() {
@@ -60,6 +64,11 @@ function configureDevelopmentStoragePaths() {
   const devUserDataPath = path.join(app.getPath("appData"), "freqx-dev");
   app.setPath("userData", devUserDataPath);
   app.setPath("sessionData", path.join(devUserDataPath, "session"));
+}
+
+function configureRuntimeStability() {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-gpu");
 }
 
 function startNativeCrashReporter() {
@@ -222,6 +231,11 @@ function createCrashReport(type, error, details = {}) {
       node: process.versions.node,
       platform: process.platform,
       arch: process.arch
+    },
+    diagnostics: {
+      hardwareAccelerationDisabled: true,
+      nativeKeyHookEnabled: enableNativeKeyHook,
+      nativeKeyHookLoaded: Boolean(keyHook?.available)
     }
   };
 }
@@ -245,6 +259,11 @@ function formatCrashReportForLog(report) {
   if (report.details && Object.keys(report.details).length > 0) {
     parts.push("Details:");
     parts.push(JSON.stringify(report.details, null, 2));
+  }
+
+  if (report.diagnostics && Object.keys(report.diagnostics).length > 0) {
+    parts.push("Diagnostics:");
+    parts.push(JSON.stringify(report.diagnostics, null, 2));
   }
 
   if (report.crashDumpsPath) {
