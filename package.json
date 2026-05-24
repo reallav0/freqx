@@ -22,6 +22,14 @@
     "appId": "app.freqx.desktop",
     "productName": "freqx",
     "icon": "logo.ico",
+    "protocols": [
+      {
+        "name": "freqx",
+        "schemes": [
+          "freqx"
+        ]
+      }
+    ],
     "afterPack": "scripts/afterPack.js",
     "win": {
       "icon": "logo.ico",

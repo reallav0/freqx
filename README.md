@@ -53,6 +53,20 @@ Run the app:
 npm.cmd run dev
 ```
 
+## Protocol Imports
+
+Installed Windows builds register the `freqx://` protocol. The website can open
+links like:
+
+```text
+freqx://import-sound?url=https%3A%2F%2Fexample.com%2Fsound.mp3&filename=sound.mp3&title=Sound
+```
+
+The desktop app imports the linked audio into the local sound library after it
+starts, or routes the request to the already-running instance. Audio URLs must
+use HTTPS, resolve to a public network address, return a supported audio type,
+and be 100 MB or smaller.
+
 ## Build Installer
 
 Build the Windows installer:

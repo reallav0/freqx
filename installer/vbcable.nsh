@@ -16,6 +16,9 @@ Var VBCableIncompleteFound
 
 !macro customUnInstall
   Push $0
+  DetailPrint "Removing freqx:// protocol registration..."
+  DeleteRegKey SHCTX "Software\Classes\freqx"
+
   DetailPrint "Removing freqx app data..."
 
   ${if} $installMode == "all"
@@ -38,6 +41,12 @@ Var VBCableIncompleteFound
 !macroend
 
 !macro customInstall
+  DetailPrint "Registering freqx:// protocol handler..."
+  WriteRegStr SHCTX "Software\Classes\freqx" "" "URL:freqx Protocol"
+  WriteRegStr SHCTX "Software\Classes\freqx" "URL Protocol" ""
+  WriteRegStr SHCTX "Software\Classes\freqx\DefaultIcon" "" "$INSTDIR\${APP_EXECUTABLE_FILENAME},0"
+  WriteRegStr SHCTX "Software\Classes\freqx\shell\open\command" "" "$\"$INSTDIR\${APP_EXECUTABLE_FILENAME}$\" $\"%1$\""
+
   Call PrepareVBCableSetup
   StrCmp $VBCableSetupPath "" vbcable_done
 

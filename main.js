@@ -1,8 +1,12 @@
 const { app, BrowserWindow, Menu, Tray, crashReporter, dialog, globalShortcut, ipcMain, nativeImage, session, shell } = require("electron");
+const dns = require("dns");
 const { execFile } = require("child_process");
 const fs = require("fs");
 const https = require("https");
+const net = require("net");
 const path = require("path");
+const { Transform } = require("stream");
+const { pipeline } = require("stream/promises");
 const { pathToFileURL } = require("url");
 const packageMetadata = require("./package.json");
 
@@ -18,14 +22,53 @@ let lastCrashReport = null;
 let nativeCrashReporterStarted = false;
 const appUserModelId = "app.freqx.desktop";
 const websiteUrl = "https://freqx.app";
+const protocolScheme = "freqx";
+const protocolUrlPrefix = `${protocolScheme}:`;
+const protocolImportAction = "import-sound";
 const githubUpdateRepository = getConfiguredGitHubRepository();
 const supportedAudioExtensions = new Set([".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".opus"]);
+const remoteAudioContentTypeExtensions = new Map([
+  ["audio/aac", ".aac"],
+  ["audio/aacp", ".aac"],
+  ["audio/flac", ".flac"],
+  ["audio/mp4", ".m4a"],
+  ["audio/mpeg", ".mp3"],
+  ["audio/mp3", ".mp3"],
+  ["audio/mpeg3", ".mp3"],
+  ["audio/ogg", ".ogg"],
+  ["audio/opus", ".opus"],
+  ["audio/vnd.wave", ".wav"],
+  ["audio/wav", ".wav"],
+  ["audio/wave", ".wav"],
+  ["audio/x-flac", ".flac"],
+  ["audio/x-m4a", ".m4a"],
+  ["audio/x-mp3", ".mp3"],
+  ["audio/x-mpeg", ".mp3"],
+  ["audio/x-mpeg-3", ".mp3"],
+  ["audio/x-wav", ".wav"],
+  ["application/ogg", ".ogg"]
+]);
+const genericRemoteAudioContentTypes = new Set([
+  "application/octet-stream",
+  "application/x-binary",
+  "application/x-download",
+  "binary/octet-stream"
+]);
+const maxProtocolUrlLength = 8192;
+const maxRemoteAudioBytes = 100 * 1024 * 1024;
+const maxRemoteAudioRedirects = 5;
+const remoteAudioRequestTimeoutMs = 30000;
 const enableNativeKeyHook = process.env.FREQX_ENABLE_NATIVE_KEY_HOOK === "1";
 let appSettings = {
   launchOnStartup: true,
   startHidden: false,
   keepRunningInTray: true
 };
+const pendingProtocolUrls = [];
+const pendingExternalImportEvents = [];
+let externalImportQueue = Promise.resolve();
+let isMainRendererLoaded = false;
+let isRendererReadyForExternalImports = false;
 
 configureDevelopmentStoragePaths();
 configureRuntimeStability();
@@ -813,6 +856,612 @@ function isAllowedGitHubUpdateUrl(url) {
   }
 }
 
+function registerProtocolClient() {
+  try {
+    if (process.defaultApp) {
+      const appPathArg = process.argv.find((arg, index) => (
+        index > 0
+        && typeof arg === "string"
+        && !arg.toLowerCase().startsWith(protocolUrlPrefix)
+      ));
+      app.setAsDefaultProtocolClient(protocolScheme, process.execPath, [
+        path.resolve(appPathArg || __dirname)
+      ]);
+      return;
+    }
+
+    app.setAsDefaultProtocolClient(protocolScheme);
+  } catch (error) {
+  }
+}
+
+function collectProtocolUrlsFromArgv(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  return args.filter((arg) => (
+    typeof arg === "string"
+    && arg.length > 0
+    && arg.length <= maxProtocolUrlLength
+    && arg.toLowerCase().startsWith(protocolUrlPrefix)
+  ));
+}
+
+function queueProtocolUrlsFromArgv(argv, options = {}) {
+  return queueProtocolUrls(collectProtocolUrlsFromArgv(argv), options);
+}
+
+function queueProtocolUrls(urls, options = {}) {
+  const list = (Array.isArray(urls) ? urls : [urls]).filter((url) => (
+    typeof url === "string"
+    && url.length > 0
+    && url.length <= maxProtocolUrlLength
+    && url.toLowerCase().startsWith(protocolUrlPrefix)
+  ));
+
+  if (!list.length) {
+    return false;
+  }
+
+  pendingProtocolUrls.push(...list);
+
+  if (app.isReady()) {
+    if (options.revealWindow !== false) {
+      showMainWindow();
+    }
+    startPendingProtocolImports();
+  }
+
+  return true;
+}
+
+function startPendingProtocolImports() {
+  if (!isMainRendererLoaded || !isRendererReadyForExternalImports || !pendingProtocolUrls.length) {
+    return;
+  }
+
+  const urls = pendingProtocolUrls.splice(0, pendingProtocolUrls.length);
+
+  urls.forEach((url) => {
+    externalImportQueue = externalImportQueue
+      .then(() => processProtocolImportUrl(url))
+      .catch((error) => {
+        sendExternalImportEvent("audio:external-import-completed", createExternalImportFailureResult(null, error));
+      });
+  });
+}
+
+function sendExternalImportEvent(channel, payload) {
+  const canSend = Boolean(
+    mainWindow
+    && !mainWindow.isDestroyed()
+    && !mainWindow.webContents.isDestroyed()
+    && isMainRendererLoaded
+    && isRendererReadyForExternalImports
+  );
+
+  if (canSend) {
+    mainWindow.webContents.send(channel, payload);
+    return;
+  }
+
+  pendingExternalImportEvents.push({ channel, payload });
+  if (pendingExternalImportEvents.length > 50) {
+    pendingExternalImportEvents.shift();
+  }
+}
+
+function flushExternalImportEvents() {
+  if (!isMainRendererLoaded || !isRendererReadyForExternalImports || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return;
+  }
+
+  while (pendingExternalImportEvents.length > 0) {
+    const event = pendingExternalImportEvents.shift();
+    mainWindow.webContents.send(event.channel, event.payload);
+  }
+}
+
+function createExternalImportError(message, code = "external-import-failed") {
+  const error = new Error(message);
+  error.code = code;
+  error.userMessage = message;
+  return error;
+}
+
+function normalizeExternalImportError(error) {
+  if (error?.userMessage) {
+    return error;
+  }
+
+  return createExternalImportError(
+    "Could not download the audio link. Check that the link is reachable and points to a supported audio file.",
+    "download-failed"
+  );
+}
+
+function readProtocolTextParam(searchParams, name, maxLength) {
+  const value = searchParams.get(name);
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .trim()
+    .slice(0, maxLength)
+    .trim();
+}
+
+function parseProtocolImportUrl(rawUrl) {
+  if (typeof rawUrl !== "string" || rawUrl.length === 0 || rawUrl.length > maxProtocolUrlLength) {
+    throw createExternalImportError("This freqx link is invalid.", "invalid-protocol-url");
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch (error) {
+    throw createExternalImportError("This freqx link is invalid.", "invalid-protocol-url");
+  }
+
+  if (parsedUrl.protocol.toLowerCase() !== `${protocolScheme}:`) {
+    throw createExternalImportError("This link does not use the freqx protocol.", "invalid-protocol");
+  }
+
+  const pathAction = parsedUrl.pathname.replace(/^\/+/, "").split("/")[0];
+  const action = (parsedUrl.hostname || pathAction || "").toLowerCase();
+  if (action !== protocolImportAction) {
+    throw createExternalImportError("This freqx link uses an unsupported action.", "unsupported-protocol-action");
+  }
+
+  const sourceUrl = readProtocolTextParam(parsedUrl.searchParams, "url", 4096);
+  if (!sourceUrl) {
+    throw createExternalImportError("This freqx import link is missing an audio URL.", "missing-audio-url");
+  }
+
+  return {
+    rawUrl,
+    sourceUrl,
+    filename: readProtocolTextParam(parsedUrl.searchParams, "filename", 180),
+    title: readProtocolTextParam(parsedUrl.searchParams, "title", 120),
+    board: readProtocolTextParam(parsedUrl.searchParams, "board", 40)
+  };
+}
+
+function createExternalImportSource(request, details = {}) {
+  return {
+    url: request?.sourceUrl || "",
+    title: request?.title || "",
+    filename: request?.filename || "",
+    board: request?.board || "",
+    ...details
+  };
+}
+
+function createExternalImportFailureResult(request, error) {
+  const normalizedError = normalizeExternalImportError(error);
+  return {
+    ok: false,
+    canceled: false,
+    imported: [],
+    skipped: [],
+    error: normalizedError.code || "external-import-failed",
+    message: normalizedError.userMessage || normalizedError.message || "Import from link failed.",
+    source: request ? createExternalImportSource(request) : {}
+  };
+}
+
+function getExternalImportLabel(request) {
+  return String(request?.title || request?.filename || "linked sound")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .trim()
+    .slice(0, 80)
+    .trim() || "linked sound";
+}
+
+async function processProtocolImportUrl(rawUrl) {
+  let request;
+
+  try {
+    request = parseProtocolImportUrl(rawUrl);
+  } catch (error) {
+    sendExternalImportEvent("audio:external-import-completed", createExternalImportFailureResult(null, error));
+    return;
+  }
+
+  sendExternalImportEvent("audio:external-import-started", {
+    source: createExternalImportSource(request),
+    message: `Importing ${getExternalImportLabel(request)}...`
+  });
+
+  try {
+    const result = await importAudioFromProtocolRequest(request);
+    sendExternalImportEvent("audio:external-import-completed", result);
+  } catch (error) {
+    sendExternalImportEvent("audio:external-import-completed", createExternalImportFailureResult(request, error));
+  }
+}
+
+function normalizeHostName(hostname) {
+  return String(hostname || "").replace(/^\[|\]$/g, "").trim().toLowerCase();
+}
+
+function isBlockedIpAddress(address) {
+  const normalized = normalizeHostName(address);
+  const version = net.isIP(normalized);
+
+  if (version === 4) {
+    const octets = normalized.split(".").map((part) => Number.parseInt(part, 10));
+    if (octets.length !== 4 || octets.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) {
+      return true;
+    }
+
+    const [first, second] = octets;
+    return first === 0
+      || first === 10
+      || first === 127
+      || (first === 169 && second === 254)
+      || (first === 172 && second >= 16 && second <= 31)
+      || (first === 192 && second === 168)
+      || (first === 100 && second >= 64 && second <= 127)
+      || (first === 192 && second === 0)
+      || (first === 198 && (second === 18 || second === 19))
+      || first >= 224;
+  }
+
+  if (version === 6) {
+    const mappedIpv4 = normalized.match(/(?:^|:)ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+    if (mappedIpv4) {
+      return isBlockedIpAddress(mappedIpv4[1]);
+    }
+
+    if (normalized === "::" || normalized === "::1") {
+      return true;
+    }
+
+    const firstSegment = normalized.split(":").find(Boolean) || "0";
+    const first = Number.parseInt(firstSegment, 16);
+    return Number.isFinite(first) && (
+      (first & 0xfe00) === 0xfc00
+      || (first & 0xffc0) === 0xfe80
+      || (first & 0xff00) === 0xff00
+    );
+  }
+
+  return false;
+}
+
+function isBlockedRemoteAudioHost(hostname) {
+  const normalized = normalizeHostName(hostname);
+  if (!normalized) {
+    return true;
+  }
+
+  return normalized === "localhost"
+    || normalized.endsWith(".localhost")
+    || normalized.endsWith(".local")
+    || (net.isIP(normalized) && isBlockedIpAddress(normalized));
+}
+
+function parseRemoteAudioUrl(rawUrl) {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch (error) {
+    throw createExternalImportError("The audio URL in this freqx link is invalid.", "invalid-audio-url");
+  }
+
+  if (parsedUrl.protocol.toLowerCase() !== "https:") {
+    throw createExternalImportError("Only HTTPS audio links can be imported.", "unsupported-audio-url");
+  }
+
+  if (parsedUrl.username || parsedUrl.password) {
+    throw createExternalImportError("Audio links with embedded credentials are not supported.", "blocked-audio-url");
+  }
+
+  if (isBlockedRemoteAudioHost(parsedUrl.hostname)) {
+    throw createExternalImportError("That audio link points to a local or private network address.", "blocked-audio-host");
+  }
+
+  parsedUrl.hash = "";
+  return parsedUrl;
+}
+
+function publicDnsLookup(hostname, options, callback) {
+  dns.lookup(hostname, {
+    ...options,
+    all: true
+  }, (error, addresses) => {
+    if (error) {
+      callback(error);
+      return;
+    }
+
+    const resolvedAddresses = Array.isArray(addresses) ? addresses : [];
+    const blockedAddress = resolvedAddresses.find((entry) => isBlockedIpAddress(entry.address));
+    if (blockedAddress) {
+      callback(createExternalImportError(
+        "That audio link points to a local or private network address.",
+        "blocked-audio-host"
+      ));
+      return;
+    }
+
+    if (!resolvedAddresses.length) {
+      callback(createExternalImportError("The audio link host could not be resolved.", "audio-host-not-found"));
+      return;
+    }
+
+    if (options?.all) {
+      callback(null, resolvedAddresses);
+      return;
+    }
+
+    callback(null, resolvedAddresses[0].address, resolvedAddresses[0].family);
+  });
+}
+
+function getHeaderText(header) {
+  if (Array.isArray(header)) {
+    return String(header[0] || "");
+  }
+
+  return String(header || "");
+}
+
+function normalizeContentTypeHeader(header) {
+  return getHeaderText(header).split(";")[0].trim().toLowerCase();
+}
+
+function getRemoteAudioExtensionFromContentType(contentType) {
+  return remoteAudioContentTypeExtensions.get(contentType) || "";
+}
+
+function getSupportedAudioExtension(fileName) {
+  const extension = path.extname(String(fileName || "")).toLowerCase();
+  return supportedAudioExtensions.has(extension) ? extension : "";
+}
+
+function getFileNameFromUrlPath(parsedUrl) {
+  const rawName = path.posix.basename(parsedUrl.pathname || "");
+  if (!rawName || rawName === "/" || rawName === ".") {
+    return "";
+  }
+
+  try {
+    return decodeURIComponent(rawName);
+  } catch (error) {
+    return rawName;
+  }
+}
+
+function getFileNameFromContentDisposition(header) {
+  const value = getHeaderText(header);
+  if (!value) {
+    return "";
+  }
+
+  const encodedMatch = value.match(/filename\*=[^']*''([^;]+)/i);
+  if (encodedMatch) {
+    try {
+      return decodeURIComponent(encodedMatch[1].replace(/^"|"$/g, ""));
+    } catch (error) {
+    }
+  }
+
+  const plainMatch = value.match(/filename="?([^";]+)"?/i);
+  return plainMatch ? plainMatch[1] : "";
+}
+
+function isAllowedRemoteAudioResponse(contentType, extension) {
+  if (!contentType) {
+    return supportedAudioExtensions.has(extension);
+  }
+
+  if (remoteAudioContentTypeExtensions.has(contentType)) {
+    return true;
+  }
+
+  return genericRemoteAudioContentTypes.has(contentType) && supportedAudioExtensions.has(extension);
+}
+
+function sanitizeExternalFileBase(value) {
+  return String(value || "")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/^\.+|\.+$/g, "")
+    .trim()
+    .slice(0, 96)
+    .trim() || "imported-audio";
+}
+
+function getExternalImportFileName(request, parsedUrl, contentType, contentDisposition) {
+  const urlFileName = getFileNameFromUrlPath(parsedUrl);
+  const dispositionFileName = getFileNameFromContentDisposition(contentDisposition);
+  const preferredName = request.filename || dispositionFileName || urlFileName || request.title || "imported-audio";
+  const contentTypeExtension = getRemoteAudioExtensionFromContentType(contentType);
+  const candidateExtension = [
+    request.filename,
+    dispositionFileName,
+    urlFileName
+  ].map(getSupportedAudioExtension).find(Boolean) || "";
+  const extension = contentTypeExtension || candidateExtension;
+
+  if (!supportedAudioExtensions.has(extension)) {
+    throw createExternalImportError("The audio link does not point to a supported audio file.", "unsupported-audio-file");
+  }
+
+  const preferredExtension = getSupportedAudioExtension(preferredName);
+  const baseNameSource = preferredExtension
+    ? path.basename(preferredName, preferredExtension)
+    : preferredName;
+
+  return `${sanitizeExternalFileBase(baseNameSource)}${extension}`;
+}
+
+function createByteLimitTransform(maxBytes) {
+  let receivedBytes = 0;
+
+  return new Transform({
+    transform(chunk, encoding, callback) {
+      receivedBytes += chunk.length;
+      if (receivedBytes > maxBytes) {
+        callback(createExternalImportError(
+          `Audio links must be ${Math.round(maxBytes / (1024 * 1024))} MB or smaller.`,
+          "audio-too-large"
+        ));
+        return;
+      }
+
+      callback(null, chunk);
+    }
+  });
+}
+
+async function removeFileQuietly(filePath) {
+  try {
+    await fs.promises.unlink(filePath);
+  } catch (error) {
+  }
+}
+
+async function downloadRemoteAudioToLibrary(request, rawUrl = request.sourceUrl, redirectCount = 0) {
+  const parsedUrl = parseRemoteAudioUrl(rawUrl);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const succeed = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+    const fail = (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(normalizeExternalImportError(error));
+    };
+
+    const requestOptions = {
+      headers: {
+        Accept: "audio/*,application/octet-stream;q=0.8,*/*;q=0.1",
+        "User-Agent": `${packageMetadata.name || "freqx"}/${app.getVersion()}`
+      },
+      lookup: publicDnsLookup,
+      timeout: remoteAudioRequestTimeoutMs
+    };
+
+    const remoteRequest = https.get(parsedUrl, requestOptions, (response) => {
+      (async () => {
+        const statusCode = Number(response.statusCode || 0);
+        if ([301, 302, 303, 307, 308].includes(statusCode)) {
+          response.resume();
+          if (redirectCount >= maxRemoteAudioRedirects) {
+            throw createExternalImportError("The audio link redirected too many times.", "too-many-redirects");
+          }
+
+          const location = getHeaderText(response.headers.location);
+          if (!location) {
+            throw createExternalImportError("The audio link returned an invalid redirect.", "invalid-redirect");
+          }
+
+          const nextUrl = new URL(location, parsedUrl).href;
+          succeed(await downloadRemoteAudioToLibrary(request, nextUrl, redirectCount + 1));
+          return;
+        }
+
+        if (statusCode < 200 || statusCode >= 300) {
+          response.resume();
+          throw createExternalImportError(`The audio link returned HTTP ${statusCode}.`, "audio-http-error");
+        }
+
+        const contentLength = Number.parseInt(getHeaderText(response.headers["content-length"]), 10);
+        if (Number.isFinite(contentLength) && contentLength > maxRemoteAudioBytes) {
+          response.resume();
+          throw createExternalImportError(
+            `Audio links must be ${Math.round(maxRemoteAudioBytes / (1024 * 1024))} MB or smaller.`,
+            "audio-too-large"
+          );
+        }
+
+        const contentType = normalizeContentTypeHeader(response.headers["content-type"]);
+        const fileName = getExternalImportFileName(request, parsedUrl, contentType, response.headers["content-disposition"]);
+        const extension = path.extname(fileName).toLowerCase();
+
+        if (!isAllowedRemoteAudioResponse(contentType, extension)) {
+          response.resume();
+          throw createExternalImportError("The audio link did not return a supported audio file.", "unsupported-audio-response");
+        }
+
+        const libraryDir = getLibraryDirectory();
+        const destinationPath = createUniqueDestinationPath(libraryDir, fileName);
+
+        try {
+          await pipeline(
+            response,
+            createByteLimitTransform(maxRemoteAudioBytes),
+            fs.createWriteStream(destinationPath, { flags: "wx" })
+          );
+
+          const stat = await fs.promises.stat(destinationPath);
+          if (!stat.isFile() || stat.size <= 0) {
+            await removeFileQuietly(destinationPath);
+            throw createExternalImportError("The audio link returned an empty file.", "empty-audio-file");
+          }
+
+          succeed({
+            destinationPath,
+            finalUrl: parsedUrl.href,
+            contentType,
+            sizeBytes: Number(stat.size)
+          });
+        } catch (error) {
+          await removeFileQuietly(destinationPath);
+          throw error;
+        }
+      })().catch(fail);
+    });
+
+    remoteRequest.setTimeout(remoteAudioRequestTimeoutMs, () => {
+      remoteRequest.destroy(createExternalImportError("The audio link timed out while downloading.", "download-timeout"));
+    });
+    remoteRequest.on("error", fail);
+  });
+}
+
+async function importAudioFromProtocolRequest(request) {
+  const downloaded = await downloadRemoteAudioToLibrary(request);
+  const item = toLibraryItem(downloaded.destinationPath);
+  const itemMetadata = {};
+
+  if (request.title) {
+    itemMetadata.name = request.title;
+  }
+
+  if (request.board) {
+    itemMetadata.board = request.board;
+  }
+
+  const metadata = Object.keys(itemMetadata).length > 0
+    ? { [item.path]: itemMetadata }
+    : {};
+
+  return {
+    ok: true,
+    canceled: false,
+    imported: [item],
+    skipped: [],
+    source: createExternalImportSource(request, {
+      finalUrl: downloaded.finalUrl,
+      contentType: downloaded.contentType,
+      sizeBytes: downloaded.sizeBytes
+    }),
+    metadata
+  };
+}
+
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
 }
@@ -953,6 +1602,8 @@ function loadWindowFile(fileName, details = {}) {
     return;
   }
 
+  isMainRendererLoaded = false;
+  isRendererReadyForExternalImports = false;
   mainWindow.loadFile(fileName).catch((error) => {
     const isCrashFile = fileName === "crash.html";
     const report = recordCrashReport(createCrashReport(
@@ -971,7 +1622,7 @@ function loadWindowFile(fileName, details = {}) {
 }
 
 function createWindow(options = {}) {
-  const shouldStartHidden = !options.showCrashScreen && (appSettings.startHidden || process.argv.includes("--hidden"));
+  const shouldStartHidden = !options.forceShow && !options.showCrashScreen && (appSettings.startHidden || process.argv.includes("--hidden"));
 
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -1003,6 +1654,9 @@ function createWindow(options = {}) {
 
   mainWindow.webContents.on("did-finish-load", () => {
     isShowingCrashScreen = isCrashScreenUrl(mainWindow.webContents.getURL());
+    isMainRendererLoaded = !isShowingCrashScreen && stripUrlState(mainWindow.webContents.getURL()) === getRendererUrl("index.html");
+    flushExternalImportEvents();
+    startPendingProtocolImports();
   });
 
   mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -1411,6 +2065,14 @@ function registerAudioIpc() {
     return { ok: true };
   });
 
+  ipcMain.handle("audio:external-imports-ready", (event) => {
+    assertTrustedIpcSender(event);
+    isRendererReadyForExternalImports = true;
+    flushExternalImportEvents();
+    startPendingProtocolImports();
+    return { ok: true };
+  });
+
   ipcMain.handle("audio:open-library-folder", async (event) => {
     assertTrustedIpcSender(event);
     const libraryDir = getLibraryDirectory();
@@ -1640,9 +2302,20 @@ function toLibraryItem(filePath) {
 }
 
 if (hasSingleInstanceLock) {
-  app.on("second-instance", () => {
+  queueProtocolUrlsFromArgv(process.argv, { revealWindow: false });
+
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    queueProtocolUrls([url], { revealWindow: true });
+  });
+
+  app.on("second-instance", (event, argv) => {
+    const hasProtocolUrl = queueProtocolUrlsFromArgv(argv, { revealWindow: true });
     if (app.isReady()) {
       showMainWindow();
+      if (!hasProtocolUrl) {
+        startPendingProtocolImports();
+      }
     }
   });
 
@@ -1651,12 +2324,14 @@ if (hasSingleInstanceLock) {
       app.setAppUserModelId(appUserModelId);
     }
 
+    registerProtocolClient();
     loadAppSettings();
     applyLoginItemSettings();
     configurePermissions();
     registerAudioIpc();
     createTray();
-    createWindow();
+    createWindow({ forceShow: pendingProtocolUrls.length > 0 });
+    startPendingProtocolImports();
 
     app.on("activate", () => {
       showMainWindow();

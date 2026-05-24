@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("soundmuncher", {
   listImportedFiles: () => ipcRenderer.invoke("audio:list-imported-files"),
   removeImportedFile: (filePath) => ipcRenderer.invoke("audio:remove-imported-file", filePath),
   openLibraryFolder: () => ipcRenderer.invoke("audio:open-library-folder"),
+  externalImportsReady: () => ipcRenderer.invoke("audio:external-imports-ready"),
   getAppSettings: () => ipcRenderer.invoke("app-settings:get"),
   setAppSettings: (updates) => ipcRenderer.invoke("app-settings:set", updates),
   registerGlobalKeybinds: (entries) => ipcRenderer.invoke("keybinds:register-global", entries),
@@ -36,6 +37,26 @@ contextBridge.exposeInMainWorld("soundmuncher", {
     ipcRenderer.on("keybinds:trigger", listener);
     return () => {
       ipcRenderer.removeListener("keybinds:trigger", listener);
+    };
+  },
+  onExternalImportStarted: (handler) => {
+    const listener = (event, payload) => {
+      handler(payload);
+    };
+
+    ipcRenderer.on("audio:external-import-started", listener);
+    return () => {
+      ipcRenderer.removeListener("audio:external-import-started", listener);
+    };
+  },
+  onExternalImportCompleted: (handler) => {
+    const listener = (event, payload) => {
+      handler(payload);
+    };
+
+    ipcRenderer.on("audio:external-import-completed", listener);
+    return () => {
+      ipcRenderer.removeListener("audio:external-import-completed", listener);
     };
   },
   onFatalError: (handler) => {

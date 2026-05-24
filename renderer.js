@@ -1778,7 +1778,63 @@ async function loadImportedLibrary() {
   }
 }
 
-async function completeAudioImport(result, canceledMessage = "Import canceled.") {
+function applyImportedSoundMetadata(result) {
+  const metadataByPath = result?.metadata && typeof result.metadata === "object"
+    ? result.metadata
+    : {};
+  let changed = false;
+
+  Object.entries(metadataByPath).forEach(([itemPath, metadata]) => {
+    if (!metadata || typeof metadata !== "object") {
+      return;
+    }
+
+    const item = importedLibraryItems.find((candidate) => candidate.path === itemPath);
+    if (!item) {
+      return;
+    }
+
+    const nextMetadata = normalizeSoundMetadata(item, {
+      ...getSoundMetadata(item),
+      ...metadata
+    });
+    libraryMetadata[item.path] = nextMetadata;
+    if (!boards.includes(nextMetadata.board)) {
+      boards.push(nextMetadata.board);
+    }
+    changed = true;
+  });
+
+  if (changed) {
+    saveLibraryMetadata();
+    renderImportedLibrary();
+  }
+}
+
+function getExternalImportDisplayName(source = {}) {
+  return String(source.title || source.filename || "linked sound")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .trim()
+    .slice(0, 80)
+    .trim() || "linked sound";
+}
+
+async function handleExternalImportStarted(payload) {
+  setLibraryState(payload?.message || `Importing ${getExternalImportDisplayName(payload?.source)}...`);
+}
+
+async function handleExternalImportCompleted(result) {
+  if (!result || result.ok === false) {
+    setLibraryState(result?.message || "Import from link failed.");
+    return;
+  }
+
+  await completeAudioImport(result, "Import from link canceled.", {
+    successMessage: `Imported ${getExternalImportDisplayName(result.source)} into local library.`
+  });
+}
+
+async function completeAudioImport(result, canceledMessage = "Import canceled.", options = {}) {
   if (!result || result.canceled) {
     setLibraryState(canceledMessage);
     return;
@@ -1790,12 +1846,13 @@ async function completeAudioImport(result, canceledMessage = "Import canceled.")
   if (importedCount > 0) {
     importedAudioBuffers.clear();
     await loadImportedLibrary();
+    applyImportedSoundMetadata(result);
   }
 
   if (importedCount > 0 && skippedCount > 0) {
     setLibraryState(`Imported ${importedCount} file(s). Skipped ${skippedCount} unsupported or unreadable file(s).`);
   } else if (importedCount > 0) {
-    setLibraryState(`Imported ${importedCount} file(s) into local library.`);
+    setLibraryState(options.successMessage || `Imported ${importedCount} file(s) into local library.`);
   } else if (skippedCount > 0) {
     setLibraryState(`Skipped ${skippedCount} unsupported or unreadable file(s).`);
   } else {
@@ -3232,6 +3289,7 @@ async function initializeApp() {
   await setMixToOutputEnabled(true);
   await loadImportedLibrary();
   maybeOpenWalkthroughOnce();
+  await window.soundmuncher?.externalImportsReady?.();
 }
 
 initializeApp().catch((error) => {
@@ -3263,6 +3321,20 @@ window.soundmuncher?.onGlobalKeybindTriggered?.((payload) => {
   }
 
   triggerImportedSoundByEvent(eventLike);
+});
+window.soundmuncher?.onExternalImportStarted?.((payload) => {
+  handleExternalImportStarted(payload).catch((error) => {
+    reportRendererFatalError(error, {
+      type: "renderer-external-import-start-error"
+    });
+  });
+});
+window.soundmuncher?.onExternalImportCompleted?.((payload) => {
+  handleExternalImportCompleted(payload).catch((error) => {
+    reportRendererFatalError(error, {
+      type: "renderer-external-import-complete-error"
+    });
+  });
 });
 if (navigator.mediaDevices?.addEventListener) {
   navigator.mediaDevices.addEventListener("devicechange", refreshOutputDevices);
