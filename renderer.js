@@ -320,8 +320,11 @@ let masterGainNode;
 let compressorNode;
 let mixDestination;
 let appPlaybackDestination;
-let monitorElement;
-let appPlaybackElement;
+let mixOutContext;
+let mixOutGainNode;
+let mixOutSource;
+let localOutContext;
+let localOutSource;
 let levelAnalyser;
 let levelData;
 let micFrequencyAnalyser;
@@ -1242,6 +1245,45 @@ function renderImportedLibrary() {
       playImportedSound(item);
     });
 
+    const volumeRow = document.createElement("div");
+    volumeRow.className = "pad-volume-row";
+
+    const volumeIcon = document.createElement("span");
+    volumeIcon.className = "pad-volume-icon";
+    volumeIcon.textContent = metadata.volume > 0.66 ? "\u{1F50A}" : metadata.volume > 0.33 ? "\u{1F509}" : metadata.volume > 0 ? "\u{1F508}" : "\u{1F507}";
+
+    const volumeSlider = document.createElement("input");
+    volumeSlider.type = "range";
+    volumeSlider.className = "pad-volume-slider";
+    volumeSlider.min = "0";
+    volumeSlider.max = "1.5";
+    volumeSlider.step = "0.01";
+    volumeSlider.value = String(metadata.volume);
+    volumeSlider.title = `Volume: ${Math.round(metadata.volume * 100)}%`;
+    volumeSlider.style.setProperty("--vol-pct", `${(metadata.volume / 1.5) * 100}%`);
+
+    const volumeLabel = document.createElement("span");
+    volumeLabel.className = "pad-volume-label";
+    volumeLabel.textContent = `${Math.round(metadata.volume * 100)}%`;
+
+    volumeSlider.addEventListener("input", (e) => {
+      e.stopPropagation();
+      const vol = clampNumber(volumeSlider.value, 0, 1.5, 1);
+      volumeLabel.textContent = `${Math.round(vol * 100)}%`;
+      volumeSlider.title = `Volume: ${Math.round(vol * 100)}%`;
+      volumeSlider.style.setProperty("--vol-pct", `${(vol / 1.5) * 100}%`);
+      volumeIcon.textContent = vol > 0.66 ? "\u{1F50A}" : vol > 0.33 ? "\u{1F509}" : vol > 0 ? "\u{1F508}" : "\u{1F507}";
+      libraryMetadata[item.path] = { ...getSoundMetadata(item), volume: vol };
+      saveLibraryMetadata();
+    });
+
+    volumeSlider.addEventListener("click", (e) => e.stopPropagation());
+    volumeSlider.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    volumeRow.appendChild(volumeIcon);
+    volumeRow.appendChild(volumeSlider);
+    volumeRow.appendChild(volumeLabel);
+
     const actions = document.createElement("div");
     actions.className = "imported-actions";
 
@@ -1323,6 +1365,7 @@ function renderImportedLibrary() {
     actions.appendChild(editButton);
     actions.appendChild(removeButton);
     card.appendChild(trigger);
+    card.appendChild(volumeRow);
     card.appendChild(actions);
     importedList.appendChild(card);
   });
@@ -2085,14 +2128,18 @@ async function playImportedSound(item) {
     const playableDuration = Math.max(0.01, buffer.duration - trimStart - trimEnd);
     const source = audioContext.createBufferSource();
     const outputGain = audioContext.createGain();
-    const now = audioContext.currentTime;
 
     source.buffer = buffer;
+    source.playbackRate.value = 1;
     source.loop = metadata.playbackMode === "loop";
     if (source.loop) {
       source.loopStart = trimStart;
       source.loopEnd = trimStart + playableDuration;
     }
+
+    // Capture currentTime AFTER buffer decode to prevent stale timing
+    // that caused gain envelope compression / speed-up artifacts
+    const now = audioContext.currentTime;
 
     outputGain.gain.setValueAtTime(Math.max(0.0001, metadata.volume), now);
     if (metadata.fadeIn > 0) {
@@ -2141,11 +2188,11 @@ function isVirtualOutputSelection() {
 }
 
 function syncMonitorAudibility() {
-  if (!monitorElement) {
+  if (!mixOutGainNode) {
     return;
   }
 
-  monitorElement.muted = !isVirtualOutputSelection();
+  mixOutGainNode.gain.value = isVirtualOutputSelection() ? 1 : 0;
 }
 
 function formatDeviceName(device) {
@@ -2364,7 +2411,7 @@ async function refreshOutputDevices() {
 }
 
 async function applyOutputDevice() {
-  if (!monitorElement) {
+  if (!mixOutContext) {
     return;
   }
 
@@ -2386,13 +2433,13 @@ async function applyOutputDevice() {
   const { inputChanged, blockedInputCount } = populateInputDevicesForOutput(selectedOutputDevice);
   const needsMicReconnect = inputChanged && isMicCaptureEnabled && Boolean(micStream);
 
-  if (typeof monitorElement.setSinkId !== "function") {
+  if (typeof mixOutContext.setSinkId !== "function") {
     setRouteState("Output routing API not available in this Electron runtime.");
     return;
   }
 
   try {
-    await monitorElement.setSinkId(deviceId);
+    await mixOutContext.setSinkId(deviceId);
     syncMonitorAudibility();
     saveMixerSettings();
 
@@ -2421,7 +2468,7 @@ async function applyOutputDevice() {
 async function applyLocalPlaybackDevice(options = {}) {
   const { silent = false } = options;
 
-  if (!appPlaybackElement || !localPlaybackDeviceSelect) {
+  if (!localOutContext || !localPlaybackDeviceSelect) {
     return;
   }
 
@@ -2436,7 +2483,7 @@ async function applyLocalPlaybackDevice(options = {}) {
     return;
   }
 
-  if (typeof appPlaybackElement.setSinkId !== "function") {
+  if (typeof localOutContext.setSinkId !== "function") {
     if (!silent) {
       setRouteState("Local playback routing API not available in this Electron runtime.");
     }
@@ -2444,8 +2491,10 @@ async function applyLocalPlaybackDevice(options = {}) {
   }
 
   try {
-    await appPlaybackElement.setSinkId(deviceId);
-    await appPlaybackElement.play();
+    await localOutContext.setSinkId(deviceId);
+    if (localOutContext.state !== "running") {
+      await localOutContext.resume();
+    }
 
     if (!silent) {
       const caution = isLikelyVirtualDevice(selectedLocalPlaybackLabel())
@@ -2683,7 +2732,7 @@ async function setupMixer(options = {}) {
   const { requestMic = true } = options;
 
   if (!audioContext) {
-    audioContext = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+    audioContext = new AudioContext({ latencyHint: "interactive" });
 
     micGainNode = audioContext.createGain();
     micHighPassNode = audioContext.createBiquadFilter();
@@ -2791,19 +2840,15 @@ async function setupMixer(options = {}) {
     micMonitorGainNode.connect(audioContext.destination);
     appPlaybackGainNode.connect(appPlaybackDestination);
 
-    monitorElement = new Audio();
-    monitorElement.autoplay = true;
-    monitorElement.muted = false;
-    monitorElement.volume = 1;
-    monitorElement.srcObject = mixDestination.stream;
-    monitorElement.playsInline = true;
+    mixOutContext = new AudioContext({ latencyHint: "interactive" });
+    mixOutGainNode = mixOutContext.createGain();
+    mixOutSource = mixOutContext.createMediaStreamSource(mixDestination.stream);
+    mixOutSource.connect(mixOutGainNode);
+    mixOutGainNode.connect(mixOutContext.destination);
 
-    appPlaybackElement = new Audio();
-    appPlaybackElement.autoplay = true;
-    appPlaybackElement.muted = false;
-    appPlaybackElement.volume = 1;
-    appPlaybackElement.srcObject = appPlaybackDestination.stream;
-    appPlaybackElement.playsInline = true;
+    localOutContext = new AudioContext({ latencyHint: "interactive" });
+    localOutSource = localOutContext.createMediaStreamSource(appPlaybackDestination.stream);
+    localOutSource.connect(localOutContext.destination);
 
     meterAnimationFrame = window.requestAnimationFrame(updateLevelMeter);
     ensureMicGateUpdater();
@@ -2832,7 +2877,6 @@ async function setupMixer(options = {}) {
 
     const constraints = {
       channelCount: 1,
-      sampleRate: 48000,
       echoCancellation: false,
       noiseSuppression: false,
       autoGainControl: false
@@ -2864,16 +2908,16 @@ async function setupMixer(options = {}) {
     micSource.connect(micGainNode);
   }
 
-  if (monitorElement) {
+  if (mixOutContext && mixOutContext.state !== "running") {
     try {
-      await monitorElement.play();
+      await mixOutContext.resume();
     } catch (error) {
     }
   }
 
-  if (appPlaybackElement) {
+  if (localOutContext && localOutContext.state !== "running") {
     try {
-      await appPlaybackElement.play();
+      await localOutContext.resume();
     } catch (error) {
     }
   }

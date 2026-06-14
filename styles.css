@@ -550,6 +550,65 @@ h2 {
   text-transform: capitalize;
 }
 
+.pad-volume-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+}
+
+.pad-volume-icon {
+  flex-shrink: 0;
+  width: 18px;
+  font-size: 0.82rem;
+  line-height: 1;
+  text-align: center;
+  user-select: none;
+}
+
+.pad-volume-slider {
+  flex: 1;
+  height: 4px;
+  min-width: 0;
+  margin: 0;
+  border-radius: 999px;
+  outline: none;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--tone, var(--accent)) 72%, #fff) var(--vol-pct, 66.67%), rgba(255, 255, 255, 0.1) var(--vol-pct, 66.67%));
+  -webkit-appearance: none;
+  appearance: none;
+  transition: background var(--transition);
+}
+
+.pad-volume-slider::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--tone, var(--accent)) 50%, #0c1614);
+  border-radius: 50%;
+  background: var(--tone, var(--accent));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--tone, var(--accent)) 20%, transparent);
+  cursor: pointer;
+  transition: transform var(--transition), box-shadow var(--transition);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.pad-volume-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone, var(--accent)) 24%, transparent);
+}
+
+.pad-volume-label {
+  flex-shrink: 0;
+  min-width: 32px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-align: right;
+  user-select: none;
+}
+
 .imported-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
