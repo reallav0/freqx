@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#090a09" />
+    <meta
+      name="description"
+      content="freqx is a focused Windows soundboard and voice-routing desk for calls, streams, games, and live production."
+    />
+    <title>freqx — Put every sound within reach</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="script.js" defer></script>
+  </head>
+  <body data-page="home">
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header" data-site-header>
+      <div class="nav-shell">
+        <a class="wordmark" href="index.html" aria-label="freqx home">
+          <svg class="wordmark-mark" viewBox="0 0 40 40" role="img" aria-hidden="true">
+            <rect x="1" y="1" width="38" height="38" rx="10" fill="#13140f" stroke="currentColor" />
+            <path d="M9 23.5h4l2.25-10 4.2 16 3.25-19 2.8 13h5.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>freqx</span>
+        </a>
+
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
+          <span class="sr-only">Open navigation</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+
+        <nav class="site-nav" id="site-nav" aria-label="Primary navigation" data-site-nav>
+          <a href="#workflow">Workflow</a>
+          <a href="#features">Features</a>
+          <a href="#setup">Setup</a>
+          <a href="soundboard.html">Sound library</a>
+          <a class="nav-github" href="https://github.com/reallav0/freqx" target="_blank" rel="noreferrer">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 2.7a9.3 9.3 0 0 0-2.94 18.12c.47.09.64-.2.64-.45v-1.8c-2.61.57-3.16-1.1-3.16-1.1-.43-1.08-1.04-1.37-1.04-1.37-.85-.58.07-.57.07-.57.94.07 1.43.96 1.43.96.84 1.43 2.19 1.02 2.73.78.08-.6.33-1.02.59-1.25-2.08-.24-4.27-1.04-4.27-4.6 0-1.02.36-1.85.96-2.5-.1-.24-.42-1.19.09-2.47 0 0 .78-.25 2.56.95a8.9 8.9 0 0 1 4.66 0c1.78-1.2 2.56-.95 2.56-.95.5 1.28.19 2.23.09 2.47.6.65.96 1.48.96 2.5 0 3.57-2.2 4.36-4.29 4.6.34.29.64.86.64 1.74v2.58c0 .25.17.54.65.45A9.3 9.3 0 0 0 12 2.7Z" />
+            </svg>
+            GitHub
+          </a>
+          <a class="button button-small button-primary" href="https://github.com/reallav0/freqx/releases/latest">Download</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero section-shell" aria-labelledby="hero-title">
+        <div class="hero-copy reveal">
+          <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> Windows audio, under control</p>
+          <h1 id="hero-title">Put every sound<br /><span>within reach.</span></h1>
+          <p class="hero-lede">
+            A fast soundboard and voice-routing desk built for the moments when your audio has to land exactly on cue.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary button-large" href="https://github.com/reallav0/freqx/releases/latest">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 4.8 10.5 4v7H4V4.8Zm7.5-.93L20 2.7V11h-8.5V3.87ZM4 12h6.5v7L4 18.2V12Zm7.5 0H20v8.3l-8.5-1.17V12Z" />
+              </svg>
+              <span><small>Download for Windows</small>freqx 1.6.0</span>
+            </a>
+            <a class="button button-quiet button-large" href="https://github.com/reallav0/freqx" target="_blank" rel="noreferrer">
+              View on GitHub
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
+            </a>
+          </div>
+          <ul class="hero-meta" aria-label="Product details">
+            <li>Windows 10 / 11</li>
+            <li>Local-first</li>
+            <li>Open source</li>
+          </ul>
+        </div>
+
+        <div class="hero-stage reveal" data-reveal-delay="1" aria-label="freqx application preview">
+          <div class="console-glow" aria-hidden="true"></div>
+          <div class="app-console">
+            <div class="console-titlebar">
+              <div class="console-brand">
+                <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 18h4l2-9 3.4 14 2.8-16 2.3 11H27" /></svg>
+                <span>freqx</span>
+                <small>LIVE AUDIO DESK</small>
+              </div>
+              <div class="window-controls" aria-hidden="true"><span></span><span></span><span></span></div>
+            </div>
+            <div class="console-toolbar">
+              <div><span class="status-led"></span> Ready to route</div>
+              <div class="toolbar-actions"><span>Settings</span><span>Stop all</span><strong>+ Import audio</strong></div>
+            </div>
+            <div class="console-body">
+              <div class="console-library">
+                <div class="console-section-head">
+                  <div><small>LIBRARY / LOCAL</small><b>Soundboard</b></div>
+                  <span>12 sounds</span>
+                </div>
+                <div class="console-filters"><span>All boards</span><span class="console-search">Search sounds…</span></div>
+                <div class="sound-row is-active">
+                  <span class="keycap">1</span>
+                  <span><b>Show opener</b><small>Intro · 0:08</small></span>
+                  <i class="mini-wave"><em></em><em></em><em></em><em></em><em></em></i>
+                  <button type="button" tabindex="-1" aria-hidden="true">▶</button>
+                </div>
+                <div class="sound-row">
+                  <span class="keycap">2</span>
+                  <span><b>Clean transition</b><small>Stings · 0:03</small></span>
+                  <i class="mini-wave"><em></em><em></em><em></em><em></em><em></em></i>
+                  <button type="button" tabindex="-1" aria-hidden="true">▶</button>
+                </div>
+                <div class="sound-row">
+                  <span class="keycap">3</span>
+                  <span><b>Audience hit</b><small>Reactions · 0:05</small></span>
+                  <i class="mini-wave"><em></em><em></em><em></em><em></em><em></em></i>
+                  <button type="button" tabindex="-1" aria-hidden="true">▶</button>
+                </div>
+              </div>
+              <aside class="console-mixer">
+                <div class="console-section-head">
+                  <div><small>LIVE CONTROLS</small><b>Control room</b></div>
+                  <span class="route-state">ON AIR</span>
+                </div>
+                <div class="level-card">
+                  <span><b>OUTPUT LEVEL</b><small>−9.4 dB</small></span>
+                  <div class="meter-bars" aria-hidden="true">
+                    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                  </div>
+                </div>
+                <div class="channel-row"><span>MICROPHONE</span><div><i style="width: 74%"></i></div><b>74%</b></div>
+                <div class="channel-row"><span>SOUNDBOARD</span><div><i style="width: 56%"></i></div><b>56%</b></div>
+                <div class="channel-row"><span>MAIN OUTPUT</span><div><i style="width: 86%"></i></div><b>86%</b></div>
+                <div class="route-card">
+                  <small>OUTPUT DEVICE</small>
+                  <b>freqx Virtual Output</b>
+                  <span><i></i> Routed and listening</span>
+                </div>
+              </aside>
+            </div>
+            <div class="console-status"><span><i></i> Engine ready</span><span>44.1 kHz</span><span>3.8 ms</span></div>
+          </div>
+          <div class="floating-cue cue-one"><span>KEY 1</span><b>Show opener</b><small>Playing · 00:04</small></div>
+          <div class="floating-cue cue-two"><span>ROUTE</span><b>Virtual output</b><small>Connected</small></div>
+        </div>
+      </section>
+
+      <section class="trust-strip" aria-label="Core capabilities">
+        <div class="section-shell trust-inner">
+          <span>One focused desk</span>
+          <ul>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h3l2-6 4 12 2-6h3" /></svg> Instant cues</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4" /></svg> Live mixing</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h5l3 4h8M4 16h5l3-4" /></svg> Virtual routing</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12 4 4 8-8" /></svg> Local library</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="content-section section-shell" id="workflow" aria-labelledby="workflow-title">
+        <div class="section-heading reveal">
+          <p class="eyebrow">Signal flow</p>
+          <h2 id="workflow-title">From cue to call,<br />without the cable maze.</h2>
+          <p>freqx keeps the path visible, so you always know what your audience can hear.</p>
+        </div>
+
+        <div class="signal-flow reveal" data-reveal-delay="1">
+          <article class="signal-node">
+            <span class="node-index">01</span>
+            <div class="node-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="3" width="8" height="12" rx="4" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" /></svg></div>
+            <div><h3>Your microphone</h3><p>Bring in your voice from any Windows input.</p></div>
+          </article>
+          <div class="flow-link" aria-hidden="true"><i></i><span>CAPTURE</span></div>
+          <article class="signal-node is-accent">
+            <span class="node-index">02</span>
+            <div class="node-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-4 3 16 3-12 2 6h3" /></svg></div>
+            <div><h3>freqx live mix</h3><p>Blend voice and cues with clear, independent levels.</p></div>
+          </article>
+          <div class="flow-link" aria-hidden="true"><i></i><span>ROUTE</span></div>
+          <article class="signal-node">
+            <span class="node-index">03</span>
+            <div class="node-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9v6M9 6v12M13 3v18M17 7v10M21 10v4" /></svg></div>
+            <div><h3>Any destination</h3><p>Send one clean output to chat, stream, or recording tools.</p></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="content-section section-shell" id="features" aria-labelledby="features-title">
+        <div class="section-heading section-heading-row reveal">
+          <div><p class="eyebrow">The control surface</p><h2 id="features-title">Everything you need.<br />Nothing you have to fight.</h2></div>
+          <p>Built around the speed and certainty of a real live-audio desk, without turning your desktop into a cockpit.</p>
+        </div>
+
+        <div class="bento-grid">
+          <article class="bento-card bento-wide reveal">
+            <div class="card-copy">
+              <span class="feature-number">01</span>
+              <h3>A soundboard that stays out of your way.</h3>
+              <p>Organize cues into boards, search in a keystroke, and trigger sounds with keys you can remember under pressure.</p>
+            </div>
+            <div class="board-visual" aria-hidden="true">
+              <div class="board-top"><span>LIVE SHOW</span><small>8 CUES</small></div>
+              <div class="cue-grid">
+                <span class="cue-tile active"><kbd>1</kbd><b>Opener</b><i></i></span>
+                <span class="cue-tile"><kbd>2</kbd><b>Sting</b><i></i></span>
+                <span class="cue-tile"><kbd>3</kbd><b>Laugh</b><i></i></span>
+                <span class="cue-tile"><kbd>4</kbd><b>Outro</b><i></i></span>
+              </div>
+            </div>
+          </article>
+
+          <article class="bento-card reveal" data-reveal-delay="1">
+            <span class="feature-number">02</span>
+            <div class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h4l2-4 4 16 2-8h4" /></svg></div>
+            <h3>Mix at a glance</h3>
+            <p>Separate voice, soundboard, and master levels with live metering that reads instantly.</p>
+            <div class="micro-meter" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><i></i></div>
+          </article>
+
+          <article class="bento-card reveal" data-reveal-delay="2">
+            <span class="feature-number">03</span>
+            <div class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h5l3 5h6M5 17h5l3-5" /><circle cx="4" cy="7" r="1.5" /><circle cx="20" cy="12" r="1.5" /><circle cx="4" cy="17" r="1.5" /></svg></div>
+            <h3>Route once</h3>
+            <p>Choose your mic and output once, then reuse the same reliable path across your apps.</p>
+            <div class="route-line" aria-hidden="true"><i></i><span>freqx output</span><b>LIVE</b></div>
+          </article>
+
+          <article class="bento-card reveal">
+            <span class="feature-number">04</span>
+            <div class="feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM9 8h6M9 12h6M9 16h3" /></svg></div>
+            <h3>Your files, locally</h3>
+            <p>Import your own audio and keep the library on your machine—not inside an account.</p>
+          </article>
+
+          <article class="bento-card bento-wide bento-horizontal reveal" data-reveal-delay="1">
+            <div class="card-copy">
+              <span class="feature-number">05</span>
+              <h3>Built for muscle memory.</h3>
+              <p>Bind a key to every sound, stop playback from anywhere, and keep both hands on the moment.</p>
+            </div>
+            <div class="key-visual" aria-hidden="true"><kbd>Ctrl</kbd><span>+</span><kbd>F1</kbd><i>TRIGGER CUE</i></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="content-section use-section" aria-labelledby="use-title">
+        <div class="section-shell">
+          <div class="section-heading reveal">
+            <p class="eyebrow">Made for live moments</p>
+            <h2 id="use-title">One desk. A lot of rooms.</h2>
+          </div>
+          <div class="use-grid">
+            <article class="use-card reveal">
+              <span>01 / STREAM</span>
+              <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 8h20v14H6zM11 27h10M16 22v5M12 12l8 4-8 4v-8Z" /></svg>
+              <h3>Streamers</h3>
+              <p>Hit stings, reactions, and transitions without breaking the flow of the show.</p>
+            </article>
+            <article class="use-card reveal" data-reveal-delay="1">
+              <span>02 / TALK</span>
+              <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="11" y="4" width="10" height="16" rx="5" /><path d="M7 16a9 9 0 0 0 18 0M16 25v4M11 29h10" /></svg>
+              <h3>Podcasters</h3>
+              <p>Bring intros, clips, and beds into the conversation while the recording keeps moving.</p>
+            </article>
+            <article class="use-card reveal" data-reveal-delay="2">
+              <span>03 / PLAY</span>
+              <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M9 12h14l4 11a3 3 0 0 1-5 3l-3-4h-6l-3 4a3 3 0 0 1-5-3l4-11ZM11 17h5M13.5 14.5v5M21 16h.01M24 19h.01" /></svg>
+              <h3>Players</h3>
+              <p>Add personality to party chat with dependable hotkeys and a clean shared output.</p>
+            </article>
+            <article class="use-card reveal" data-reveal-delay="3">
+              <span>04 / MEET</span>
+              <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 8h22v16H5zM10 13h6M10 18h12M23 12v8" /></svg>
+              <h3>Presenters</h3>
+              <p>Play examples, cues, and walk-on audio into calls without sharing your entire desktop.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="content-section section-shell setup-section" id="setup" aria-labelledby="setup-title">
+        <div class="section-heading section-heading-row reveal">
+          <div><p class="eyebrow">Quick setup</p><h2 id="setup-title">On air in three moves.</h2></div>
+          <p>No account and no cloud library. Download, choose your route, and bring in the sounds you already own.</p>
+        </div>
+        <ol class="steps-grid">
+          <li class="step-card reveal">
+            <span>01</span>
+            <div><h3>Install freqx</h3><p>Download the latest Windows release and follow the short installer.</p></div>
+          </li>
+          <li class="step-card reveal" data-reveal-delay="1">
+            <span>02</span>
+            <div><h3>Choose your devices</h3><p>Select your microphone and the destination that should receive the mix.</p></div>
+          </li>
+          <li class="step-card reveal" data-reveal-delay="2">
+            <span>03</span>
+            <div><h3>Load your first cue</h3><p>Import a local sound, bind a key, check the meter, and you’re ready.</p></div>
+          </li>
+        </ol>
+
+        <div class="faq-layout">
+          <div class="faq-intro reveal">
+            <p class="eyebrow">Good to know</p>
+            <h2>Before you plug in.</h2>
+            <p>freqx is intentionally simple, but audio routing can be unfamiliar the first time.</p>
+            <a class="text-link" href="https://github.com/reallav0/freqx" target="_blank" rel="noreferrer">Read the project docs <span aria-hidden="true">↗</span></a>
+          </div>
+          <div class="faq-list reveal" data-reveal-delay="1">
+            <details open>
+              <summary>What does freqx run on?<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg></summary>
+              <p>freqx 1.6.0 is a desktop app for Windows 10 and Windows 11.</p>
+            </details>
+            <details>
+              <summary>Do I need an account?<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg></summary>
+              <p>No. Your setup and imported audio stay local to your computer.</p>
+            </details>
+            <details>
+              <summary>Can I use my own sound files?<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg></summary>
+              <p>Yes. The desktop app is designed around importing and organizing audio files you already have permission to use.</p>
+            </details>
+            <details>
+              <summary>Is the project open source?<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg></summary>
+              <p>Yes. The source, releases, and issue tracker are available in the public GitHub repository.</p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="final-cta section-shell reveal" aria-labelledby="cta-title">
+        <div class="cta-signal" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div>
+          <p class="eyebrow">Ready when you are</p>
+          <h2 id="cta-title">Make the next cue<br /><span>feel effortless.</span></h2>
+        </div>
+        <div class="cta-actions">
+          <a class="button button-primary button-large" href="https://github.com/reallav0/freqx/releases/latest">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4.8 10.5 4v7H4V4.8Zm7.5-.93L20 2.7V11h-8.5V3.87ZM4 12h6.5v7L4 18.2V12Zm7.5 0H20v8.3l-8.5-1.17V12Z" /></svg>
+            <span><small>Download for Windows</small>freqx 1.6.0</span>
+          </a>
+          <small>Free · Open source · Local-first</small>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="section-shell footer-main">
+        <div>
+          <a class="wordmark" href="index.html">
+            <svg class="wordmark-mark" viewBox="0 0 40 40" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="10" fill="#13140f" stroke="currentColor" /><path d="M9 23.5h4l2.25-10 4.2 16 3.25-19 2.8 13h5.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            <span>freqx</span>
+          </a>
+          <p>Your sounds. Your voice. One focused desk.</p>
+        </div>
+        <nav aria-label="Footer navigation">
+          <div><b>Product</b><a href="#features">Features</a><a href="#setup">Setup</a><a href="soundboard.html">Sound library</a></div>
+          <div><b>Project</b><a href="https://github.com/reallav0/freqx" target="_blank" rel="noreferrer">GitHub</a><a href="https://github.com/reallav0/freqx/releases" target="_blank" rel="noreferrer">Releases</a><a href="https://github.com/reallav0/freqx/issues" target="_blank" rel="noreferrer">Issues</a></div>
+        </nav>
+      </div>
+      <div class="section-shell footer-bottom"><span>© <span data-current-year>2026</span> freqx.</span><span>Built for the moments between silence and signal.</span></div>
+    </footer>
+  </body>
+</html>

@@ -14,9 +14,7 @@
     "dev": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win",
-    "postinstall": "electron-builder install-app-deps",
-    "native:install": "npm.cmd install --prefix native",
-    "native:rebuild": "electron-rebuild -m native"
+    "postinstall": "electron-builder install-app-deps"
   },
   "build": {
     "appId": "app.freqx.desktop",
@@ -66,6 +64,7 @@
       "crash.js",
       "index.html",
       "styles.css",
+      "assets/*.svg",
       "logo.png",
       "logo.ico",
       "package.json",
@@ -78,8 +77,6 @@
   },
   "devDependencies": {
     "electron": "^36.0.0",
-    "electron-builder": "^26.8.1",
-    "electron-rebuild": "^3.2.9",
-    "node-gyp": "^10.2.0"
+    "electron-builder": "^26.8.1"
   }
 }

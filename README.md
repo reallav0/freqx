@@ -6,6 +6,7 @@ Website: <https://freqx.app>
 
 ## Features
 
+- Nothing OS inspired interface with dot lettering, monochrome pads, and red accents
 - Import local audio files
 - Organize sounds into boards with search and sorting
 - Mark favorite and pinned sounds for faster access
@@ -53,6 +54,10 @@ Run the app:
 npm.cmd run dev
 ```
 
+Electron Builder rebuilds the app's native audio dependencies during installation.
+Global keybinds use Electron's built-in shortcuts by default. Set
+`FREQX_ENABLE_NATIVE_KEY_HOOK=1` to enable the optional `uiohook-napi` keyboard hook.
+
 ## Protocol Imports
 
 Installed Windows builds register the `freqx://` protocol. The website can open
@@ -84,7 +89,7 @@ dist/
 Use this file for distribution:
 
 ```text
-dist/freqx Setup 1.0.0.exe
+dist/freqx Setup <version>.exe
 ```
 
 ## GitHub Update Checks

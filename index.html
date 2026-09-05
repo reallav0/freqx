@@ -11,30 +11,26 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="noise"></div>
     <main class="app-shell">
       <header class="app-topbar">
         <div class="brand-block">
-          <div class="brand-mark" aria-hidden="true">
-            <img src="logo.png" alt="" />
-          </div>
+          <div class="brand-wordmark" aria-label="freqx">FREQX<span class="brand-dot" aria-hidden="true"></span></div>
           <div class="brand-copy">
-            <h1>freqx</h1>
-            <p>Realtime soundboard and voice routing <button id="openWebsiteLink" class="brand-link" type="button">freqx.app</button></p>
+            <span class="brand-eyebrow">Personal audio system</span>
+            <p><button id="openWebsiteLink" class="brand-link" type="button">freqx.app ↗</button></p>
           </div>
         </div>
 
         <div class="top-actions" aria-label="App actions">
-          <button id="openSettings" class="mixer-action" type="button">Settings</button>
-          <button id="openWalkthrough" class="mixer-action" type="button">Walkthrough</button>
+          <button id="openSettings" class="mixer-action quiet-action" type="button">Settings</button>
+          <button id="openWalkthrough" class="mixer-action quiet-action" type="button">Setup guide</button>
           <button id="stopAllSounds" class="mixer-action danger-action" type="button" title="Stop all playing sounds">
             <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <rect x="6" y="6" width="12" height="12" rx="1.5"></rect>
             </svg>
-            Stop
+            Stop all
           </button>
-          <button id="stopKeybind" class="mixer-action stop-keybind-button" type="button" title="Bind stop shortcut">Bind Stop Key</button>
-          <button id="openLibrary" class="mixer-action icon-action" type="button" title="Open Folder" aria-label="Open library folder">
+          <button id="openLibrary" class="mixer-action icon-action quiet-action" type="button" title="Open library folder" aria-label="Open library folder">
             <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
             </svg>
@@ -45,7 +41,7 @@
               <polyline points="17 8 12 3 7 8"></polyline>
               <line x1="12" y1="3" x2="12" y2="15"></line>
             </svg>
-            Import Track
+            Import audio
           </button>
         </div>
       </header>
@@ -54,27 +50,29 @@
         <section class="library" aria-label="Imported audio library">
           <div class="library-header">
             <div>
-              <h2>Soundboard</h2>
-              <p id="libraryState" class="routing-tip">Import files to arm them to physical keys.</p>
+              <span class="section-kicker">01 / Your sound, on demand</span>
+              <h1 class="dot-heading">Soundboard</h1>
+              <p id="libraryState" class="routing-tip" role="status">Drop a sound. Make it yours.</p>
             </div>
+            <span id="libraryCount" class="library-count">00 sounds</span>
           </div>
           <div class="library-tools" aria-label="Soundboard controls">
-            <div class="route-field">
+            <div class="route-field board-field">
               <label for="boardSelect">Board</label>
               <div class="inline-control">
                 <select id="boardSelect" class="device-select"></select>
-                <button id="addBoard" class="mixer-action compact-action" type="button">New</button>
+                <button id="addBoard" class="mixer-action compact-action" type="button" title="Create a board" aria-label="Create a board">+</button>
               </div>
             </div>
-            <div class="route-field">
-              <label>View</label>
-              <button id="toggleFavoritesView" class="mixer-action compact-action" type="button">Favorites</button>
+            <div class="route-field view-field">
+              <span class="field-label">View</span>
+              <button id="toggleFavoritesView" class="mixer-action compact-action" type="button" aria-pressed="false">Favorites</button>
             </div>
-            <div class="route-field">
-              <label for="soundSearch">Search</label>
-              <input id="soundSearch" class="text-input" type="search" placeholder="Find sounds" />
+            <div class="route-field search-field">
+              <label for="soundSearch">Search sounds</label>
+              <input id="soundSearch" class="text-input" type="search" placeholder="Find a sound..." />
             </div>
-            <div class="route-field">
+            <div class="route-field sort-field">
               <label for="soundSort">Sort</label>
               <select id="soundSort" class="device-select">
                 <option value="name">Name</option>
@@ -85,30 +83,33 @@
             </div>
           </div>
           <div id="importedList" class="imported-list"></div>
+          <div class="library-footnote"><span>Click to play · Bind a key for instant access</span><span>Local files / Yours to play</span></div>
         </section>
 
         <aside class="mixer" aria-label="Mixer controls">
           <div class="mixer-header">
             <div>
-              <h2>Output Mixer</h2>
-              <p id="mixState" class="mix-state"></p>
+              <span class="section-kicker">02 / Live controls</span>
+              <h2 class="dot-heading">Mixer</h2>
+              <p id="mixState" class="sr-only" role="status"></p>
             </div>
             <div class="mixer-actions">
-              <button id="toggleMicCapture" class="mixer-action active" type="button" title="Capture Microphone">Mic: On</button>
-              <button id="toggleMixToOutput" class="mixer-action active" type="button" title="Output Sound">Mix: On</button>
-              <button id="toggleSoundPlayback" class="mixer-action active" type="button" title="Hear soundboard locally">Hear: On</button>
+              <button id="toggleMicCapture" class="mixer-action active" type="button" title="Capture microphone" aria-pressed="true">Mic: On</button>
+              <button id="toggleMixToOutput" class="mixer-action active" type="button" title="Send the mix to output" aria-pressed="true">Mix: On</button>
+              <button id="toggleSoundPlayback" class="mixer-action active" type="button" title="Hear soundboard locally" aria-pressed="true">Hear: On</button>
             </div>
           </div>
 
-          <div class="meter" aria-live="polite" aria-label="Live level meter">
+          <div class="meter" aria-label="Output level meter">
             <div class="meter-head">
-              <span>Input Level</span>
+              <span>Output level</span>
               <span id="dbValue">-inf dB</span>
             </div>
-            <p class="meter-sub">Dominant Freq: <span id="hzValue">-- Hz</span></p>
-            <div class="meter-track" role="meter" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60" aria-labelledby="dbValue">
+            <p class="meter-sub">Frequency <span id="hzValue">-- Hz</span></p>
+            <div id="mainMeterTrack" class="meter-track" role="meter" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60" aria-labelledby="dbValue">
               <div id="meterFill" class="meter-fill"></div>
             </div>
+            <div class="meter-scale" aria-hidden="true"><span>−60</span><span>−30</span><span>−12</span><span>0 dB</span></div>
           </div>
 
           <div class="mixer-grid">
@@ -123,7 +124,7 @@
               <output id="soundGainValue">50%</output>
             </label>
             <label class="mixer-control" for="masterGain">
-              <span>Main Output</span>
+              <span>Main output</span>
               <input id="masterGain" type="range" min="0" max="1" step="0.01" value="1" />
               <output id="masterGainValue">100%</output>
             </label>
@@ -131,55 +132,42 @@
 
           <div class="route-panel">
             <div class="route-actions">
-              <label>Routing</label>
+              <span class="panel-label">Audio routing</span>
               <div class="route-buttons">
                 <button id="refreshDevices" class="mixer-action compact-action" type="button">Refresh</button>
-                <button id="sendTone" class="mixer-action compact-action" type="button">Tone</button>
+                <button id="sendTone" class="mixer-action compact-action" type="button">Test tone</button>
               </div>
             </div>
             <div class="route-field">
-              <label for="inputDevice">Input Microphone</label>
+              <label for="inputDevice">Microphone input</label>
               <select id="inputDevice" class="device-select"></select>
             </div>
             <div class="route-field">
-              <label for="outputDevice">Output Virtual Cable</label>
+              <label for="outputDevice">Virtual output</label>
               <select id="outputDevice" class="device-select"></select>
             </div>
             <div class="route-field">
-              <label for="localPlaybackDevice">Hear Meme Sounds On</label>
+              <label for="localPlaybackDevice">Monitor output</label>
               <select id="localPlaybackDevice" class="device-select"></select>
             </div>
-            <p id="routeState" class="routing-tip">Output to Virtual Cable. Set Discord input to that cable output. Set Discord output to headphones, not VB-CABLE or Default if Default is VB-CABLE.</p>
+            <p id="routeState" class="routing-tip" role="status">Send the final mix to a virtual cable, then choose that cable as the input in your target app.</p>
           </div>
 
-          <div class="background-panel" aria-label="Background behavior">
-            <label>Background</label>
-            <label class="setting-toggle" for="keepRunningInTray">
-              <input id="keepRunningInTray" type="checkbox" checked />
-              <span>Keep running in tray when closed</span>
-            </label>
-            <label class="setting-toggle" for="launchOnStartup">
-              <input id="launchOnStartup" type="checkbox" checked />
-              <span>Launch on Windows startup</span>
-            </label>
-            <label class="setting-toggle" for="startHidden">
-              <input id="startHidden" type="checkbox" />
-              <span>Start hidden in background</span>
-            </label>
-          </div>
         </aside>
       </section>
 
       <footer class="status">
-        <div class="status-now">
+        <div class="status-now" aria-live="polite">
+          <span class="status-signal" aria-hidden="true"></span>
           <span class="status-label">Now Playing</span>
           <span id="nowPlaying" class="status-value">Ready</span>
         </div>
-        <div class="status-meter" aria-live="polite" aria-label="Footer level meter">
-          <span class="status-label">Out dB</span>
+        <div class="status-meter" aria-label="Footer output level meter">
+          <span class="status-label">Output</span>
           <div class="meter-track" id="meterTrackFooter" role="meter" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60" aria-label="Footer output level">
             <div id="meterFillFooter" class="meter-fill footer-fill"></div>
           </div>
+          <span id="dbValueFooter" class="status-db">-inf dB</span>
         </div>
       </footer>
     </main>
@@ -279,7 +267,7 @@
         <div class="modal-head">
           <div>
             <h2 id="settingsTitle">Settings</h2>
-            <p class="routing-tip">Tune the workspace for quick Discord sessions.</p>
+            <p class="routing-tip">Tune the workspace for fast live-audio sessions.</p>
           </div>
           <button id="closeSettings" class="mixer-action compact-action" type="button">Close</button>
         </div>
@@ -288,24 +276,46 @@
             <input id="compactModeToggle" type="checkbox" />
             <span>Compact mode</span>
           </label>
+          <div class="shortcut-setting">
+            <div>
+              <span class="update-title">Emergency stop key</span>
+              <p class="routing-tip">Stop every active sound without returning to freqx.</p>
+            </div>
+            <button id="stopKeybind" class="mixer-action stop-keybind-button" type="button" title="Bind stop shortcut">Bind Stop Key</button>
+          </div>
           <label class="form-field" for="uiThemeSelect">
             <span>App Theme</span>
             <select id="uiThemeSelect" class="device-select">
-              <option value="midnight">Midnight</option>
-              <option value="studio">Studio</option>
-              <option value="ember">Ember</option>
-              <option value="daylight">Daylight</option>
+              <option value="midnight">Carbon</option>
+              <option value="studio">Slate</option>
+              <option value="ember">Warm grey</option>
+              <option value="daylight">Paper</option>
             </select>
           </label>
           <label class="form-field" for="padThemeSelect">
-            <span>Pad Theme</span>
+            <span>Pad accents</span>
             <select id="padThemeSelect" class="device-select">
               <option value="spectrum">Spectrum</option>
               <option value="neon">Neon</option>
               <option value="candy">Candy</option>
-              <option value="mono">Mono</option>
+              <option value="mono">Monochrome</option>
             </select>
           </label>
+          <div class="background-panel settings-background" aria-label="Background behavior">
+            <span class="panel-label">Windows behavior</span>
+            <label class="setting-toggle" for="keepRunningInTray">
+              <input id="keepRunningInTray" type="checkbox" checked />
+              <span>Keep running in tray when closed</span>
+            </label>
+            <label class="setting-toggle" for="launchOnStartup">
+              <input id="launchOnStartup" type="checkbox" checked />
+              <span>Launch on Windows startup</span>
+            </label>
+            <label class="setting-toggle" for="startHidden">
+              <input id="startHidden" type="checkbox" />
+              <span>Start hidden in background</span>
+            </label>
+          </div>
           <div class="update-panel modal-control" aria-live="polite">
             <div>
               <span class="update-title">Updates</span>

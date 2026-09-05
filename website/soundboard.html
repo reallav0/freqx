@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#090a09" />
+    <meta
+      name="description"
+      content="Explore a representative freqx soundboard and prepare your own HTTPS audio link for one-click import into the desktop app."
+    />
+    <title>Sound library — freqx</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="script.js" defer></script>
+  </head>
+  <body data-page="soundboard">
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header" data-site-header>
+      <div class="nav-shell">
+        <a class="wordmark" href="index.html" aria-label="freqx home">
+          <svg class="wordmark-mark" viewBox="0 0 40 40" role="img" aria-hidden="true">
+            <rect x="1" y="1" width="38" height="38" rx="10" fill="#13140f" stroke="currentColor" />
+            <path d="M9 23.5h4l2.25-10 4.2 16 3.25-19 2.8 13h5.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>freqx</span>
+        </a>
+
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
+          <span class="sr-only">Open navigation</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+        </button>
+
+        <nav class="site-nav" id="site-nav" aria-label="Primary navigation" data-site-nav>
+          <a href="index.html#workflow">Workflow</a>
+          <a href="index.html#features">Features</a>
+          <a href="index.html#setup">Setup</a>
+          <a href="soundboard.html" aria-current="page">Sound library</a>
+          <a class="nav-github" href="https://github.com/reallav0/freqx" target="_blank" rel="noreferrer">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.7a9.3 9.3 0 0 0-2.94 18.12c.47.09.64-.2.64-.45v-1.8c-2.61.57-3.16-1.1-3.16-1.1-.43-1.08-1.04-1.37-1.04-1.37-.85-.58.07-.57.07-.57.94.07 1.43.96 1.43.96.84 1.43 2.19 1.02 2.73.78.08-.6.33-1.02.59-1.25-2.08-.24-4.27-1.04-4.27-4.6 0-1.02.36-1.85.96-2.5-.1-.24-.42-1.19.09-2.47 0 0 .78-.25 2.56.95a8.9 8.9 0 0 1 4.66 0c1.78-1.2 2.56-.95 2.56-.95.5 1.28.19 2.23.09 2.47.6.65.96 1.48.96 2.5 0 3.57-2.2 4.36-4.29 4.6.34.29.64.86.64 1.74v2.58c0 .25.17.54.65.45A9.3 9.3 0 0 0 12 2.7Z" /></svg>
+            GitHub
+          </a>
+          <a class="button button-small button-primary" href="https://github.com/reallav0/freqx/releases/latest">Download</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="library-hero section-shell">
+        <div class="library-hero-copy reveal">
+          <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span> Sound library</p>
+          <h1>Find the shape<br />of your next cue.</h1>
+          <p>
+            Explore a sample library structure, then bring an audio file you have permission to use into freqx with a secure HTTPS link.
+          </p>
+        </div>
+        <div class="library-hero-status reveal" data-reveal-delay="1">
+          <div class="status-scope" aria-hidden="true">
+            <span>LIBRARY INDEX</span>
+            <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <dl>
+            <div><dt>Collection</dt><dd>12 cue ideas</dd></div>
+            <div><dt>Format</dt><dd>Reference only</dd></div>
+            <div><dt>Import</dt><dd>Your HTTPS source</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section class="library-workspace section-shell" aria-labelledby="browse-title">
+        <div class="library-controls reveal">
+          <div class="controls-heading">
+            <div><p class="eyebrow">Browse the board</p><h2 id="browse-title">Cue ideas</h2></div>
+            <p><strong data-result-count>12</strong> sounds shown</p>
+          </div>
+          <div class="filter-bar">
+            <label class="search-control" for="sound-search">
+              <span class="sr-only">Search the sound library</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></svg>
+              <input id="sound-search" type="search" placeholder="Search title, tag, or use…" autocomplete="off" data-sound-search />
+              <kbd>/</kbd>
+            </label>
+            <label class="select-control" for="sound-category">
+              <span>Category</span>
+              <select id="sound-category" data-sound-category>
+                <option value="all">All categories</option>
+                <option value="interface">Interface</option>
+                <option value="reaction">Reaction</option>
+                <option value="transition">Transition</option>
+                <option value="ambience">Ambience</option>
+                <option value="voice">Voice</option>
+              </select>
+            </label>
+          </div>
+          <div class="mood-filters" aria-label="Filter by mood" data-mood-filters>
+            <button type="button" class="is-active" data-mood="all" aria-pressed="true">All moods</button>
+            <button type="button" data-mood="bright" aria-pressed="false">Bright</button>
+            <button type="button" data-mood="bold" aria-pressed="false">Bold</button>
+            <button type="button" data-mood="calm" aria-pressed="false">Calm</button>
+            <button type="button" data-mood="playful" aria-pressed="false">Playful</button>
+          </div>
+        </div>
+
+        <div class="sound-grid" data-sound-grid>
+          <article class="library-sound-card reveal" data-sound-card data-title="Clean confirm" data-category="interface" data-mood="bright" data-keywords="ui success accept notification crisp">
+            <div class="sound-card-top"><span>INTERFACE</span><span>00:01</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 24%"></i><i style="--h: 48%"></i><i style="--h: 80%"></i><i style="--h: 42%"></i><i style="--h: 66%"></i><i style="--h: 32%"></i><i style="--h: 18%"></i><i style="--h: 10%"></i><i style="--h: 6%"></i><i style="--h: 4%"></i></div>
+            <h3>Clean confirm</h3><p>A short, polished response for completed actions.</p>
+            <div class="sound-card-footer"><span>Bright</span><button type="button" data-prepare-import="Clean confirm">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Soft cancel" data-category="interface" data-mood="calm" data-keywords="ui cancel close decline subtle">
+            <div class="sound-card-top"><span>INTERFACE</span><span>00:01</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 58%"></i><i style="--h: 70%"></i><i style="--h: 45%"></i><i style="--h: 34%"></i><i style="--h: 23%"></i><i style="--h: 14%"></i><i style="--h: 9%"></i><i style="--h: 5%"></i><i style="--h: 3%"></i><i style="--h: 2%"></i></div>
+            <h3>Soft cancel</h3><p>A low-key exit cue that keeps the room composed.</p>
+            <div class="sound-card-footer"><span>Calm</span><button type="button" data-prepare-import="Soft cancel">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Big reveal" data-category="transition" data-mood="bold" data-keywords="show reveal intro rise impact dramatic">
+            <div class="sound-card-top"><span>TRANSITION</span><span>00:04</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 8%"></i><i style="--h: 12%"></i><i style="--h: 18%"></i><i style="--h: 26%"></i><i style="--h: 38%"></i><i style="--h: 52%"></i><i style="--h: 72%"></i><i style="--h: 94%"></i><i style="--h: 68%"></i><i style="--h: 30%"></i></div>
+            <h3>Big reveal</h3><p>A rising cue shape for launches and scene changes.</p>
+            <div class="sound-card-footer"><span>Bold</span><button type="button" data-prepare-import="Big reveal">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Clean sweep" data-category="transition" data-mood="bright" data-keywords="swoosh segue move whoosh quick">
+            <div class="sound-card-top"><span>TRANSITION</span><span>00:02</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 6%"></i><i style="--h: 15%"></i><i style="--h: 32%"></i><i style="--h: 58%"></i><i style="--h: 86%"></i><i style="--h: 68%"></i><i style="--h: 43%"></i><i style="--h: 25%"></i><i style="--h: 12%"></i><i style="--h: 5%"></i></div>
+            <h3>Clean sweep</h3><p>A compact transition shape for moving between beats.</p>
+            <div class="sound-card-footer"><span>Bright</span><button type="button" data-prepare-import="Clean sweep">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Studio applause" data-category="reaction" data-mood="bright" data-keywords="audience clap celebration crowd win">
+            <div class="sound-card-top"><span>REACTION</span><span>00:06</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 66%"></i><i style="--h: 90%"></i><i style="--h: 72%"></i><i style="--h: 96%"></i><i style="--h: 80%"></i><i style="--h: 72%"></i><i style="--h: 62%"></i><i style="--h: 54%"></i><i style="--h: 39%"></i><i style="--h: 24%"></i></div>
+            <h3>Studio applause</h3><p>A warm crowd response for wins and introductions.</p>
+            <div class="sound-card-footer"><span>Bright</span><button type="button" data-prepare-import="Studio applause">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Tiny rimshot" data-category="reaction" data-mood="playful" data-keywords="joke comedy drum punchline ba dum">
+            <div class="sound-card-top"><span>REACTION</span><span>00:02</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 12%"></i><i style="--h: 50%"></i><i style="--h: 24%"></i><i style="--h: 76%"></i><i style="--h: 34%"></i><i style="--h: 95%"></i><i style="--h: 22%"></i><i style="--h: 8%"></i><i style="--h: 4%"></i><i style="--h: 2%"></i></div>
+            <h3>Tiny rimshot</h3><p>A playful punctuation mark for the perfectly timed joke.</p>
+            <div class="sound-card-footer"><span>Playful</span><button type="button" data-prepare-import="Tiny rimshot">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Room tone" data-category="ambience" data-mood="calm" data-keywords="studio quiet air background neutral bed">
+            <div class="sound-card-top"><span>AMBIENCE</span><span>01:00</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 18%"></i><i style="--h: 22%"></i><i style="--h: 16%"></i><i style="--h: 24%"></i><i style="--h: 20%"></i><i style="--h: 27%"></i><i style="--h: 19%"></i><i style="--h: 23%"></i><i style="--h: 17%"></i><i style="--h: 20%"></i></div>
+            <h3>Room tone</h3><p>A neutral bed concept for smoothing edits and pauses.</p>
+            <div class="sound-card-footer"><span>Calm</span><button type="button" data-prepare-import="Room tone">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Night window" data-category="ambience" data-mood="calm" data-keywords="city night rain window atmosphere loop">
+            <div class="sound-card-top"><span>AMBIENCE</span><span>00:30</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 26%"></i><i style="--h: 34%"></i><i style="--h: 30%"></i><i style="--h: 44%"></i><i style="--h: 28%"></i><i style="--h: 38%"></i><i style="--h: 32%"></i><i style="--h: 40%"></i><i style="--h: 29%"></i><i style="--h: 36%"></i></div>
+            <h3>Night window</h3><p>A quiet city texture concept for stories and interludes.</p>
+            <div class="sound-card-footer"><span>Calm</span><button type="button" data-prepare-import="Night window">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Back in five" data-category="voice" data-mood="calm" data-keywords="spoken announcement break intermission return">
+            <div class="sound-card-top"><span>VOICE</span><span>00:03</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 18%"></i><i style="--h: 62%"></i><i style="--h: 40%"></i><i style="--h: 78%"></i><i style="--h: 34%"></i><i style="--h: 68%"></i><i style="--h: 25%"></i><i style="--h: 52%"></i><i style="--h: 20%"></i><i style="--h: 8%"></i></div>
+            <h3>Back in five</h3><p>A voice-cue slot for a clear intermission message.</p>
+            <div class="sound-card-footer"><span>Calm</span><button type="button" data-prepare-import="Back in five">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Round starts now" data-category="voice" data-mood="bold" data-keywords="spoken game start countdown announce competitive">
+            <div class="sound-card-top"><span>VOICE</span><span>00:02</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 32%"></i><i style="--h: 74%"></i><i style="--h: 48%"></i><i style="--h: 90%"></i><i style="--h: 40%"></i><i style="--h: 82%"></i><i style="--h: 58%"></i><i style="--h: 76%"></i><i style="--h: 28%"></i><i style="--h: 10%"></i></div>
+            <h3>Round starts now</h3><p>A bold announcement slot for games and live challenges.</p>
+            <div class="sound-card-footer"><span>Bold</span><button type="button" data-prepare-import="Round starts now">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Level clear" data-category="reaction" data-mood="playful" data-keywords="game win success sparkle reward achievement">
+            <div class="sound-card-top"><span>REACTION</span><span>00:03</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 30%"></i><i style="--h: 64%"></i><i style="--h: 42%"></i><i style="--h: 86%"></i><i style="--h: 54%"></i><i style="--h: 92%"></i><i style="--h: 67%"></i><i style="--h: 38%"></i><i style="--h: 22%"></i><i style="--h: 7%"></i></div>
+            <h3>Level clear</h3><p>A bright reward shape for milestones and small victories.</p>
+            <div class="sound-card-footer"><span>Playful</span><button type="button" data-prepare-import="Level clear">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+
+          <article class="library-sound-card reveal" data-sound-card data-title="Hard stop" data-category="transition" data-mood="bold" data-keywords="stop impact end cut halt dramatic">
+            <div class="sound-card-top"><span>TRANSITION</span><span>00:01</span></div>
+            <div class="waveform" aria-hidden="true"><i style="--h: 92%"></i><i style="--h: 82%"></i><i style="--h: 65%"></i><i style="--h: 48%"></i><i style="--h: 30%"></i><i style="--h: 18%"></i><i style="--h: 10%"></i><i style="--h: 5%"></i><i style="--h: 2%"></i><i style="--h: 1%"></i></div>
+            <h3>Hard stop</h3><p>An immediate full-stop shape for decisive scene endings.</p>
+            <div class="sound-card-footer"><span>Bold</span><button type="button" data-prepare-import="Hard stop">Set up import <span aria-hidden="true">→</span></button></div>
+          </article>
+        </div>
+
+        <div class="empty-state" hidden data-empty-state>
+          <svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="21" cy="21" r="12" /><path d="m30 30 10 10M15 21h12" /></svg>
+          <h3>No cue ideas match</h3>
+          <p>Try a broader search or reset the active filters.</p>
+          <button class="button button-quiet" type="button" data-reset-filters>Reset filters</button>
+        </div>
+      </section>
+
+      <section class="import-section section-shell" id="import" aria-labelledby="import-title">
+        <div class="import-copy reveal">
+          <p class="eyebrow">Bring your own audio</p>
+          <h2 id="import-title">Send a sound<br />straight to freqx.</h2>
+          <p>
+            Paste a direct HTTPS URL for an audio file you own or are licensed to use. The generated <code>freqx://import-sound</code> link opens the desktop app; this website never uploads the file.
+          </p>
+          <ul>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4 10-10" /></svg> HTTPS sources only</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v12H4zM8 7V5h8v2" /></svg> Nothing stored by this page</li>
+            <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M5 20h14" /></svg> Import stays user-initiated</li>
+          </ul>
+        </div>
+
+        <form class="import-panel reveal" data-reveal-delay="1" data-import-form novalidate>
+          <div class="panel-head"><span>IMPORT BRIDGE</span><i><em></em> App handoff ready</i></div>
+          <label for="import-name">
+            <span>Sound name</span>
+            <input id="import-name" name="name" type="text" maxlength="80" placeholder="e.g. Show opener" required data-import-name />
+          </label>
+          <label for="import-url">
+            <span>Direct audio URL</span>
+            <input id="import-url" name="url" type="url" inputmode="url" placeholder="https://your-domain.example/audio.mp3" aria-describedby="import-hint import-error" required data-import-url />
+          </label>
+          <p class="field-hint" id="import-hint">Use a direct, publicly reachable HTTPS URL. Confirm that you have the right to import it.</p>
+          <p class="form-error" id="import-error" role="alert" hidden data-import-error></p>
+          <div class="generated-link" hidden data-generated-link>
+            <span>Generated app link</span>
+            <code data-deep-link-preview>freqx://import-sound?…</code>
+          </div>
+          <button class="button button-primary button-large import-submit" type="submit">
+            Open in freqx
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
+          </button>
+          <p class="import-note">Requires freqx 1.6.0 or later on Windows.</p>
+        </form>
+      </section>
+
+      <section class="library-cta section-shell reveal">
+        <div><p class="eyebrow">Build your own board</p><h2>Keep the good sounds close.</h2><p>Download freqx and turn the audio you trust into a board that is ready when you are.</p></div>
+        <a class="button button-primary button-large" href="https://github.com/reallav0/freqx/releases/latest">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4.8 10.5 4v7H4V4.8Zm7.5-.93L20 2.7V11h-8.5V3.87ZM4 12h6.5v7L4 18.2V12Zm7.5 0H20v8.3l-8.5-1.17V12Z" /></svg>
+          <span><small>Download for Windows</small>freqx 1.6.0</span>
+        </a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="section-shell footer-main">
+        <div>
+          <a class="wordmark" href="index.html"><svg class="wordmark-mark" viewBox="0 0 40 40" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="10" fill="#13140f" stroke="currentColor" /><path d="M9 23.5h4l2.25-10 4.2 16 3.25-19 2.8 13h5.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" /></svg><span>freqx</span></a>
+          <p>Your sounds. Your voice. One focused desk.</p>
+        </div>
+        <nav aria-label="Footer navigation">
+          <div><b>Product</b><a href="index.html#features">Features</a><a href="index.html#setup">Setup</a><a href="soundboard.html">Sound library</a></div>
+          <div><b>Project</b><a href="https://github.com/reallav0/freqx" target="_blank" rel="noreferrer">GitHub</a><a href="https://github.com/reallav0/freqx/releases" target="_blank" rel="noreferrer">Releases</a><a href="https://github.com/reallav0/freqx/issues" target="_blank" rel="noreferrer">Issues</a></div>
+        </nav>
+      </div>
+      <div class="section-shell footer-bottom"><span>© <span data-current-year>2026</span> freqx.</span><span>Bring only audio you own or are licensed to use.</span></div>
+    </footer>
+  </body>
+</html>

@@ -1,10 +1,10 @@
 # Dependencies
 node_modules/
-native/node_modules/
 
 # Build output
 dist/
 out/
+output/
 release/
 build/
 *.blockmap

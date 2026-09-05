@@ -239,13 +239,14 @@ const routeState = document.getElementById("routeState");
 const dbValue = document.getElementById("dbValue");
 const hzValue = document.getElementById("hzValue");
 const meterFill = document.getElementById("meterFill");
-const meterTrack = document.querySelector(".meter-track");
+const meterTrack = document.getElementById("mainMeterTrack");
 const dbValueFooter = document.getElementById("dbValueFooter");
 const meterFillFooter = document.getElementById("meterFillFooter");
 const meterTrackFooter = document.getElementById("meterTrackFooter");
 const importAudioButton = document.getElementById("importAudio");
 const openLibraryButton = document.getElementById("openLibrary");
 const importedList = document.getElementById("importedList");
+const libraryCount = document.getElementById("libraryCount");
 const libraryPanel = document.querySelector(".library");
 const libraryState = document.getElementById("libraryState");
 const boardSelect = document.getElementById("boardSelect");
@@ -364,7 +365,7 @@ const allBoardsValue = "__all__";
 const defaultAppPreferences = {
   compactMode: false,
   uiTheme: "midnight",
-  padTheme: "spectrum"
+  padTheme: "mono"
 };
 let importedKeybinds = {};
 let keybindCapturePath = "";
@@ -800,6 +801,7 @@ function updateFavoritesViewButton() {
 
   toggleFavoritesViewButton.classList.toggle("active", showFavoritesOnly);
   toggleFavoritesViewButton.textContent = showFavoritesOnly ? "All Sounds" : "Favorites";
+  toggleFavoritesViewButton.setAttribute("aria-pressed", String(showFavoritesOnly));
 }
 
 function hashString(value) {
@@ -817,10 +819,10 @@ function getPadThemePalette() {
     spectrum: ["#4da8ff", "#7dd3c7", "#80d489", "#e2b86f", "#ef6b63", "#bd8cff"],
     neon: ["#00f5d4", "#00bbf9", "#fee440", "#f15bb5", "#9b5de5", "#70e000"],
     candy: ["#ff8fab", "#ffc2d1", "#bde0fe", "#a2d2ff", "#cdb4db", "#fdffb6"],
-    mono: ["#c9d1d9", "#9aa4ad", "#7dd3c7", "#8fb3ff", "#d8dee9", "#adb5bd"]
+    mono: ["#eeeeeb", "#a6a6a3", "#c6c6c2", "#90908d", "#d8d8d4", "#b6b6b2"]
   };
 
-  return palettes[appPreferences.padTheme] || palettes.spectrum;
+  return palettes[appPreferences.padTheme] || palettes.mono;
 }
 
 function getPadTone(item, metadata) {
@@ -1177,6 +1179,90 @@ function setLibraryState(message) {
   }
 }
 
+function createPadIcon(name) {
+  const paths = {
+    play: ["M8 5l11 7-11 7V5Z"],
+    favorite: ["m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z"],
+    pin: ["m9 3 6 0-1 5 4 4v2H6v-2l4-4-1-5Z", "M12 14v7"],
+    unbind: ["M8 12H4m4 0-3-3m3 3-3 3", "M13 5h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6", "m12 9 6 6m0-6-6 6"],
+    edit: ["m15 4 5 5M4 20l5-1L20 8a2.1 2.1 0 0 0-4-4L5 15l-1 5Z"],
+    remove: ["M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"],
+    speaker: ["M11 4 6 8H3v8h3l5 4V4Z", "M15 8a6 6 0 0 1 0 8", "M18 5a10 10 0 0 1 0 14"],
+    muted: ["M11 4 6 8H3v8h3l5 4V4Z", "m16 9 6 6m0-6-6 6"]
+  };
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "18");
+  svg.setAttribute("height", "18");
+  svg.setAttribute("fill", name === "play" ? "currentColor" : "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.5");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  (paths[name] || []).forEach((data) => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", data);
+    svg.appendChild(path);
+  });
+  return svg;
+}
+
+function renderLibraryEmptyState(hasLibraryItems) {
+  const placeholder = document.createElement("div");
+  placeholder.className = "library-empty";
+
+  const glyph = document.createElement("div");
+  glyph.className = "empty-glyph";
+  glyph.setAttribute("aria-hidden", "true");
+
+  const title = document.createElement("h3");
+  title.className = "empty-title";
+  title.textContent = hasLibraryItems ? "No sounds found." : "Make some noise.";
+
+  const copy = document.createElement("p");
+  copy.className = "empty-copy";
+  copy.textContent = hasLibraryItems
+    ? "Try another search, or clear your filters to see every sound."
+    : "Drop your audio here. Build a board. Find your frequency.";
+
+  const action = document.createElement("button");
+  action.type = "button";
+  action.className = "mixer-action primary-action";
+  action.textContent = hasLibraryItems ? "Clear filters" : "Import audio";
+  action.addEventListener("click", () => {
+    if (!hasLibraryItems) {
+      importAudioButton.click();
+      return;
+    }
+
+    selectedBoard = allBoardsValue;
+    soundSearchQuery = "";
+    showFavoritesOnly = false;
+    if (soundSearchInput) {
+      soundSearchInput.value = "";
+    }
+    saveLibraryView();
+    renderImportedLibrary();
+  });
+
+  placeholder.append(glyph, title, copy, action);
+  importedList.appendChild(placeholder);
+}
+
+function syncSoundPlaybackVisuals() {
+  const activePaths = new Set(Array.from(activeSoundNodes)
+    .filter((entry) => !entry.stopped)
+    .map((entry) => entry.itemPath));
+  document.body.classList.toggle("has-active-sounds", activePaths.size > 0);
+  importedList?.querySelectorAll(".imported-item").forEach((card) => {
+    const isPlaying = activePaths.has(card.dataset.soundPath);
+    card.classList.toggle("playing", isPlaying);
+    card.querySelector(".imported-pad")?.setAttribute("aria-pressed", String(isPlaying));
+  });
+}
+
 function renderImportedLibrary() {
   if (!importedList) {
     return;
@@ -1186,27 +1272,29 @@ function renderImportedLibrary() {
   updateFavoritesViewButton();
   const visibleItems = getVisibleLibraryItems();
   importedList.innerHTML = "";
+  if (libraryCount) {
+    const total = String(importedLibraryItems.length).padStart(2, "0");
+    const visible = String(visibleItems.length).padStart(2, "0");
+    libraryCount.textContent = visibleItems.length === importedLibraryItems.length
+      ? `${total} ${importedLibraryItems.length === 1 ? "sound" : "sounds"}`
+      : `${visible} / ${total} sounds`;
+  }
 
   if (importedLibraryItems.length === 0) {
-    const placeholder = document.createElement("p");
-    placeholder.className = "routing-tip";
-    placeholder.textContent = "No imported audio yet.";
-    importedList.appendChild(placeholder);
+    renderLibraryEmptyState(false);
     return;
   }
 
   if (visibleItems.length === 0) {
-    const placeholder = document.createElement("p");
-    placeholder.className = "routing-tip";
-    placeholder.textContent = "No sounds match the current board or search.";
-    importedList.appendChild(placeholder);
+    renderLibraryEmptyState(true);
     return;
   }
 
-  visibleItems.forEach((item) => {
+  visibleItems.forEach((item, index) => {
     const metadata = getSoundMetadata(item);
     const card = document.createElement("div");
     card.className = "imported-item";
+    card.dataset.soundPath = item.path;
     card.classList.toggle("favorite", metadata.favorite);
     card.classList.toggle("pinned", metadata.pinned);
     card.style.setProperty("--tone", getPadTone(item, metadata));
@@ -1214,9 +1302,15 @@ function renderImportedLibrary() {
     const trigger = document.createElement("button");
     trigger.className = "pad imported-pad";
     trigger.type = "button";
+    trigger.setAttribute("aria-label", `Play ${metadata.name}`);
+    trigger.setAttribute("aria-pressed", String(hasActiveSoundForPath(item.path)));
 
     const padTop = document.createElement("div");
     padTop.className = "pad-topline";
+
+    const padIndex = document.createElement("span");
+    padIndex.className = "pad-index";
+    padIndex.textContent = String(index + 1).padStart(2, "0");
 
     const boardTag = document.createElement("span");
     boardTag.className = "pad-tag";
@@ -1230,8 +1324,26 @@ function renderImportedLibrary() {
     keyTag.className = "pad-key";
     keyTag.textContent = importedKeybinds[item.path]?.label || "No key";
 
+    padTop.appendChild(padIndex);
     padTop.appendChild(boardTag);
     padTop.appendChild(keyTag);
+
+    const padVisual = document.createElement("div");
+    padVisual.className = "pad-visual";
+    padVisual.setAttribute("aria-hidden", "true");
+    const waveform = document.createElement("span");
+    waveform.className = "pad-waveform";
+    // A static dot pattern gives each pad a signature without implying live amplitude.
+    for (let barIndex = 0; barIndex < 21; barIndex += 1) {
+      const bar = document.createElement("span");
+      const height = 18 + (hashString(`${item.path}:${barIndex}`) % 12) * 6;
+      bar.style.setProperty("--bar-height", `${height}%`);
+      waveform.appendChild(bar);
+    }
+    const playGlyph = document.createElement("span");
+    playGlyph.className = "pad-play";
+    playGlyph.appendChild(createPadIcon("play"));
+    padVisual.append(waveform, playGlyph);
 
     const name = document.createElement("p");
     name.className = "imported-name";
@@ -1250,7 +1362,8 @@ function renderImportedLibrary() {
 
     const volumeIcon = document.createElement("span");
     volumeIcon.className = "pad-volume-icon";
-    volumeIcon.textContent = metadata.volume > 0.66 ? "\u{1F50A}" : metadata.volume > 0.33 ? "\u{1F509}" : metadata.volume > 0 ? "\u{1F508}" : "\u{1F507}";
+    volumeIcon.setAttribute("aria-hidden", "true");
+    volumeIcon.appendChild(createPadIcon(metadata.volume > 0 ? "speaker" : "muted"));
 
     const volumeSlider = document.createElement("input");
     volumeSlider.type = "range";
@@ -1260,6 +1373,7 @@ function renderImportedLibrary() {
     volumeSlider.step = "0.01";
     volumeSlider.value = String(metadata.volume);
     volumeSlider.title = `Volume: ${Math.round(metadata.volume * 100)}%`;
+    volumeSlider.setAttribute("aria-label", `${metadata.name} volume`);
     volumeSlider.style.setProperty("--vol-pct", `${(metadata.volume / 1.5) * 100}%`);
 
     const volumeLabel = document.createElement("span");
@@ -1272,7 +1386,7 @@ function renderImportedLibrary() {
       volumeLabel.textContent = `${Math.round(vol * 100)}%`;
       volumeSlider.title = `Volume: ${Math.round(vol * 100)}%`;
       volumeSlider.style.setProperty("--vol-pct", `${(vol / 1.5) * 100}%`);
-      volumeIcon.textContent = vol > 0.66 ? "\u{1F50A}" : vol > 0.33 ? "\u{1F509}" : vol > 0 ? "\u{1F508}" : "\u{1F507}";
+      volumeIcon.replaceChildren(createPadIcon(vol > 0 ? "speaker" : "muted"));
       libraryMetadata[item.path] = { ...getSoundMetadata(item), volume: vol };
       saveLibraryMetadata();
     });
@@ -1294,6 +1408,7 @@ function renderImportedLibrary() {
     bindButton.textContent = keybindCapturePath === item.path
       ? "Press key..."
       : binding?.label || "Bind key";
+    bindButton.setAttribute("aria-label", `${binding ? "Change" : "Bind"} key for ${metadata.name}`);
 
     if (keybindCapturePath === item.path) {
       bindButton.classList.add("listening");
@@ -1309,8 +1424,10 @@ function renderImportedLibrary() {
 
     const clearButton = document.createElement("button");
     clearButton.type = "button";
-    clearButton.className = "mixer-action keybind-clear";
-    clearButton.textContent = "Unbind";
+    clearButton.className = "mixer-action keybind-clear pad-icon-action";
+    clearButton.appendChild(createPadIcon("unbind"));
+    clearButton.title = "Unbind key";
+    clearButton.setAttribute("aria-label", `Clear keybind for ${metadata.name}`);
     clearButton.disabled = !binding;
     clearButton.addEventListener("click", () => {
       clearKeybind(item.path);
@@ -1323,39 +1440,50 @@ function renderImportedLibrary() {
 
     const favoriteButton = document.createElement("button");
     favoriteButton.type = "button";
-    favoriteButton.className = "mixer-action";
+    favoriteButton.className = "mixer-action pad-icon-action";
     favoriteButton.classList.toggle("active", metadata.favorite);
-    favoriteButton.textContent = metadata.favorite ? "Favorited" : "Favorite";
+    favoriteButton.appendChild(createPadIcon("favorite"));
+    favoriteButton.title = metadata.favorite ? "Remove favorite" : "Favorite";
+    favoriteButton.setAttribute("aria-label", `${metadata.favorite ? "Remove" : "Add"} ${metadata.name} ${metadata.favorite ? "from" : "to"} favorites`);
+    favoriteButton.setAttribute("aria-pressed", String(metadata.favorite));
     favoriteButton.addEventListener("click", () => {
       toggleSoundFlag(item, "favorite");
     });
 
     const pinButton = document.createElement("button");
     pinButton.type = "button";
-    pinButton.className = "mixer-action";
+    pinButton.className = "mixer-action pad-icon-action";
     pinButton.classList.toggle("active", metadata.pinned);
-    pinButton.textContent = metadata.pinned ? "Pinned" : "Pin";
+    pinButton.appendChild(createPadIcon("pin"));
+    pinButton.title = metadata.pinned ? "Unpin" : "Pin";
+    pinButton.setAttribute("aria-label", `${metadata.pinned ? "Unpin" : "Pin"} ${metadata.name}`);
+    pinButton.setAttribute("aria-pressed", String(metadata.pinned));
     pinButton.addEventListener("click", () => {
       toggleSoundFlag(item, "pinned");
     });
 
     const editButton = document.createElement("button");
     editButton.type = "button";
-    editButton.className = "mixer-action";
-    editButton.textContent = "Edit";
+    editButton.className = "mixer-action pad-icon-action";
+    editButton.appendChild(createPadIcon("edit"));
+    editButton.title = "Edit sound";
+    editButton.setAttribute("aria-label", `Edit ${metadata.name}`);
     editButton.addEventListener("click", () => {
       openSoundEditor(item);
     });
 
     const removeButton = document.createElement("button");
     removeButton.type = "button";
-    removeButton.className = "mixer-action imported-remove";
-    removeButton.textContent = "Remove";
+    removeButton.className = "mixer-action imported-remove pad-icon-action";
+    removeButton.appendChild(createPadIcon("remove"));
+    removeButton.title = "Remove sound";
+    removeButton.setAttribute("aria-label", `Remove ${metadata.name}`);
     removeButton.addEventListener("click", () => {
       removeImportedAudio(item);
     });
 
     trigger.appendChild(padTop);
+    trigger.appendChild(padVisual);
     trigger.appendChild(name);
     trigger.appendChild(detail);
     actions.appendChild(bindButton);
@@ -1369,6 +1497,7 @@ function renderImportedLibrary() {
     card.appendChild(actions);
     importedList.appendChild(card);
   });
+  syncSoundPlaybackVisuals();
 }
 
 function toggleSoundFlag(item, flagName) {
@@ -1812,7 +1941,7 @@ async function loadImportedLibrary() {
     renderImportedLibrary();
 
     if (importedLibraryItems.length > 0) {
-      setLibraryState(`${importedLibraryItems.length} imported file(s) stored locally.`);
+      setLibraryState(`${importedLibraryItems.length} ${importedLibraryItems.length === 1 ? "sound" : "sounds"} ready to play.`);
     } else {
       setLibraryState("Import files to store them locally and trigger them from this library.");
     }
@@ -2036,6 +2165,7 @@ function trackSoundNode(sourceNode, outputNode = null, itemPath = "") {
   };
 
   activeSoundNodes.add(entry);
+  syncSoundPlaybackVisuals();
 
   sourceNode.addEventListener?.("ended", () => {
     try {
@@ -2049,6 +2179,13 @@ function trackSoundNode(sourceNode, outputNode = null, itemPath = "") {
     }
 
     activeSoundNodes.delete(entry);
+    syncSoundPlaybackVisuals();
+    if (!entry.stopped) {
+      const remaining = Array.from(activeSoundNodes).filter((sound) => !sound.stopped);
+      const latest = remaining[remaining.length - 1];
+      const remainingItem = latest && importedLibraryItems.find((item) => item.path === latest.itemPath);
+      nowPlaying.textContent = remainingItem ? getSoundMetadata(remainingItem).name : latest ? "Test tone" : "Ready";
+    }
   }, { once: true });
 
   return entry;
@@ -2077,6 +2214,7 @@ function stopTrackedSound(entry) {
   }
 
   activeSoundNodes.delete(entry);
+  syncSoundPlaybackVisuals();
 }
 
 function stopSoundsByPath(itemPath) {
@@ -2162,7 +2300,7 @@ async function playImportedSound(item) {
       source.start(now, trimStart, playableDuration);
     }
 
-    nowPlaying.textContent = `${metadata.name} (Imported)`;
+    nowPlaying.textContent = metadata.name;
   } catch (error) {
     setLibraryState(`Could not play ${item.name}.`);
   }
@@ -2542,22 +2680,31 @@ function updateGainLabels() {
   micGainValue.textContent = percent(Number(micGainSlider.value));
   soundGainValue.textContent = percent(Number(soundGainSlider.value));
   masterGainValue.textContent = percent(Number(masterGainSlider.value));
+  [micGainSlider, soundGainSlider, masterGainSlider].forEach((slider) => {
+    const min = Number(slider.min) || 0;
+    const max = Number(slider.max) || 1;
+    const value = Math.min(max, Math.max(min, Number(slider.value)));
+    slider.style.setProperty("--gain-pct", `${((value - min) / (max - min)) * 100}%`);
+  });
 }
 
 function updateToggleButtonLabels() {
   if (toggleMicCaptureButton) {
     toggleMicCaptureButton.textContent = isMicCaptureEnabled ? "Mic: On" : "Mic: Off";
     toggleMicCaptureButton.classList.toggle("active", isMicCaptureEnabled);
+    toggleMicCaptureButton.setAttribute("aria-pressed", String(isMicCaptureEnabled));
   }
 
   if (toggleMixToOutputButton) {
     toggleMixToOutputButton.textContent = isMixToOutputEnabled ? "Mix: On" : "Mix: Off";
     toggleMixToOutputButton.classList.toggle("active", isMixToOutputEnabled);
+    toggleMixToOutputButton.setAttribute("aria-pressed", String(isMixToOutputEnabled));
   }
 
   if (toggleSoundPlaybackButton) {
     toggleSoundPlaybackButton.textContent = isSoundPlaybackEnabled ? "Hear: On" : "Hear: Off";
     toggleSoundPlaybackButton.classList.toggle("active", isSoundPlaybackEnabled);
+    toggleSoundPlaybackButton.setAttribute("aria-pressed", String(isSoundPlaybackEnabled));
   }
 }
 
@@ -2565,7 +2712,7 @@ function updateMixStateText() {
   const micText = isMicCaptureEnabled ? "on" : "off";
   const mixText = isMixToOutputEnabled ? "on" : "off";
   const hearText = isSoundPlaybackEnabled ? "on" : "off";
-  mixState.textContent = `Mic capture is ${micText}. Mix to output is ${mixText}. Local sound is ${hearText}.`;
+  mixState.textContent = `Mic ${micText} / Mix ${mixText} / Monitor ${hearText}`;
 }
 
 function updateMixerGains() {

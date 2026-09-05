@@ -26,6 +26,13 @@ const protocolScheme = "freqx";
 const protocolUrlPrefix = `${protocolScheme}:`;
 const protocolImportAction = "import-sound";
 const githubUpdateRepository = getConfiguredGitHubRepository();
+const normalWindowsChildProcessExitCode = 0x40010004;
+const recoverableElectronServiceNames = new Set([
+  "GPU",
+  "audio.mojom.AudioService",
+  "network.mojom.NetworkService",
+  "video_capture.mojom.VideoCaptureService"
+]);
 const supportedAudioExtensions = new Set([".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".opus"]);
 const remoteAudioContentTypeExtensions = new Map([
   ["audio/aac", ".aac"],
@@ -112,6 +119,7 @@ function configureDevelopmentStoragePaths() {
 function configureRuntimeStability() {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 }
 
 function startNativeCrashReporter() {
@@ -144,9 +152,10 @@ function registerProcessCrashHandlers() {
       return;
     }
 
-    recordCrashReport(createCrashReport("electron-child-process-gone", null, {
-      details
-    }));
+    const isRecoverable = isRecoverableElectronServiceExit(details);
+    recordCrashReport(createElectronChildProcessGoneReport(details, isRecoverable), {
+      remember: !isRecoverable
+    });
   });
 }
 
@@ -283,6 +292,45 @@ function createCrashReport(type, error, details = {}) {
   };
 }
 
+function getElectronServiceName(details) {
+  return String(details?.serviceName || details?.name || details?.type || "Electron child process");
+}
+
+function isRecoverableElectronServiceExit(details) {
+  const processType = String(details?.type || "").toLowerCase();
+  const reason = String(details?.reason || "").toLowerCase();
+  const serviceName = getElectronServiceName(details);
+  const exitCode = Number(details?.exitCode);
+
+  if (!recoverableElectronServiceNames.has(serviceName)) {
+    return false;
+  }
+
+  if (reason === "killed" && exitCode === normalWindowsChildProcessExitCode) {
+    return true;
+  }
+
+  return (processType === "gpu" || processType === "utility") && (reason === "killed" || reason === "crashed");
+}
+
+function createElectronChildProcessGoneReport(details, isRecoverable) {
+  const serviceName = getElectronServiceName(details);
+  const reason = details?.reason || "exited";
+  const type = isRecoverable ? "electron-service-exit" : "electron-child-process-gone";
+  const message = isRecoverable
+    ? `${serviceName} ${reason}; Electron can recreate this service.`
+    : `${serviceName} ${reason} unexpectedly.`;
+
+  return createCrashReport(type, {
+    name: isRecoverable ? "ElectronServiceExit" : "ElectronChildProcessGone",
+    message
+  }, {
+    details,
+    recoverable: isRecoverable,
+    severity: isRecoverable ? "warning" : "error"
+  });
+}
+
 function formatCrashReportForLog(report) {
   const parts = [
     "",
@@ -324,7 +372,7 @@ function appendCrashLog(report) {
   }
 }
 
-function recordCrashReport(report) {
+function recordCrashReport(report, options = {}) {
   const completeReport = {
     ...report,
     logPath: getCrashLogPath(),
@@ -332,7 +380,9 @@ function recordCrashReport(report) {
     nativeCrashReporterStarted
   };
 
-  lastCrashReport = completeReport;
+  if (options.remember !== false) {
+    lastCrashReport = completeReport;
+  }
   appendCrashLog(completeReport);
   return completeReport;
 }
@@ -1629,7 +1679,7 @@ function createWindow(options = {}) {
     height: 760,
     minWidth: 900,
     minHeight: 620,
-    backgroundColor: "#f5f4ef",
+    backgroundColor: "#111111",
     title: "freqx",
     icon: getAppIconPath(),
     autoHideMenuBar: true,
@@ -2344,7 +2394,12 @@ if (hasSingleInstanceLock) {
     }
   });
 
+  app.on("before-quit", () => {
+    isQuitting = true;
+  });
+
   app.on("will-quit", () => {
+    isQuitting = true;
     globalShortcut.unregisterAll();
     if (keyHook) {
       keyHook.stop();
