@@ -187,6 +187,10 @@ input.pad-volume-slider::-moz-range-thumb { width: 10px; height: 10px; border: 0
 .route-panel .route-field { gap: 5px; }
 .route-panel .device-select { height: 31px; font-size: 10px; border-radius: 10px; }
 .route-panel .routing-tip { font-size: 10px; padding: 9px 0 0; border-top: 1px dashed var(--border); }
+.voice-isolation-control { padding: 9px 0 3px; }
+.voice-isolation-control .setting-toggle { min-height: 25px; font-size: 11px; }
+.voice-isolation-control .routing-tip { border: 0; padding-top: 4px; }
+.voice-isolation-control[data-state="unavailable"] .routing-tip { color: var(--danger); }
 .status { display: flex; justify-content: space-between; align-items: center; gap: 24px; border-top: 1px solid var(--border); }
 .status-now { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .status-signal { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); }

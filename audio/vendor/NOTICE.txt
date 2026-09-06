@@ -1,0 +1,11 @@
+Freqx voice isolation uses the unmodified RNNoise WebAssembly binary distributed
+in @shiguredo/rnnoise-wasm 2025.1.5. scripts/prepare-audio.cjs extracts that binary
+from the pinned package; its browser JavaScript wrapper is not shipped or used.
+
+RNNoise source: https://github.com/xiph/rnnoise
+Source revision: 70f1d256acd4b34a572f999a05c87bf00b67730d
+WASM build: https://github.com/shiguredo/rnnoise-wasm/tree/2025.1.5
+RNNoise copyright and redistribution terms: LICENSE-RNNoise.txt
+
+The RNNoise model operates locally on microphone samples only. No soundboard,
+mixed audio, or output stream is submitted to it.

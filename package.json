@@ -10,11 +10,19 @@
   },
   "license": "ISC",
   "scripts": {
+    "prepare:audio": "node scripts/prepare-audio.cjs",
+    "prestart": "npm run prepare:audio",
     "start": "electron .",
+    "predev": "npm run prepare:audio",
     "dev": "electron .",
+    "prepack": "npm run prepare:audio",
     "pack": "electron-builder --dir",
+    "predist": "npm run prepare:audio",
     "dist": "electron-builder --win",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "node scripts/prepare-audio.cjs && electron-builder install-app-deps",
+    "pretest:mic-isolation": "npm run prepare:audio",
+    "test:mic-isolation": "node tests/mic-isolation.cjs",
+    "test:recovery": "node tests/main-crash-recovery.cjs && node tests/crash-watchdog.cjs && node tests/recovery-integration.cjs"
   },
   "build": {
     "appId": "app.freqx.desktop",
@@ -29,6 +37,7 @@
       }
     ],
     "afterPack": "scripts/afterPack.js",
+    "asarUnpack": ["runtime/**/*"],
     "win": {
       "icon": "logo.ico",
       "target": [
@@ -64,6 +73,8 @@
       "crash.js",
       "index.html",
       "styles.css",
+      "audio/**/*",
+      "runtime/**/*",
       "assets/*.svg",
       "logo.png",
       "logo.ico",
@@ -76,6 +87,7 @@
     "uiohook-napi": "^1.5.5"
   },
   "devDependencies": {
+    "@shiguredo/rnnoise-wasm": "2025.1.5",
     "electron": "^36.0.0",
     "electron-builder": "^26.8.1"
   }

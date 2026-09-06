@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: file:; media-src 'self' blob: file:; connect-src 'self' file:; object-src 'none'; base-uri 'self'; form-action 'none';"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: file:; media-src 'self' blob: file:; connect-src 'self' file:; object-src 'none'; base-uri 'self'; form-action 'none';"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>freqx</title>
@@ -141,6 +141,13 @@
             <div class="route-field">
               <label for="inputDevice">Microphone input</label>
               <select id="inputDevice" class="device-select"></select>
+              <div class="voice-isolation-control">
+                <label class="setting-toggle" for="voiceIsolationToggle">
+                  <input id="voiceIsolationToggle" type="checkbox" checked aria-describedby="voiceIsolationState" />
+                  <span>Voice isolation</span>
+                </label>
+                <p id="voiceIsolationState" class="routing-tip" role="status">Mic only · Waiting for microphone</p>
+              </div>
             </div>
             <div class="route-field">
               <label for="outputDevice">Virtual output</label>
@@ -361,6 +368,7 @@
         </div>
       </div>
     </section>
+    <script src="audio/mic-isolation.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

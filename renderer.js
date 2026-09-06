@@ -294,10 +294,19 @@ const padThemeSelect = document.getElementById("padThemeSelect");
 const checkUpdatesButton = document.getElementById("checkUpdates");
 const openUpdatePageButton = document.getElementById("openUpdatePage");
 const updateState = document.getElementById("updateState");
+const voiceIsolationToggle = document.getElementById("voiceIsolationToggle");
+const voiceIsolationState = document.getElementById("voiceIsolationState");
 
 let audioContext;
 let micStream;
 let micSource;
+let micIsolationSession = null;
+let micIsolationPending = null;
+let micIsolationGeneration = 0;
+let micCaptureGeneration = 0;
+let micToggleRevision = 0;
+let isVoiceIsolationEnabled = true;
+let voiceIsolationStatus = "waiting";
 let micGainNode;
 let micHighPassNode;
 let micNotchNode;
@@ -614,6 +623,10 @@ function loadMixerSettings() {
       isSoundPlaybackEnabled = settings.soundPlayback;
     }
 
+    if (typeof settings?.voiceIsolation === "boolean") {
+      isVoiceIsolationEnabled = settings.voiceIsolation;
+    }
+
     if (typeof settings?.localPlaybackDeviceId === "string") {
       selectedLocalPlaybackDeviceId = settings.localPlaybackDeviceId;
     }
@@ -636,6 +649,7 @@ function saveMixerSettings() {
       soundGain: Number(soundGainSlider.value),
       masterGain: Number(masterGainSlider.value),
       soundPlayback: isSoundPlaybackEnabled,
+      voiceIsolation: isVoiceIsolationEnabled,
       localPlaybackDeviceId: selectedLocalPlaybackDeviceId,
       inputDeviceId: selectedInputDeviceId,
       outputDeviceId: selectedOutputDeviceId
@@ -2731,6 +2745,12 @@ function updateMicNoiseReduction() {
     return;
   }
 
+  // RNNoise already separates speech from noise. Do not stack a second expander on it.
+  if (micIsolationSession) {
+    micNoiseReductionGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.02);
+    return;
+  }
+
   micNoiseAnalyser.getFloatTimeDomainData(micNoiseData);
 
   let sumSquares = 0;
@@ -2767,6 +2787,12 @@ function updateMicNoiseReduction() {
 
 function updateMicNoiseGate() {
   if (!audioContext || !micGateAnalyser || !micGateData || !micGateGainNode || !micStream) {
+    return;
+  }
+
+  if (micIsolationSession) {
+    isMicGateOpen = true;
+    micGateGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.02);
     return;
   }
 
@@ -2873,6 +2899,97 @@ function updateLevelMeter() {
   }
 
   meterAnimationFrame = window.requestAnimationFrame(updateLevelMeter);
+}
+
+function updateVoiceIsolationUi(status = voiceIsolationStatus) {
+  voiceIsolationStatus = status;
+  if (voiceIsolationToggle) voiceIsolationToggle.checked = isVoiceIsolationEnabled;
+  if (!voiceIsolationState) return;
+  const messages = {
+    waiting: "Mic only · Waiting for microphone",
+    starting: "Mic only · Starting isolation…",
+    active: "Mic only · Background noise reduced",
+    off: "Mic only · Isolation off",
+    unavailable: "Isolation unavailable · Mic continues without it"
+  };
+  voiceIsolationState.textContent = messages[status] || messages.waiting;
+  voiceIsolationState.parentElement.dataset.state = status;
+}
+
+function connectMicStreamToMixer(stream) {
+  // Keep this connection upstream of micGainNode. Never route soundboard/master here.
+  const nextSource = audioContext.createMediaStreamSource(stream);
+  micSource?.disconnect();
+  micSource = nextSource;
+  micSource.connect(micGainNode);
+}
+
+async function configureMicVoiceIsolation() {
+  const generation = ++micIsolationGeneration;
+  micIsolationPending?.abort();
+  micIsolationPending = null;
+  const rawStream = micStream;
+  if (!rawStream || !audioContext) {
+    updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
+    return;
+  }
+
+  if (!isVoiceIsolationEnabled) {
+    connectMicStreamToMixer(rawStream);
+    micIsolationSession?.close();
+    micIsolationSession = null;
+    micNoiseFloorDb = -62;
+    updateVoiceIsolationUi("off");
+    return;
+  }
+
+  updateVoiceIsolationUi("starting");
+  const pending = new AbortController();
+  micIsolationPending = pending;
+  let session;
+  try {
+    if (!window.MicVoiceIsolation) throw new Error("Voice isolation module is missing.");
+    session = await window.MicVoiceIsolation.create(rawStream, {
+      signal: pending.signal,
+      onError: () => {
+        if (generation !== micIsolationGeneration || micStream !== rawStream) return;
+        micIsolationSession = null;
+        session?.close();
+        connectMicStreamToMixer(rawStream);
+        micNoiseFloorDb = -62;
+        updateVoiceIsolationUi("unavailable");
+      }
+    });
+    // A device change, mute, or newer toggle may have overtaken asynchronous startup.
+    if (generation !== micIsolationGeneration || micStream !== rawStream || !isVoiceIsolationEnabled) {
+      session.close();
+      return;
+    }
+    const previousSession = micIsolationSession;
+    connectMicStreamToMixer(session.stream);
+    micIsolationSession = session;
+    previousSession?.close();
+    updateMicNoiseReduction();
+    updateMicNoiseGate();
+    updateVoiceIsolationUi("active");
+  } catch (error) {
+    session?.close();
+    if (generation !== micIsolationGeneration || micStream !== rawStream) return;
+    // Failure is confined to the mic: keep its existing processing and all other audio alive.
+    micIsolationSession?.close();
+    micIsolationSession = null;
+    connectMicStreamToMixer(rawStream);
+    micNoiseFloorDb = -62;
+    updateVoiceIsolationUi("unavailable");
+  } finally {
+    if (micIsolationPending === pending) micIsolationPending = null;
+  }
+}
+
+async function setVoiceIsolationEnabled(enabled) {
+  isVoiceIsolationEnabled = Boolean(enabled);
+  saveMixerSettings();
+  await configureMicVoiceIsolation();
 }
 
 async function setupMixer(options = {}) {
@@ -3035,10 +3152,18 @@ async function setupMixer(options = {}) {
 
     micNoiseFloorDb = -62;
 
-    micStream = await navigator.mediaDevices.getUserMedia({
+    const captureGeneration = ++micCaptureGeneration;
+    const requestedDeviceId = selectedInputDeviceId;
+    const capturedStream = await navigator.mediaDevices.getUserMedia({
       audio: constraints,
       video: false
     });
+
+    if (captureGeneration !== micCaptureGeneration || requestedDeviceId !== selectedInputDeviceId) {
+      capturedStream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    micStream = capturedStream;
 
     const micTrack = micStream.getAudioTracks()[0];
     if (micTrack) {
@@ -3051,8 +3176,13 @@ async function setupMixer(options = {}) {
       micTrack.contentHint = "speech";
     }
 
-    micSource = audioContext.createMediaStreamSource(micStream);
-    micSource.connect(micGainNode);
+    connectMicStreamToMixer(micStream);
+    // Capture is already live while the model starts. Let a second Mic click
+    // mute it immediately instead of queuing another enable request.
+    isMicCaptureEnabled = true;
+    updateMixStateText();
+    updateToggleButtonLabels();
+    await configureMicVoiceIsolation();
   }
 
   if (mixOutContext && mixOutContext.state !== "running") {
@@ -3095,10 +3225,17 @@ async function ensureDeviceLabels() {
 }
 
 function stopMicCapture() {
+  micCaptureGeneration += 1;
+  micIsolationGeneration += 1;
+  micIsolationPending?.abort();
+  micIsolationPending = null;
   if (micSource) {
     micSource.disconnect();
     micSource = null;
   }
+
+  micIsolationSession?.close();
+  micIsolationSession = null;
 
   if (micStream) {
     micStream.getTracks().forEach((track) => track.stop());
@@ -3109,6 +3246,7 @@ function stopMicCapture() {
     isMicGateOpen = false;
     micGateGainNode.gain.setTargetAtTime(micGateClosedGain, audioContext.currentTime, 0.02);
   }
+  updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
 }
 
 function isTextEditingElement(element) {
@@ -3194,11 +3332,14 @@ function triggerImportedSoundByEvent(event) {
 }
 
 async function setMicCaptureEnabled(enabled) {
+  const revision = ++micToggleRevision;
   if (enabled) {
     try {
       await setupMixer({ requestMic: true });
+      if (revision !== micToggleRevision) return;
       isMicCaptureEnabled = true;
     } catch (error) {
+      if (revision !== micToggleRevision) return;
       const isLoopbackError = /loopback|system\s*audio/i.test(String(error?.message || ""));
 
       if (isLoopbackError) {
@@ -3207,6 +3348,7 @@ async function setMicCaptureEnabled(enabled) {
         if (selectedInputDeviceId) {
           try {
             await setupMixer({ requestMic: true });
+            if (revision !== micToggleRevision) return;
             isMicCaptureEnabled = true;
             setRouteState("Loopback input blocked. Auto-switched to a safer microphone endpoint.");
             updateMixStateText();
@@ -3320,6 +3462,9 @@ async function switchMicInput() {
 
 toggleMicCaptureButton?.addEventListener("click", () => {
   setMicCaptureEnabled(!isMicCaptureEnabled);
+});
+voiceIsolationToggle?.addEventListener("change", () => {
+  void setVoiceIsolationEnabled(voiceIsolationToggle.checked);
 });
 toggleMixToOutputButton?.addEventListener("click", () => {
   setMixToOutputEnabled(!isMixToOutputEnabled);
@@ -3461,6 +3606,7 @@ if (openLibraryButton) {
 });
 
 loadMixerSettings();
+updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
 loadLibraryMetadata();
 loadLibraryView();
 loadAppPreferences();

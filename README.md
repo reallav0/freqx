@@ -17,15 +17,27 @@ Website: <https://freqx.app>
 - Stop all currently playing sounds
 - Choose playback behavior per sound: overlap, restart, play once, or toggle loop
 - Mix microphone, soundboard, and main output volume
+- Reduce microphone background noise with local RNNoise voice isolation
 - Route the Discord mix to VB-CABLE
 - Persist selected microphone, virtual output, and local hearing output
 - Use the routing setup wizard to refresh, pick, and test devices
 - Choose where you personally hear meme sounds
 - Run in the system tray
+- Recover from fatal errors with a hidden restart
 - Optional launch on Windows startup
 - Optional bundled VB-CABLE installer
 
 ## Audio Routing
+
+Voice isolation is enabled by default. Its switch is directly below **Microphone
+input** in the mixer. RNNoise runs locally on the microphone before it joins the
+mix; soundboard clips, test tones, and output processing bypass isolation. No
+microphone audio is uploaded. Switching isolation off restores the existing mic
+processing, and the preference is saved. If isolation cannot start, the app keeps
+the microphone working and shows an unavailable status.
+
+The isolation engine has its own 48 kHz audio context. The shared mixer and output
+contexts keep their original sample rates and routing.
 
 Use this setup:
 
@@ -42,6 +54,20 @@ Do not set Discord output to VB-CABLE.
 
 ## Development
 
+After a fatal renderer/main error or unexpected main-process termination, a
+separate hidden monitor restarts freqx in the tray. Library files and saved
+settings remain in the normal profile; interrupted sounds are not replayed.
+Automatic recovery is limited to three restarts in five minutes. If that limit
+is reached, launch the app manually after checking `crash-logs/freqx-crash.log`
+inside the app's data folder. Quit and Windows shutdown/logoff stop the monitor.
+Recoverable Electron service exits are logged without restarting the app.
+
+Recovery runs after the renderer-crash callback returns, avoiding Electron's
+[documented synchronous-navigation crash](https://releases.electronjs.org/pr/51917).
+The monitor also logs abrupt main-process loss when JavaScript cannot write a
+stack trace. It cannot recover if Windows or another program kills both the
+app and its monitor together.
+
 Install dependencies:
 
 ```powershell
@@ -53,6 +79,13 @@ Run the app:
 ```powershell
 npm.cmd run dev
 ```
+
+The pinned RNNoise build is prepared automatically during install, start, and
+packaging. Run `npm.cmd run prepare:audio` after installing with scripts disabled.
+Run `npm.cmd run test:mic-isolation` to verify mic processing and soundboard/output
+separation using synthetic audio without opening your microphone.
+Run `npm.cmd run test:recovery` to check crash handling and hidden restart using
+isolated test profiles. These checks deliberately terminate test processes.
 
 Electron Builder rebuilds the app's native audio dependencies during installation.
 Global keybinds use Electron's built-in shortcuts by default. Set

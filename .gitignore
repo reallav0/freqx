@@ -10,6 +10,7 @@ build/
 *.blockmap
 
 # Electron/native build artifacts
+audio/vendor/rnnoise.wasm
 *.node
 *.pdb
 *.ilk

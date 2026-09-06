@@ -9,8 +9,10 @@ const { Transform } = require("stream");
 const { pipeline } = require("stream/promises");
 const { pathToFileURL } = require("url");
 const packageMetadata = require("./package.json");
+const { createCrashRecovery } = require("./runtime/crash-recovery.cjs");
 
 let portAudio = null;
+let portAudioLoadAttempted = false;
 let globalKeybindRegistrations = [];
 let mainWindow;
 let keyHook = null;
@@ -20,6 +22,9 @@ let isShowingCrashScreen = false;
 let shouldShowCrashScreenOnReady = false;
 let lastCrashReport = null;
 let nativeCrashReporterStarted = false;
+let crashRecovery = null;
+let recoveryScheduled = false;
+const isRecoveryLaunch = process.argv.includes("--recovered");
 const appUserModelId = "app.freqx.desktop";
 const websiteUrl = "https://freqx.app";
 const protocolScheme = "freqx";
@@ -88,16 +93,17 @@ if (!hasSingleInstanceLock) {
 
 if (hasSingleInstanceLock) {
   nativeCrashReporterStarted = startNativeCrashReporter();
+  crashRecovery = createCrashRecovery({
+    app,
+    logEvent: (type, details) => recordCrashReport(createCrashReport(type, {
+      message: type.replaceAll("-", " ")
+    }, details), { remember: false })
+  });
   registerProcessCrashHandlers();
+  crashRecovery.start();
 }
 
-try {
-  portAudio = require("naudiodon");
-} catch (error) {
-  portAudio = null;
-}
-
-if (enableNativeKeyHook) {
+if (hasSingleInstanceLock && enableNativeKeyHook) {
   try {
     const { uIOhook, UiohookKey } = require("uiohook-napi");
     keyHook = createUiohookBridge(uIOhook, UiohookKey);
@@ -161,8 +167,20 @@ function registerProcessCrashHandlers() {
 
 function handleMainProcessCrash(type, error) {
   const report = recordCrashReport(createCrashReport(type, error));
-  sendFatalErrorToRenderer(report);
-  loadCrashScreen(report);
+  scheduleCrashRecovery(report);
+}
+
+function scheduleCrashRecovery(report) {
+  if (isQuitting || recoveryScheduled) return;
+  recoveryScheduled = true;
+  // Electron 36 can crash its main process when navigation happens inside
+  // render-process-gone. Leave that notification before touching the window.
+  setTimeout(() => {
+    if (isQuitting) return;
+    // A damaged native window must not prevent process recovery.
+    try { hideMainWindow(); } catch {}
+    crashRecovery.requestRestart(report?.type || "app-error");
+  }, 0);
 }
 
 function limitCrashText(value, maxLength = 20000) {
@@ -285,6 +303,9 @@ function createCrashReport(type, error, details = {}) {
       arch: process.arch
     },
     diagnostics: {
+      mainPid: process.pid,
+      uptimeSeconds: Math.round(process.uptime()),
+      recoveryLaunch: isRecoveryLaunch,
       hardwareAccelerationDisabled: true,
       nativeKeyHookEnabled: enableNativeKeyHook,
       nativeKeyHookLoaded: Boolean(keyHook?.available)
@@ -1655,6 +1676,7 @@ function loadWindowFile(fileName, details = {}) {
   isMainRendererLoaded = false;
   isRendererReadyForExternalImports = false;
   mainWindow.loadFile(fileName).catch((error) => {
+    if (isQuitting || error?.code === "ERR_ABORTED" || error?.errno === -3) return;
     const isCrashFile = fileName === "crash.html";
     const report = recordCrashReport(createCrashReport(
       isCrashFile ? "crash-screen-load-failed" : "renderer-load-promise-failed",
@@ -1665,14 +1687,12 @@ function loadWindowFile(fileName, details = {}) {
       }
     ));
 
-    if (!isCrashFile) {
-      loadCrashScreen(report);
-    }
+    if (!isCrashFile) scheduleCrashRecovery(report);
   });
 }
 
 function createWindow(options = {}) {
-  const shouldStartHidden = !options.forceShow && !options.showCrashScreen && (appSettings.startHidden || process.argv.includes("--hidden"));
+  const shouldStartHidden = isRecoveryLaunch || (!options.forceShow && !options.showCrashScreen && (appSettings.startHidden || process.argv.includes("--hidden")));
 
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -1710,7 +1730,7 @@ function createWindow(options = {}) {
   });
 
   mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    if (!isMainFrame || isShowingCrashScreen || isCrashScreenUrl(validatedURL)) {
+    if (!isMainFrame || isQuitting || errorCode === -3 || isShowingCrashScreen || isCrashScreenUrl(validatedURL)) {
       return;
     }
 
@@ -1719,14 +1739,14 @@ function createWindow(options = {}) {
       errorDescription,
       validatedURL
     }));
-    loadCrashScreen(report);
+    scheduleCrashRecovery(report);
   });
 
   mainWindow.webContents.on("preload-error", (event, preloadPath, error) => {
     const report = recordCrashReport(createCrashReport("renderer-preload-error", error, {
       preloadPath
     }));
-    loadCrashScreen(report);
+    scheduleCrashRecovery(report);
   });
 
   mainWindow.webContents.on("render-process-gone", (event, details) => {
@@ -1737,13 +1757,27 @@ function createWindow(options = {}) {
     const report = recordCrashReport(createCrashReport("renderer-process-gone", null, {
       details
     }));
-    loadCrashScreen(report);
+    scheduleCrashRecovery(report);
   });
 
+  let unresponsiveTimer = null;
   mainWindow.on("unresponsive", () => {
-    recordCrashReport(createCrashReport("renderer-unresponsive", null, {
+    const report = recordCrashReport(createCrashReport("renderer-unresponsive", null, {
       url: mainWindow?.webContents?.getURL?.() || ""
     }));
+    if (!unresponsiveTimer && !isQuitting) {
+      unresponsiveTimer = setTimeout(() => scheduleCrashRecovery(report), 15000);
+    }
+  });
+  mainWindow.on("responsive", () => {
+    clearTimeout(unresponsiveTimer);
+    unresponsiveTimer = null;
+  });
+  mainWindow.on("closed", () => clearTimeout(unresponsiveTimer));
+  mainWindow.on("session-end", () => {
+    // Windows shutdown/logoff does not emit app.before-quit.
+    isQuitting = true;
+    crashRecovery.stop("windows-session-end");
   });
 
   mainWindow.on("minimize", (event) => {
@@ -1776,7 +1810,18 @@ function createWindow(options = {}) {
   return mainWindow;
 }
 
+function loadPortAudio() {
+  // The UI uses Web Audio. Load the optional native backend only if its IPC
+  // functions are requested, keeping unused native code out of startup.
+  if (!portAudioLoadAttempted) {
+    portAudioLoadAttempted = true;
+    try { portAudio = require("naudiodon"); } catch { portAudio = null; }
+  }
+  return portAudio;
+}
+
 function getOutputDevices() {
+  loadPortAudio();
   if (!portAudio) {
     return [];
   }
@@ -1793,6 +1838,7 @@ function getOutputDevices() {
 }
 
 function writeTestTone(deviceId) {
+  loadPortAudio();
   if (!portAudio) {
     throw new Error("naudiodon is not available in this Electron runtime.");
   }
@@ -1824,6 +1870,10 @@ function writeTestTone(deviceId) {
     closeOnError: true
   });
 
+  output.on("error", (error) => {
+    recordCrashReport(createCrashReport("native-test-tone-error", error), { remember: false });
+    try { output.quit(); } catch {}
+  });
   output.start();
   output.write(Buffer.from(data.buffer));
 
@@ -2004,6 +2054,7 @@ function registerAudioIpc() {
   ipcMain.handle("app:report-crash", (event, payload) => {
     assertTrustedIpcSender(event);
     const report = recordCrashReport(normalizeRendererCrashPayload(payload));
+    scheduleCrashRecovery(report);
     return getCrashReportForRenderer(report);
   });
 
@@ -2103,9 +2154,10 @@ function registerAudioIpc() {
 
   ipcMain.handle("audio:list-output-devices", (event) => {
     assertTrustedIpcSender(event);
+    const devices = getOutputDevices();
     return {
       hasNaudiodon: Boolean(portAudio),
-      devices: getOutputDevices()
+      devices
     };
   });
 
@@ -2360,6 +2412,8 @@ if (hasSingleInstanceLock) {
   });
 
   app.on("second-instance", (event, argv) => {
+    // A late recovery launch must never steal focus from an existing instance.
+    if (argv.includes("--recovered")) return;
     const hasProtocolUrl = queueProtocolUrlsFromArgv(argv, { revealWindow: true });
     if (app.isReady()) {
       showMainWindow();
@@ -2396,6 +2450,7 @@ if (hasSingleInstanceLock) {
 
   app.on("before-quit", () => {
     isQuitting = true;
+    crashRecovery.stop("quit");
   });
 
   app.on("will-quit", () => {
