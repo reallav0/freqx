@@ -3,14 +3,16 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { reserveRestart } = require("./recovery-policy.cjs");
+const { isPackagedApp } = require('./app-mode.cjs');
 
 function createCrashRecovery({ app, logEvent = () => {} }) {
   const runId = randomUUID();
   const directory = path.join(app.getPath("userData"), "crash-logs");
   const statePath = path.join(directory, `recovery-${runId}.json`);
   // Never replay an import URL, installer argument, or a one-time action.
-  const args = [...(app.isPackaged ? [] : [app.getAppPath()]), "--hidden", "--recovered"];
-  const execPath = app.isPackaged && process.env.PORTABLE_EXECUTABLE_FILE
+  const packaged = isPackagedApp(app);
+  const args = [...(packaged ? [] : [app.getAppPath()]), "--hidden", "--recovered"];
+  const execPath = packaged && process.env.PORTABLE_EXECUTABLE_FILE
     ? process.env.PORTABLE_EXECUTABLE_FILE : process.execPath;
   const config = {
     type: "watch", pid: process.pid, runId, statePath,

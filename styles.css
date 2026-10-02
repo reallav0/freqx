@@ -191,6 +191,9 @@ input.pad-volume-slider::-moz-range-thumb { width: 10px; height: 10px; border: 0
 .voice-isolation-control .setting-toggle { min-height: 25px; font-size: 11px; }
 .voice-isolation-control .routing-tip { border: 0; padding-top: 4px; }
 .voice-isolation-control[data-state="unavailable"] .routing-tip { color: var(--danger); }
+.voice-isolation-mode { display: flex; align-items: center; gap: 12px; margin: 5px 0; }
+.voice-isolation-mode label { flex-shrink: 0; font-size: 10px; margin: 0; }
+.voice-isolation-mode .device-select { min-width: 0; padding-block: 6px; font-size: 11px; }
 .status { display: flex; justify-content: space-between; align-items: center; gap: 24px; border-top: 1px solid var(--border); }
 .status-now { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .status-signal { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim); }
@@ -354,3 +357,8 @@ body.compact-mode .mixer-actions .mixer-action { min-height: 54px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+/* Account controls preserve the existing modal and theme styling. */
+.account-form { display: grid; gap: 14px; }
+.account-form[hidden] { display: none; }
+.account-form input { width: 100%; padding: 10px; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 8px; }
+.account-form .form-field[hidden] { display: none; }

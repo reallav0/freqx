@@ -1,4 +1,12 @@
-const { app, BrowserWindow, Menu, Tray, crashReporter, dialog, globalShortcut, ipcMain, nativeImage, session, shell } = require("electron");
+const { app, BrowserWindow, Menu, Tray, crashReporter, dialog, globalShortcut, ipcMain, nativeImage, session, shell, safeStorage } = require("electron");
+const { registerAuthIpc } = require('./runtime/auth-client.cjs');
+const { isPackagedApp } = require('./runtime/app-mode.cjs');
+const isPackaged = isPackagedApp(app, process);
+const { PlatformLibrary } = require('./runtime/platform-library.cjs');
+const { createUpdateClient } = require('./runtime/update-client.cjs');
+// Electron Builder removes package.json's build field from release archives.
+const updateConfiguration = require('./runtime/update-config.json');
+let updateClient;
 const dns = require("dns");
 const { execFile } = require("child_process");
 const fs = require("fs");
@@ -10,11 +18,22 @@ const { pipeline } = require("stream/promises");
 const { pathToFileURL } = require("url");
 const packageMetadata = require("./package.json");
 const { createCrashRecovery } = require("./runtime/crash-recovery.cjs");
+const { PublicLibrary } = require("./runtime/public-library.cjs");
+const { LoopbackService } = require('./runtime/loopback-reference.cjs');
+const loopbackService = new LoopbackService({ appRoot: __dirname });
+const publicLibrary = new PublicLibrary({ appRoot: __dirname, tempRoot: () => path.join(app.getPath('userData'), 'library-import-tmp') });
+app.setName("freqx");
+
+
+
+
+
 
 let portAudio = null;
 let portAudioLoadAttempted = false;
 let globalKeybindRegistrations = [];
 let mainWindow;
+let authProtocolHandler = null;
 let keyHook = null;
 let tray = null;
 let isQuitting = false;
@@ -113,7 +132,7 @@ if (hasSingleInstanceLock && enableNativeKeyHook) {
 }
 
 function configureDevelopmentStoragePaths() {
-  if (app.isPackaged) {
+  if (isPackaged) {
     return;
   }
 
@@ -293,7 +312,7 @@ function createCrashReport(type, error, details = {}) {
     app: {
       name: app.getName(),
       version: app.getVersion(),
-      packaged: app.isPackaged
+      packaged: isPackaged
     },
     runtime: {
       electron: process.versions.electron,
@@ -441,14 +460,6 @@ function normalizeRendererCrashPayload(payload) {
   }, {
     renderer: safePayload
   });
-}
-
-function sendFatalErrorToRenderer(report) {
-  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
-    return;
-  }
-
-  mainWindow.webContents.send("app:fatal-error", getCrashReportForRenderer(report));
 }
 
 function emitGlobalKeyCode(code, modifiers = {}) {
@@ -664,6 +675,7 @@ function configurePermissions() {
     const isMainWindow = Boolean(mainWindow && !mainWindow.isDestroyed() && webContents === mainWindow.webContents);
     return isMainWindow && permission === "media";
   });
+
 }
 
 function getRendererUrl(fileName = "index.html") {
@@ -966,7 +978,13 @@ function queueProtocolUrls(urls, options = {}) {
     && url.length > 0
     && url.length <= maxProtocolUrlLength
     && url.toLowerCase().startsWith(protocolUrlPrefix)
-  ));
+  )).filter(url => {
+    if (/^freqx:\/\/auth(?:\/|\?|$)/i.test(url)) {
+      authProtocolHandler?.(url);
+      return false;
+    }
+    return true;
+  });
 
   if (!list.length) {
     return false;
@@ -1467,13 +1485,13 @@ async function downloadRemoteAudioToLibrary(request, rawUrl = request.sourceUrl,
         }
 
         const libraryDir = getLibraryDirectory();
-        const destinationPath = createUniqueDestinationPath(libraryDir, fileName);
+        const { destinationPath, handle } = await reserveLibraryDestination(libraryDir, fileName);
 
         try {
           await pipeline(
             response,
             createByteLimitTransform(maxRemoteAudioBytes),
-            fs.createWriteStream(destinationPath, { flags: "wx" })
+            handle.createWriteStream()
           );
 
           const stat = await fs.promises.stat(destinationPath);
@@ -1489,6 +1507,7 @@ async function downloadRemoteAudioToLibrary(request, rawUrl = request.sourceUrl,
             sizeBytes: Number(stat.size)
           });
         } catch (error) {
+          await handle.close();
           await removeFileQuietly(destinationPath);
           throw error;
         }
@@ -1560,7 +1579,7 @@ function saveAppSettings() {
 }
 
 function applyLoginItemSettings() {
-  if (!app.isPackaged && process.platform !== "win32") {
+  if (!isPackaged && process.platform !== "win32") {
     return;
   }
 
@@ -1646,28 +1665,6 @@ function createTray() {
   updateTrayMenu();
 }
 
-function loadCrashScreen(report) {
-  if (!app.isReady()) {
-    shouldShowCrashScreenOnReady = true;
-    return;
-  }
-
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    createWindow({ showCrashScreen: true });
-    return;
-  }
-
-  isShowingCrashScreen = true;
-  mainWindow.show();
-  if (mainWindow.isMinimized()) {
-    mainWindow.restore();
-  }
-
-  loadWindowFile("crash.html", {
-    originalReportId: report?.id
-  });
-}
-
 function loadWindowFile(fileName, details = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return;
@@ -1708,7 +1705,7 @@ function createWindow(options = {}) {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      backgroundThrottling: false
+      backgroundThrottling: true
     }
   });
 
@@ -1721,6 +1718,11 @@ function createWindow(options = {}) {
       event.preventDefault();
     }
   });
+  const referenceOwner = mainWindow.webContents;
+  referenceOwner.on('did-start-navigation', (event, url, inPlace, isMainFrame) => {
+    if (isMainFrame && !inPlace) loopbackService.stopOwner(referenceOwner);
+  });
+  referenceOwner.on('destroyed', () => loopbackService.stopOwner(referenceOwner));
 
   mainWindow.webContents.on("did-finish-load", () => {
     isShowingCrashScreen = isCrashScreenUrl(mainWindow.webContents.getURL());
@@ -1750,6 +1752,7 @@ function createWindow(options = {}) {
   });
 
   mainWindow.webContents.on("render-process-gone", (event, details) => {
+    loopbackService.stopOwner(referenceOwner);
     if (isQuitting || details?.reason === "clean-exit") {
       return;
     }
@@ -1777,6 +1780,7 @@ function createWindow(options = {}) {
   mainWindow.on("session-end", () => {
     // Windows shutdown/logoff does not emit app.before-quit.
     isQuitting = true;
+    loopbackService.stopAll();
     crashRecovery.stop("windows-session-end");
   });
 
@@ -1840,7 +1844,7 @@ function getOutputDevices() {
 function writeTestTone(deviceId) {
   loadPortAudio();
   if (!portAudio) {
-    throw new Error("naudiodon is not available in this Electron runtime.");
+    throw new Error("Native audio is not available in this freqx runtime.");
   }
 
   if (!Number.isFinite(deviceId)) {
@@ -2035,8 +2039,7 @@ async function importAudioFilePaths(filePaths) {
         continue;
       }
 
-      const destinationPath = createUniqueDestinationPath(libraryDir, sourcePath);
-      await fs.promises.copyFile(sourcePath, destinationPath);
+      const destinationPath = await copyAudioFileToLibrary(libraryDir, sourcePath);
       imported.push(toLibraryItem(destinationPath));
     } catch (error) {
       skipped.push({
@@ -2051,6 +2054,32 @@ async function importAudioFilePaths(filePaths) {
 }
 
 function registerAudioIpc() {
+  const referenceSender = event => {
+    assertTrustedIpcSender(event);
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || stripUrlState(event.senderFrame?.url) !== getRendererUrl('index.html')) throw new Error('Playback reference requires the main app frame.');
+  };
+  ipcMain.handle('audio:reference-devices', event => { referenceSender(event); return loopbackService.list(); });
+  ipcMain.handle('audio:reference-start', (event, endpointId) => { referenceSender(event); return loopbackService.start(event.sender, endpointId); });
+  ipcMain.handle('audio:reference-stop', (event, id) => { referenceSender(event); loopbackService.stop(event.sender, id); });
+  ipcMain.handle('audio:reference-cancel', event => { referenceSender(event); loopbackService.stopOwner(event.sender); });
+  ipcMain.on('audio:reference-ack', (event, id) => { try { referenceSender(event); loopbackService.ack(event.sender, id); } catch {} });
+  const catalog = new PlatformLibrary({ getClient: () => authProtocolHandler.client(), fallback: publicLibrary });
+  ipcMain.handle("library:catalog", async (event) => {
+    assertTrustedIpcSender(event);
+    return catalog.getCatalog();
+  });
+  ipcMain.handle("library:preview", async (event, id) => {
+    assertTrustedIpcSender(event);
+    return catalog.preview(id);
+  });
+  ipcMain.handle("library:import", async (event, id) => {
+    assertTrustedIpcSender(event);
+    return catalog.withSound(id, async sound => {
+      const result = await importAudioFilePaths([sound.filePath]);
+      result.metadata = Object.fromEntries(result.imported.map(item => [item.path, { name: sound.title, catalogId: sound.id }]));
+      return result;
+    });
+  });
   ipcMain.handle("app:report-crash", (event, payload) => {
     assertTrustedIpcSender(event);
     const report = recordCrashReport(normalizeRendererCrashPayload(payload));
@@ -2107,6 +2136,8 @@ function registerAudioIpc() {
 
   ipcMain.handle("app:check-for-updates", async (event) => {
     assertTrustedIpcSender(event);
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('Untrusted update IPC sender.');
+    if (updateClient) return updateClient.check();
     const currentVersion = app.getVersion();
 
     if (!githubUpdateRepository) {
@@ -2139,6 +2170,20 @@ function registerAudioIpc() {
         message: error?.message || "Could not check GitHub for updates."
       };
     }
+  });
+
+  ipcMain.handle('app:update-status', event => {
+    assertTrustedIpcSender(event);
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('Untrusted update IPC sender.');
+    return updateClient?.status() || { status: 'idle' };
+  });
+  ipcMain.handle('app:update-install', async event => {
+    assertTrustedIpcSender(event);
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('Untrusted update IPC sender.');
+    if (updateClient?.status().status !== 'downloaded') return { ok: false, message: 'No verified update is ready.' };
+    const result = await dialog.showMessageBox(mainWindow, { type: 'question', buttons: ['Restart and install', 'Cancel'], defaultId: 1, cancelId: 1,
+      message: 'Restart FreqX to install the downloaded update?', detail: 'Active audio playback will stop. The downloaded installer passed checksum verification.' });
+    return result.response === 0 ? updateClient.install() : { ok: false, message: 'Installation cancelled.' };
   });
 
   ipcMain.handle("app:open-update-page", async (event, url) => {
@@ -2392,6 +2437,32 @@ function createUniqueDestinationPath(directoryPath, sourcePath) {
   throw new Error("Could not create a unique file name in audio library.");
 }
 
+async function reserveLibraryDestination(directoryPath, sourcePath) {
+  for (let attempt = 0; attempt < 9999; attempt += 1) {
+    const destinationPath = createUniqueDestinationPath(directoryPath, sourcePath);
+    try {
+      const handle = await fs.promises.open(destinationPath, "wx");
+      return { destinationPath, handle };
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+  }
+  throw new Error("Could not reserve a unique file name in audio library.");
+}
+
+async function copyAudioFileToLibrary(directoryPath, sourcePath) {
+  for (let attempt = 0; attempt < 9999; attempt += 1) {
+    const destinationPath = createUniqueDestinationPath(directoryPath, sourcePath);
+    try {
+      await fs.promises.copyFile(sourcePath, destinationPath, fs.constants.COPYFILE_EXCL);
+      return destinationPath;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+  }
+  throw new Error("Could not copy to a unique file name in audio library.");
+}
+
 function toLibraryItem(filePath) {
   const stat = fs.statSync(filePath);
   return {
@@ -2433,8 +2504,12 @@ if (hasSingleInstanceLock) {
     applyLoginItemSettings();
     configurePermissions();
     registerAudioIpc();
+    authProtocolHandler = registerAuthIpc({ ipcMain, getWindow: () => mainWindow, app, safeStorage, shell, dialog });
     createTray();
     createWindow({ forceShow: pendingProtocolUrls.length > 0 });
+    updateClient = createUpdateClient({ app, getWindow: () => mainWindow, config: updateConfiguration,
+      updater: isPackaged ? require('electron-updater').autoUpdater : null, portable: Boolean(process.env.PORTABLE_EXECUTABLE_DIR) });
+    if (isPackaged) setTimeout(() => updateClient.check(), 5000).unref();
     startPendingProtocolImports();
 
     app.on("activate", () => {
@@ -2450,6 +2525,7 @@ if (hasSingleInstanceLock) {
 
   app.on("before-quit", () => {
     isQuitting = true;
+    loopbackService.stopAll();
     crashRecovery.stop("quit");
   });
 

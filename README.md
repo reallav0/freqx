@@ -17,7 +17,7 @@ Website: <https://freqx.app>
 - Stop all currently playing sounds
 - Choose playback behavior per sound: overlap, restart, play once, or toggle loop
 - Mix microphone, soundboard, and main output volume
-- Reduce microphone background noise with local RNNoise voice isolation
+- Reduce microphone background noise with local DeepFilterNet3 voice isolation
 - Route the Discord mix to VB-CABLE
 - Persist selected microphone, virtual output, and local hearing output
 - Use the routing setup wizard to refresh, pick, and test devices
@@ -30,14 +30,18 @@ Website: <https://freqx.app>
 ## Audio Routing
 
 Voice isolation is enabled by default. Its switch is directly below **Microphone
-input** in the mixer. RNNoise runs locally on the microphone before it joins the
+input** in the mixer. DeepFilterNet3 runs locally on the microphone before it joins the
 mix; soundboard clips, test tones, and output processing bypass isolation. No
-microphone audio is uploaded. Switching isolation off restores the existing mic
-processing, and the preference is saved. If isolation cannot start, the app keeps
-the microphone working and shows an unavailable status.
+microphone audio is uploaded. Choose **Off**, **Standard** or **Strong** without
+restarting or recapturing the microphone. Chromium echo cancellation stays on;
+Chromium noise suppression and automatic gain control stay off. If the model
+cannot start or fails, the app keeps the echo-cancelled microphone working and
+shows an unavailable status. The mode and enabled preference are saved.
 
 The isolation engine has its own 48 kHz audio context. The shared mixer and output
 contexts keep their original sample rates and routing.
+See [the voice isolation integration notes](audio/VOICE-ISOLATION.md) for the
+pipeline, reusable service, recovery behavior, bundled assets and verification.
 
 Use this setup:
 
@@ -80,10 +84,14 @@ Run the app:
 npm.cmd run dev
 ```
 
-The pinned RNNoise build is prepared automatically during install, start, and
-packaging. Run `npm.cmd run prepare:audio` after installing with scripts disabled.
+The pinned DeepFilterNet3 WASM and model are checked automatically during install,
+start and packaging. They are committed local assets; no model download, Python,
+PyTorch or runtime compiler is required. Run `npm.cmd run prepare:audio` after
+installing with scripts disabled.
 Run `npm.cmd run test:mic-isolation` to verify mic processing and soundboard/output
 separation using synthetic audio without opening your microphone.
+Run `npm.cmd run test:voice-security` to verify the service in a sandboxed,
+isolated Electron renderer with a Chromium fake microphone and network blocked.
 Run `npm.cmd run test:recovery` to check crash handling and hidden restart using
 isolated test profiles. These checks deliberately terminate test processes.
 
@@ -122,18 +130,17 @@ dist/
 Use this file for distribution:
 
 ```text
-dist/freqx Setup <version>.exe
+dist/FreqX-Setup-<version>.exe
 ```
 
-## GitHub Update Checks
+## GitHub Updates
 
-The app checks `https://github.com/reallav0/freqx` for the latest public
-GitHub release and compares the release tag with the local `package.json`
-version. Use release tags like `v1.0.1`, and upload the installer asset to the
-release so the in-app Download button can open it.
-
-To point a local build at another repository without editing `package.json`,
-set `FREQX_UPDATE_REPOSITORY` to `owner/repo` before launching the app.
+Installed Windows builds use electron-updater with the trusted GitHub repository
+in packaging configuration. Updates download in the background, verify their
+checksum and require an explicit restart/install confirmation. Development and
+portable builds update manually. Network failure does not block app startup.
+The [release documentation](docs/implementation/releases.md) explains automated
+patch bumps, GitHub permissions, artifacts and remaining signing/live-test limits.
 
 ## Bundling VB-CABLE
 
@@ -143,10 +150,12 @@ Place the full official VB-CABLE zip in:
 drivers/
 ```
 
-The installer will extract the zip during install, temporarily trust the
-package signer for the Windows driver prompt, and run the official setup in
-hidden install mode. You can also extract the zip into `drivers/` before
-building. Do not copy only the setup executable; VB-CABLE needs the companion
+The privileged installer verifies the package against a reviewed hash/signature
+policy and fails closed on missing or uncertain verification. The initial empty
+policy deliberately blocks automatic driver installation until official package
+pins are reviewed; see [driver verification](security/driver-verification.md).
+You can also extract the zip into `drivers/` before building. Do not copy only
+the setup executable; VB-CABLE needs the companion
 driver files from the same package, such as the `.inf`, `.sys`, and catalog
 files.
 
@@ -159,6 +168,30 @@ VBCABLE_Setup.exe
 ```
 
 Only redistribute VB-CABLE if the VB-Audio license or explicit permission allows it.
+
+## Desktop and backend development
+
+This repository contains only the Electron desktop application, its audio engine,
+Discover, account UI, API client, secure OS-backed credential storage and Windows
+release/update workflow. Local boards and anonymous playback remain available.
+
+The Express/PostgreSQL/R2 backend, server authentication, website and Heroku
+deployment are a separate project: C:\Users\Nguyen\Desktop\freqxback, intended
+GitHub repository reallav0/freqx-api. Backend credentials belong there, never here.
+See [desktop setup instructions](instruction.md) and [current architecture](docs/implementation/platform.md).
+
+Start the API from freqxback with npm run dev after its database/migrations are ready.
+Then from this desktop checkout:
+
+```powershell
+$env:FREQX_API_BASE_URL = 'http://127.0.0.1:3000'
+npm run dev
+```
+
+Packaged builds use the trusted https://api.freqx.app configuration. Desktop
+login screens and IPC clients stay here; authentication/authorization run on the
+separate server. Each project has independent installs, tests, CI and deployment.
+Desktop releases stay at reallav0/freqx; backend pushes do not bump the desktop.
 
 ## Project Files
 

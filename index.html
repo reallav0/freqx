@@ -9,6 +9,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>freqx</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="discover.css" />
   </head>
   <body>
     <main class="app-shell">
@@ -22,6 +23,7 @@
         </div>
 
         <div class="top-actions" aria-label="App actions">
+          <button id="openAccount" class="mixer-action quiet-action" type="button">Account</button>
           <button id="openSettings" class="mixer-action quiet-action" type="button">Settings</button>
           <button id="openWalkthrough" class="mixer-action quiet-action" type="button">Setup guide</button>
           <button id="stopAllSounds" class="mixer-action danger-action" type="button" title="Stop all playing sounds">
@@ -47,7 +49,13 @@
       </header>
 
       <section class="workspace" aria-label="Workspace">
-        <section class="library" aria-label="Imported audio library">
+        <section class="library-workspace" aria-label="Sound library">
+          <div class="library-tabs" role="tablist" aria-label="Library navigation">
+            <button id="soundboardTab" class="library-tab" type="button" role="tab" aria-selected="true" aria-controls="soundboardPage">Soundboard</button>
+            <button id="discoverTab" class="library-tab" type="button" role="tab" aria-selected="false" aria-controls="discoverPage" tabindex="-1">Discover <span aria-hidden="true">↗</span></button>
+            <span class="library-nav-note">YOUR NEXT FAVOURITE</span>
+          </div>
+        <section id="soundboardPage" class="library" role="tabpanel" aria-labelledby="soundboardTab">
           <div class="library-header">
             <div>
               <span class="section-kicker">01 / Your sound, on demand</span>
@@ -84,6 +92,20 @@
           </div>
           <div id="importedList" class="imported-list"></div>
           <div class="library-footnote"><span>Click to play · Bind a key for instant access</span><span>Local files / Yours to play</span></div>
+        </section>
+        <section id="discoverPage" class="discover-page" role="tabpanel" aria-labelledby="discoverTab" hidden>
+          <div class="discover-heading"><div><span class="section-kicker">03 / Find your frequency</span><h1 class="discover-title">Discover</h1><p id="discoverState" class="routing-tip" role="status">A little inspiration for your next board.</p></div><span class="discover-access"><i aria-hidden="true"></i> Open library</span></div>
+          <div class="discover-feature"><div class="discover-feature-copy"><span class="section-kicker">FREQX ORIGINALS / VOL. 01</span><h2>Small sounds.<br>Big personality.</h2><p>A collection of original tones for the little moments.</p><button id="discoverExplore" class="mixer-action compact-action" type="button">Explore collection <span aria-hidden="true">↘</span></button></div><div class="discover-art" aria-hidden="true"><div class="discover-record"><span>FQ<span>01</span></span></div><span class="discover-art-label">SIGNALS / TEXTURES / TONES</span></div></div>
+          <div class="discover-controls"><div class="discover-search"><svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><label class="sr-only" for="discoverSearch">Search public sounds</label><input id="discoverSearch" class="text-input" type="search" placeholder="Find your next sound…" maxlength="120" /></div><label class="discover-sort-label" for="discoverSort">Sort<select id="discoverSort" class="device-select"><option value="name">Name</option><option value="duration">Duration</option></select></label></div>
+          <div id="discoverCategories" class="discover-categories" aria-label="Sound categories"><button class="discover-category" type="button" data-category="all" aria-pressed="true">All sounds</button></div>
+          <div class="discover-results-heading"><span id="discoverCount" class="panel-label">EXPLORING THE LIBRARY</span><label for="discoverBoard">Add to<select id="discoverBoard" class="device-select" aria-label="Destination board"><option value="Main">Main</option></select></label></div>
+          <div id="discoverLoading" class="discover-loading" role="status" hidden><i></i><span>Finding your frequency…</span></div>
+          <div id="discoverGrid" class="discover-grid"></div>
+          <button id="discoverLoadMore" class="mixer-action compact-action discover-load-more" type="button" hidden>Load more</button>
+          <div id="discoverEmpty" class="discover-empty" hidden><span class="empty-glyph" aria-hidden="true">⌁</span><h2 id="discoverEmptyTitle">A little quiet here.</h2><p id="discoverEmptyCopy">Check back for new sounds.</p><button id="discoverReset" class="mixer-action" type="button" hidden>Reset filters</button><button id="discoverRetry" class="mixer-action" type="button" hidden>Try again</button></div>
+          <p id="discoverFeedback" class="discover-feedback" role="status"></p>
+          <div class="discover-footnote"><span>Preview in your headphones. Add it. Make it yours.</span><span id="discoverSource">FREQX ORIGINALS</span></div>
+        </section>
         </section>
 
         <aside class="mixer" aria-label="Mixer controls">
@@ -146,7 +168,22 @@
                   <input id="voiceIsolationToggle" type="checkbox" checked aria-describedby="voiceIsolationState" />
                   <span>Voice isolation</span>
                 </label>
+                <div class="voice-isolation-mode">
+                  <label for="voiceIsolationMode">Mode</label>
+                  <select id="voiceIsolationMode" class="device-select" aria-describedby="voiceIsolationState">
+                    <option value="off">Off</option>
+                    <option value="standard" selected>Standard</option>
+                    <option value="strong">Strong</option>
+                  </select>
+                </div>
                 <p id="voiceIsolationState" class="routing-tip" role="status">Mic only · Waiting for microphone</p>
+                <label for="echoReferenceDevice">Call playback / echo reference</label>
+                <select id="echoReferenceDevice" class="device-select" aria-describedby="echoReferenceHelp echoReferenceState">
+                  <option value="">Windows default playback</option>
+                </select>
+                <p id="echoReferenceHelp" class="routing-tip">Choose the headphones or speakers playing Discord and other apps. Use the same output for soundboard monitoring.</p>
+                <meter id="echoReferenceMeter" min="-60" max="0" value="-60" aria-label="Playback reference level in dBFS"></meter>
+                <p id="echoReferenceState" class="routing-tip" role="status">Playback reference starts with voice isolation</p>
               </div>
             </div>
             <div class="route-field">
@@ -269,6 +306,66 @@
       </section>
     </div>
 
+    <div id="accountOverlay" class="modal-overlay" hidden>
+      <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
+        <div class="modal-header"><h2 id="accountTitle">Your FreqX account</h2><button id="closeAccount" class="mixer-action quiet-action" type="button">Close</button></div>
+        <p id="accountStatus" role="status">You can use your local sounds without signing in.</p>
+        <form id="accountForm" class="account-form">
+          <label class="form-field">Email<input id="accountEmail" type="email" autocomplete="email" maxlength="254" required /></label>
+          <label class="form-field">Password<input id="accountPassword" type="password" autocomplete="current-password" maxlength="128" required /></label>
+          <label id="accountUsernameField" class="form-field" hidden>Username<input id="accountUsername" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_]{3,32}" /></label>
+          <button id="accountSubmit" class="mixer-action primary-action" type="submit">Log in</button>
+          <button id="accountSwitch" class="mixer-action quiet-action" type="button">Create an account</button>
+          <button id="accountForgot" class="mixer-action quiet-action" type="button">Forgot password</button>
+          <button id="accountDiscord" class="mixer-action quiet-action" type="button">Continue with Discord</button>
+          <button id="accountGoogle" class="mixer-action quiet-action" type="button">Continue with Google</button>
+          <button id="accountPhone" class="mixer-action quiet-action" type="button">Continue with phone</button>
+        </form>
+        <form id="accountPhoneForm" class="account-form" hidden>
+          <label class="form-field">Phone with country code<input id="accountPhoneNumber" type="tel" autocomplete="tel" placeholder="+1 415 555 2671" maxlength="32" required /></label>
+          <button id="accountPhoneSend" class="mixer-action quiet-action" type="button">Send code</button>
+          <label class="form-field">Verification code<input id="accountPhoneCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
+          <button class="mixer-action primary-action" type="submit">Log in</button>
+          <button id="accountPhoneCancel" class="mixer-action quiet-action" type="button">Back to login</button>
+        </form>
+        <form id="accountResetForm" class="account-form" hidden>
+          <label class="form-field">Email<input id="accountResetEmail" type="email" autocomplete="email" maxlength="254" required /></label>
+          <label class="form-field">Reset code<input id="accountResetCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
+          <label class="form-field">New password<input id="accountResetPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label>
+          <button class="mixer-action primary-action" type="submit">Reset password</button>
+          <button id="accountResetCancel" class="mixer-action quiet-action" type="button">Back to login</button>
+        </form>
+        <div id="accountSession" hidden>
+          <form id="accountVerifyForm" class="account-form" hidden>
+            <p>Verify your email using the code we sent you.</p>
+            <label class="form-field">Verification code<input id="accountVerifyCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
+            <button class="mixer-action primary-action" type="submit">Verify email</button>
+            <button id="accountResend" class="mixer-action quiet-action" type="button">Resend code</button>
+          </form>
+          <button id="accountLogout" class="mixer-action danger-action" type="button">Logout</button>
+          <button id="accountLogoutAll" class="mixer-action quiet-action" type="button">Log out of all devices</button>
+          <form id="accountProfileForm" class="account-form">
+            <label class="form-field">Display name<input id="accountDisplayName" maxlength="80" required /></label>
+            <button class="mixer-action quiet-action" type="submit">Save profile</button>
+          </form>
+          <form id="accountPasswordForm" class="account-form">
+            <label class="form-field">Current password<input id="accountCurrentPassword" type="password" autocomplete="current-password" maxlength="128" required /></label>
+            <label class="form-field">New password<input id="accountNewPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label>
+            <button class="mixer-action quiet-action" type="submit">Change password and log out all devices</button>
+          </form>
+          <button id="accountSyncFavorites" class="mixer-action quiet-action" type="button">Sync library favorites with this account</button>
+          <form id="cloudUploadForm" class="account-form">
+            <h3>My cloud sounds</h3>
+            <label class="form-field">Title<input id="cloudTitle" maxlength="120" required /></label>
+            <label class="form-field">Visibility<select id="cloudVisibility"><option value="private">Private</option><option value="public">Public</option></select></label>
+            <button class="mixer-action primary-action" type="submit">Choose audio and upload</button>
+            <button id="cloudRefresh" class="mixer-action quiet-action" type="button">Refresh my sounds</button>
+            <p>Up to 24 MiB and 60 seconds. New uploads are checked before becoming available.</p>
+          </form>
+          <ul id="cloudSoundList"></ul>
+        </div>
+      </section>
+    </div>
     <div id="settingsOverlay" class="modal-overlay" hidden>
       <section class="modal-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
         <div class="modal-head">
@@ -331,6 +428,7 @@
             <div class="update-actions">
               <button id="checkUpdates" class="mixer-action compact-action" type="button">Check</button>
               <button id="openUpdatePage" class="mixer-action primary-action compact-action" type="button" hidden>Download</button>
+              <button id="installUpdate" class="mixer-action primary-action compact-action" type="button" hidden>Restart and install</button>
             </div>
           </div>
         </div>
@@ -368,7 +466,11 @@
         </div>
       </div>
     </section>
+    <script src="audio/loopback-reference.js"></script>
     <script src="audio/mic-isolation.js"></script>
+    <script src="runtime/catalog-id.js"></script>
+    <script src="discover.js"></script>
     <script src="renderer.js"></script>
+    <script src="account.js"></script>
   </body>
 </html>

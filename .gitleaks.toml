@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated dependency/build/runtime directories are not source artifacts"
+paths = ['''(^|/)(node_modules|\.local|\.audit-tools|output|dist|out|release|build)/''']

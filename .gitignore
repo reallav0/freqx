@@ -8,9 +8,12 @@ output/
 release/
 build/
 *.blockmap
+coverage/
+.cache/
+*.heapsnapshot
+*.cpuprofile
 
 # Electron/native build artifacts
-audio/vendor/rnnoise.wasm
 *.node
 *.pdb
 *.ilk
@@ -44,6 +47,19 @@ audio-library/
 *.local
 .env
 .env.*
+!.env.example
+!**/.env.example
+.local/
+.audit-tools/
+.archify/
+.healthcheck-baseline/
+*.key
+*.p12
+*.pfx
+
+# Compile-reference nested checkout; runtime models and notices stay tracked.
+# This local repository is not included in Electron packaging.
+/audio/vendor/deepfilter/upstream/
 
 # Editor/OS files
 .vscode/

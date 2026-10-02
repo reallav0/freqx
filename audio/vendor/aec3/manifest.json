@@ -1,0 +1,15 @@
+{
+  "upstream": {
+    "name": "@ennuicastr/webrtcaec3.js",
+    "version": "0.3.0",
+    "commit": "e1d663e86f2ab03269b9ae873af38d0103c4df3d",
+    "url": "https://github.com/ennuicastr/webrtcaec3.js",
+    "integrity": "sha512-ZfijX3Pzqr2zY2nTBE+APGB4X8q3up5vqQgmuolCvC2WTYYWvivf3GGVFZnTr6n/kZa9w3Y5P4ugwcrOmsqXZQ=="
+  },
+  "files": {
+    "aec3.wasm": {
+      "bytes": 170421,
+      "sha256": "a2f432546daf1b366d04b4921e1a1cdf0d097da7722fb1d5fe553bed3cadb756"
+    }
+  }
+}

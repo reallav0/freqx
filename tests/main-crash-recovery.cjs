@@ -20,7 +20,7 @@ const checks = [];
 function fixture(options = {}) {
   const calls = {
     nativeLoads: [], starts: 0, restarts: [], stops: [], recoveries: [],
-    exits: [], quits: 0, windows: [], writes: [], sends: [],
+    exits: [], quits: 0, windows: [], writes: [], sends: [], referenceRequests: [], updateConfigs: [],
   };
   const timers = [];
   let timerClock = 0;
@@ -37,7 +37,7 @@ function fixture(options = {}) {
     isPackaged: true,
     commandLine: { appendSwitch() {}, hasSwitch() { return false; } },
     getPath(name) { return path.join(root, name === 'userData' ? 'fixture-profile' : `fixture-${name}`); },
-    setPath() {}, getAppPath() { return root; },
+    setPath() {}, setName(name) { assert.equal(name, 'freqx'); }, getAppPath() { return root; },
     disableHardwareAcceleration() {}, requestSingleInstanceLock() { return options.lock !== false; },
     hasSingleInstanceLock() { return options.lock !== false; },
     isReady() { return isReady; },
@@ -115,7 +115,13 @@ function fixture(options = {}) {
     crashReporter: { start() {} },
     nativeImage: { createFromPath: () => ({ resize() { return this; } }) },
     globalShortcut: { unregisterAll() {}, unregister() {}, register() { return true; } },
-    session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
+    desktopCapturer: { getSources: async () => [{ id: 'fixture-screen' }] },
+    session: { defaultSession: {
+      setPermissionRequestHandler() {}, setPermissionCheckHandler() {},
+      setDisplayMediaRequestHandler(handler, settings) {
+        calls.displayMedia = { handler, settings };
+      },
+    } },
     shell: { showItemInFolder() {}, openPath: async () => '', openExternal: async () => {} },
     dialog: {},
   };
@@ -133,10 +139,37 @@ function fixture(options = {}) {
     clearImmediate: timer => { if (timer) timer.cancelled = true; },
     require(name) {
       if (name === 'electron') return electron;
-      if (name === './package.json') return metadata;
+      if (name === './package.json') {
+        if (!options.packagedMetadata) return metadata;
+        const packaged = { ...metadata };
+        delete packaged.build;
+        return packaged;
+      }
+      if (name === './runtime/update-config.json') return require('../runtime/update-config.json');
+      if (name === './runtime/auth-client.cjs') return { registerAuthIpc() {} };
+      if (name === './runtime/app-mode.cjs') return require('../runtime/app-mode.cjs');
+      if (name === './runtime/public-library.cjs') return {
+        PublicLibrary: class {
+          getCatalog() { throw new Error('Unexpected catalog access in recovery fixture'); }
+          getPreview() { throw new Error('Unexpected preview access in recovery fixture'); }
+          getSound() { throw new Error('Unexpected library import in recovery fixture'); }
+        },
+      };
       if (name === './runtime/crash-recovery.cjs') return {
         createCrashRecovery(...args) { calls.recoveries.push(args); return recovery; },
       };
+      if (name === './runtime/platform-library.cjs') return require('../runtime/platform-library.cjs');
+      if (name === './runtime/loopback-reference.cjs') return { LoopbackService: class {
+        stopOwner() {} stopAll() {}
+        list() { calls.referenceRequests.push('list'); return []; }
+        start(owner, id) { calls.referenceRequests.push({ owner, id }); return {}; }
+        stop() {} ack() {}
+      } };
+      if (name === './runtime/update-client.cjs') return { createUpdateClient: options => {
+        calls.updateConfigs.push(options.config);
+        return { check: async () => ({ ok: false }), status: () => ({ status: 'idle' }), install: () => ({ ok: false }) };
+      } };
+      if (name === 'electron-updater') return { autoUpdater: {} };
       if (name === 'fs' || name === 'node:fs') return fakeFs;
       if (name === 'naudiodon' || name === 'uiohook-napi') {
         calls.nativeLoads.push(name);
@@ -152,7 +185,7 @@ function fixture(options = {}) {
   });
   vm.runInContext(mainSource, context, { filename: 'main.js' });
   return {
-    app, calls, context, process: fakeProcess,
+    app, calls, context, process: fakeProcess, ipcHandlers,
     get window() { return calls.windows.at(-1); },
     async ready() {
       isReady = true;
@@ -204,11 +237,19 @@ function assertNotRecoveredSynchronously(subject) {
 }
 
 async function main() {
+  await check('release starts when packaged metadata has no build field', async () => {
+    const subject = fixture({ packagedMetadata: true });
+    await subject.ready();
+    assert.equal(subject.window.visible, true);
+    assert.deepEqual(subject.calls.updateConfigs, [metadata.build.publish]);
+    assert.deepEqual(subject.calls.restarts, []);
+  });
   await check('primary instance starts one safeguard', async () => {
     const subject = fixture();
     await subject.ready();
     assert.equal(subject.calls.recoveries.length, 1);
     assert.equal(subject.calls.starts, 1);
+    assert.equal(subject.calls.displayMedia, undefined, 'reference capture needs no screen-sharing handler');
     assert.equal(subject.window.options.show, true);
     assert.deepEqual(subject.calls.nativeLoads, [], 'ordinary startup must not load unused native audio');
   });
@@ -221,6 +262,21 @@ async function main() {
     assert.deepEqual(subject.calls.nativeLoads, []);
     assert.equal(subject.calls.windows.length, 0);
     assert.equal(subject.calls.quits, 1);
+  });
+  await check('playback reference IPC admits only the main soundboard frame', async () => {
+    const subject = fixture(); await subject.ready();
+    const owner = subject.window.webContents;
+    const frame = { url: subject.window.url }; owner.mainFrame = frame;
+    const list = subject.ipcHandlers.get('audio:reference-devices');
+    const start = subject.ipcHandlers.get('audio:reference-start');
+    assert.throws(() => start({ sender: owner, senderFrame: { url: frame.url } }, 'physical'), /main app frame/);
+    assert.throws(() => list({ sender: { getURL: () => frame.url, mainFrame: frame }, senderFrame: frame }), /main app frame/);
+    assert.deepEqual(subject.calls.referenceRequests, []);
+    list({ sender: owner, senderFrame: frame });
+    assert.deepEqual(subject.calls.referenceRequests, ['list']);
+    frame.url = pathToFileURL(path.join(root, 'crash.html')).href;
+    assert.throws(() => start({ sender: owner, senderFrame: frame }, 'physical'), /main app frame/);
+    assert.deepEqual(subject.calls.referenceRequests, ['list']);
   });
 
   await check('renderer-death burst produces one deferred hidden restart', async () => {

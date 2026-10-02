@@ -295,10 +295,18 @@ const checkUpdatesButton = document.getElementById("checkUpdates");
 const openUpdatePageButton = document.getElementById("openUpdatePage");
 const updateState = document.getElementById("updateState");
 const voiceIsolationToggle = document.getElementById("voiceIsolationToggle");
+const voiceIsolationMode = document.getElementById("voiceIsolationMode");
 const voiceIsolationState = document.getElementById("voiceIsolationState");
+const echoReferenceSelect = document.getElementById('echoReferenceDevice');
+const echoReferenceState = document.getElementById('echoReferenceState');
+const echoReferenceMeter = document.getElementById('echoReferenceMeter');
+let selectedEchoReferenceId = '';
+let referenceRefreshGeneration = 0;
+let lastDefaultReferenceId;
 
 let audioContext;
 let micStream;
+let micTrackEndedListener;
 let micSource;
 let micIsolationSession = null;
 let micIsolationPending = null;
@@ -306,13 +314,13 @@ let micIsolationGeneration = 0;
 let micCaptureGeneration = 0;
 let micToggleRevision = 0;
 let isVoiceIsolationEnabled = true;
+let selectedVoiceIsolationMode = "standard";
 let voiceIsolationStatus = "waiting";
 let micGainNode;
 let micHighPassNode;
 let micNotchNode;
 let micNoiseReductionGainNode;
 let micNoiseAnalyser;
-let micNoiseData;
 let micMudCutNode;
 let micPresenceNode;
 let micAirNode;
@@ -320,8 +328,6 @@ let micLowPassNode;
 let micCompressorNode;
 let micGateGainNode;
 let micGateAnalyser;
-let micGateData;
-let micGateIntervalId;
 let micMonitorGainNode;
 let soundGainNode;
 let appPlaybackGainNode;
@@ -340,7 +346,10 @@ let levelData;
 let micFrequencyAnalyser;
 let micFrequencyData;
 let meterAnimationFrame;
-let isMicGateOpen = false;
+let meterFrameSerial = 0;
+let meterLastUpdateTime = 0;
+let meterHidden = false;
+let meterVisibilityBound = false;
 let selectedInputDeviceId = "";
 let selectedOutputDeviceId = "";
 let isMicCaptureEnabled = true;
@@ -350,17 +359,18 @@ let selectedLocalPlaybackDeviceId = "";
 let availableInputDevices = [];
 let availableOutputDevices = [];
 const soundToMixBoost = 1.4;
-const micGateOpenThresholdDb = -46;
-const micGateCloseThresholdDb = -54;
 const micGateClosedGain = 0;
-const micNoiseReductionMinGain = 0.16;
-const micNoiseReductionMarginDb = 10;
-const micNoiseReductionRangeDb = 12;
-const micNoiseFloorAdaptUp = 0.015;
-const micNoiseFloorAdaptDown = 0.1;
-let micNoiseFloorDb = -62;
 const importedAudioBuffers = new Map();
+const importedAudioBufferSizes = new Map();
+const importedAudioBufferCacheLimitBytes = 256 * 1024 * 1024;
+let importedAudioBufferTotalBytes = 0;
 const activeSoundNodes = new Set();
+const pendingSoundStarts = new Set();
+let discoverUi;
+let discoverPreviewSource = null;
+let discoverPreviewGain = null;
+let discoverPreviewGeneration = 0;
+let discoverPreviewEnded;
 let importedLibraryItems = [];
 const stopKeybindId = "__soundmuncher_stop_all__";
 const keybindStorageKey = "soundmuncher:keybinds";
@@ -626,6 +636,10 @@ function loadMixerSettings() {
     if (typeof settings?.voiceIsolation === "boolean") {
       isVoiceIsolationEnabled = settings.voiceIsolation;
     }
+    if (["standard", "strong"].includes(settings?.voiceIsolationMode)) {
+      selectedVoiceIsolationMode = settings.voiceIsolationMode;
+    }
+    if (typeof settings?.echoReferenceDeviceId === 'string') selectedEchoReferenceId = settings.echoReferenceDeviceId;
 
     if (typeof settings?.localPlaybackDeviceId === "string") {
       selectedLocalPlaybackDeviceId = settings.localPlaybackDeviceId;
@@ -650,6 +664,8 @@ function saveMixerSettings() {
       masterGain: Number(masterGainSlider.value),
       soundPlayback: isSoundPlaybackEnabled,
       voiceIsolation: isVoiceIsolationEnabled,
+      voiceIsolationMode: selectedVoiceIsolationMode,
+      echoReferenceDeviceId: selectedEchoReferenceId,
       localPlaybackDeviceId: selectedLocalPlaybackDeviceId,
       inputDeviceId: selectedInputDeviceId,
       outputDeviceId: selectedOutputDeviceId
@@ -705,7 +721,8 @@ function normalizeSoundMetadata(item, metadata = {}) {
     fadeOut: clampNumber(metadata.fadeOut, 0, 30, 0),
     playbackMode,
     favorite: Boolean(metadata.favorite),
-    pinned: Boolean(metadata.pinned)
+    pinned: Boolean(metadata.pinned),
+    catalogId: window.FreqxCatalogId.valid(metadata.catalogId) ? metadata.catalogId : ""
   };
 }
 
@@ -766,6 +783,50 @@ function loadLibraryView() {
     }
   } catch (error) {
   }
+}
+
+function estimateAudioBufferBytes(buffer) {
+  if (!buffer) {
+    return 0;
+  }
+
+  return Math.max(0, buffer.length * buffer.numberOfChannels * 4);
+}
+
+function trimImportedAudioBufferCache() {
+  while (importedAudioBufferTotalBytes > importedAudioBufferCacheLimitBytes && importedAudioBuffers.size > 0) {
+    const oldestPath = importedAudioBuffers.keys().next().value;
+    const oldestBuffer = importedAudioBuffers.get(oldestPath);
+    const oldestBytes = importedAudioBufferSizes.get(oldestPath) || estimateAudioBufferBytes(oldestBuffer);
+
+    importedAudioBuffers.delete(oldestPath);
+    importedAudioBufferSizes.delete(oldestPath);
+    importedAudioBufferTotalBytes = Math.max(0, importedAudioBufferTotalBytes - oldestBytes);
+  }
+}
+
+function storeImportedAudioBuffer(itemPath, buffer) {
+  if (!itemPath || !buffer) {
+    return buffer;
+  }
+
+  const existingBytes = importedAudioBufferSizes.get(itemPath) || 0;
+  if (importedAudioBuffers.has(itemPath)) {
+    importedAudioBuffers.delete(itemPath);
+  }
+
+  importedAudioBuffers.set(itemPath, buffer);
+  const bytes = estimateAudioBufferBytes(buffer);
+  importedAudioBufferSizes.set(itemPath, bytes);
+  importedAudioBufferTotalBytes = Math.max(0, importedAudioBufferTotalBytes + bytes - existingBytes);
+  trimImportedAudioBufferCache();
+  return buffer;
+}
+
+function clearImportedAudioBufferCache() {
+  importedAudioBuffers.clear();
+  importedAudioBufferSizes.clear();
+  importedAudioBufferTotalBytes = 0;
 }
 
 function saveAppPreferences() {
@@ -1017,6 +1078,7 @@ async function checkForUpdates() {
 
   try {
     const result = await window.soundmuncher.checkForUpdates();
+    if (result?.status) { showUpdateState(result); return; }
 
     if (!result?.ok) {
       if (updateState) {
@@ -1049,6 +1111,21 @@ async function checkForUpdates() {
     }
   }
 }
+
+function showUpdateState(state) {
+  const messages = { idle: 'Updates are checked after startup.', checking: 'Checking for updates...', none: 'FreqX is up to date.',
+    available: `FreqX ${state.latestVersion || ''} is available. Downloading...`, downloading: `Downloading update: ${Math.round(state.percent || 0)}%`,
+    downloaded: 'Update verified. Restart when you are ready to install.', error: state.message || 'Update service is unavailable.', unsupported: state.message };
+  if (updateState) updateState.textContent = messages[state.status] || 'Update status unavailable.';
+  const install = document.getElementById('installUpdate'); if (install) install.hidden = state.status !== 'downloaded';
+  setUpdatePageButton('');
+}
+window.soundmuncher?.onUpdateState?.(showUpdateState);
+window.soundmuncher?.updateStatus?.().then(showUpdateState).catch(() => {});
+document.getElementById('installUpdate')?.addEventListener('click', async () => {
+  const result = await window.soundmuncher.installUpdate();
+  if (!result.ok && updateState) updateState.textContent = result.message || 'Update installation is unavailable.';
+});
 
 async function openUpdatePage() {
   if (!latestUpdateUrl || !window.soundmuncher?.openUpdatePage) {
@@ -1525,11 +1602,38 @@ function toggleSoundFlag(item, flagName) {
   saveLibraryMetadata();
   renderImportedLibrary();
 
+  if (flagName === 'favorite' && metadata.catalogId && cloudAccountUserId) {
+    window.soundmuncher.setCloudFavorite({ id: metadata.catalogId, favorite: metadata.favorite }).then(result => {
+      if (result.error) setLibraryState('Favorite saved locally. Cloud sync is unavailable.');
+    }).catch(() => setLibraryState('Favorite saved locally. Cloud sync is unavailable.'));
+  }
+
   const label = flagName === "favorite" ? "favorite" : "pinned";
   setLibraryState(metadata[flagName]
     ? `${metadata.name} marked as ${label}.`
     : `${metadata.name} removed from ${label} sounds.`);
 }
+
+let cloudAccountUserId = null;
+window.addEventListener('freqx-account-state', event => { cloudAccountUserId = event.detail.userId; });
+window.addEventListener('freqx-favorites-sync', async () => {
+  const userId = cloudAccountUserId;
+  if (!userId) return;
+  try {
+    const ids = [...new Set(importedLibraryItems.map(getSoundMetadata).filter(metadata => metadata.favorite && metadata.catalogId).map(metadata => metadata.catalogId))];
+    let result;
+    for (let offset = 0; offset < Math.max(ids.length, 1); offset += 100) {
+      result = await window.soundmuncher.syncFavorites(ids.slice(offset, offset + 100));
+      if (result.error || userId !== cloudAccountUserId || result.user?.id !== userId) throw new Error('Sync unavailable.');
+    }
+    const favorites = new Set(result.ids);
+    for (const item of importedLibraryItems) {
+      const metadata = getSoundMetadata(item);
+      if (metadata.catalogId && favorites.has(metadata.catalogId)) libraryMetadata[item.path] = { ...metadata, favorite: true };
+    }
+    saveLibraryMetadata(); renderImportedLibrary(); setLibraryState('Favorites synced. Local-only favorites are preserved.');
+  } catch { setLibraryState('Cloud sync is unavailable. Your local favorites are preserved.'); }
+});
 
 function openSettings() {
   if (!settingsOverlay) {
@@ -1953,6 +2057,7 @@ async function loadImportedLibrary() {
     importedLibraryItems = await window.soundmuncher.listImportedFiles();
     ensureLibraryMetadataForItems();
     renderImportedLibrary();
+    discoverUi?.refresh();
 
     if (importedLibraryItems.length > 0) {
       setLibraryState(`${importedLibraryItems.length} ${importedLibraryItems.length === 1 ? "sound" : "sounds"} ready to play.`);
@@ -2030,7 +2135,7 @@ async function completeAudioImport(result, canceledMessage = "Import canceled.",
   const skippedCount = Array.isArray(result.skipped) ? result.skipped.length : 0;
 
   if (importedCount > 0) {
-    importedAudioBuffers.clear();
+    clearImportedAudioBufferCache();
     await loadImportedLibrary();
     applyImportedSoundMetadata(result);
   }
@@ -2136,6 +2241,7 @@ async function removeImportedAudio(item) {
   }
 
   try {
+    stopSoundsByPath(item.path);
     const result = await window.soundmuncher.removeImportedFile(item.path);
     if (!result?.ok) {
       setLibraryState("Could not remove audio file.");
@@ -2143,6 +2249,7 @@ async function removeImportedAudio(item) {
     }
 
     importedAudioBuffers.delete(item.path);
+    importedAudioBufferSizes.delete(item.path);
     delete libraryMetadata[item.path];
     saveLibraryMetadata();
     clearKeybind(item.path);
@@ -2160,14 +2267,13 @@ async function removeImportedAudio(item) {
 
 async function decodeImportedAudio(item) {
   if (importedAudioBuffers.has(item.path)) {
-    return importedAudioBuffers.get(item.path);
+    return storeImportedAudioBuffer(item.path, importedAudioBuffers.get(item.path));
   }
 
   const response = await fetch(item.fileUrl);
   const data = await response.arrayBuffer();
   const decoded = await audioContext.decodeAudioData(data.slice(0));
-  importedAudioBuffers.set(item.path, decoded);
-  return decoded;
+  return storeImportedAudioBuffer(item.path, decoded);
 }
 
 function trackSoundNode(sourceNode, outputNode = null, itemPath = "") {
@@ -2232,16 +2338,26 @@ function stopTrackedSound(entry) {
 }
 
 function stopSoundsByPath(itemPath) {
+  for (const request of pendingSoundStarts) {
+    if (request.itemPath === itemPath) {
+      request.cancelled = true;
+      pendingSoundStarts.delete(request);
+    }
+  }
   Array.from(activeSoundNodes)
     .filter((entry) => entry.itemPath === itemPath)
     .forEach(stopTrackedSound);
 }
 
 function hasActiveSoundForPath(itemPath) {
-  return Array.from(activeSoundNodes).some((entry) => entry.itemPath === itemPath && !entry.stopped);
+  return Array.from(activeSoundNodes).some((entry) => entry.itemPath === itemPath && !entry.stopped)
+    || Array.from(pendingSoundStarts).some((request) => request.itemPath === itemPath);
 }
 
 function stopAllSounds() {
+  for (const request of pendingSoundStarts) request.cancelled = true;
+  pendingSoundStarts.clear();
+  discoverUi?.stopPreview();
   if (activeSoundNodes.size === 0) {
     nowPlaying.textContent = "Ready";
     return;
@@ -2253,28 +2369,33 @@ function stopAllSounds() {
 }
 
 async function playImportedSound(item) {
+  const metadata = getSoundMetadata(item);
+  if (metadata.playbackMode === "once" && hasActiveSoundForPath(item.path)) {
+    setLibraryState(`${metadata.name} is already playing.`);
+    return;
+  }
+
+  if (metadata.playbackMode === "restart") {
+    stopSoundsByPath(item.path);
+  }
+
+  if (metadata.playbackMode === "loop" && hasActiveSoundForPath(item.path)) {
+    stopSoundsByPath(item.path);
+    nowPlaying.textContent = `${metadata.name} loop stopped`;
+    return;
+  }
+
+  // Reserve playback before either engine startup or decoding can yield.
+  const request = { itemPath: item.path, cancelled: false };
+  pendingSoundStarts.add(request);
   try {
     if (!audioContext) {
       await setupMixer({ requestMic: false });
     }
-
-    const metadata = getSoundMetadata(item);
-    if (metadata.playbackMode === "once" && hasActiveSoundForPath(item.path)) {
-      setLibraryState(`${metadata.name} is already playing.`);
-      return;
-    }
-
-    if (metadata.playbackMode === "restart" && hasActiveSoundForPath(item.path)) {
-      stopSoundsByPath(item.path);
-    }
-
-    if (metadata.playbackMode === "loop" && hasActiveSoundForPath(item.path)) {
-      stopSoundsByPath(item.path);
-      nowPlaying.textContent = `${metadata.name} loop stopped`;
-      return;
-    }
+    if (request.cancelled) return;
 
     const buffer = await decodeImportedAudio(item);
+    if (request.cancelled) return;
     const trimStart = Math.min(metadata.trimStart, Math.max(0, buffer.duration - 0.01));
     const trimEnd = Math.min(metadata.trimEnd, Math.max(0, buffer.duration - trimStart - 0.01));
     const playableDuration = Math.max(0.01, buffer.duration - trimStart - trimEnd);
@@ -2316,7 +2437,9 @@ async function playImportedSound(item) {
 
     nowPlaying.textContent = metadata.name;
   } catch (error) {
-    setLibraryState(`Could not play ${item.name}.`);
+    if (!request.cancelled) setLibraryState(`Could not play ${item.name}.`);
+  } finally {
+    pendingSoundStarts.delete(request);
   }
 }
 
@@ -2497,6 +2620,7 @@ function withBlockedInputNotice(message, blockedInputCount) {
 }
 
 async function refreshOutputDevices() {
+  void refreshReferenceDevices();
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     availableInputDevices = devices.filter((device) => device.kind === "audioinput");
@@ -2534,7 +2658,7 @@ async function refreshOutputDevices() {
       localPlaybackDeviceSelect.value = preferredLocalPlayback.deviceId;
     }
 
-    const { safeInputCount, blockedInputCount } = populateInputDevicesForOutput(preferredOutput);
+    const { safeInputCount, blockedInputCount, inputChanged } = populateInputDevicesForOutput(preferredOutput);
     saveMixerSettings();
 
     if (availableOutputDevices.length === 0) {
@@ -2552,6 +2676,7 @@ async function refreshOutputDevices() {
       setRouteState(withBlockedInputNotice(`Detected ${safeInputCount} mic(s) and ${availableOutputDevices.length} output device(s).`, blockedInputCount));
     }
 
+    if (inputChanged && isMicCaptureEnabled && micStream) await switchMicInput();
     if (audioContext) {
       await applyOutputDevice();
       await applyLocalPlaybackDevice({ silent: true });
@@ -2586,7 +2711,7 @@ async function applyOutputDevice() {
   const needsMicReconnect = inputChanged && isMicCaptureEnabled && Boolean(micStream);
 
   if (typeof mixOutContext.setSinkId !== "function") {
-    setRouteState("Output routing API not available in this Electron runtime.");
+    setRouteState("Output routing API not available in this freqx runtime.");
     return;
   }
 
@@ -2637,7 +2762,7 @@ async function applyLocalPlaybackDevice(options = {}) {
 
   if (typeof localOutContext.setSinkId !== "function") {
     if (!silent) {
-      setRouteState("Local playback routing API not available in this Electron runtime.");
+      setRouteState("Local playback routing API not available in this freqx runtime.");
     }
     return;
   }
@@ -2741,96 +2866,49 @@ function updateMixerGains() {
 }
 
 function updateMicNoiseReduction() {
-  if (!audioContext || !micNoiseAnalyser || !micNoiseData || !micNoiseReductionGainNode || !micStream) {
-    return;
-  }
-
-  // RNNoise already separates speech from noise. Do not stack a second expander on it.
-  if (micIsolationSession) {
-    micNoiseReductionGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.02);
-    return;
-  }
-
-  micNoiseAnalyser.getFloatTimeDomainData(micNoiseData);
-
-  let sumSquares = 0;
-  for (let index = 0; index < micNoiseData.length; index += 1) {
-    const sample = micNoiseData[index];
-    sumSquares += sample * sample;
-  }
-
-  const rms = Math.sqrt(sumSquares / micNoiseData.length) || 0;
-  const db = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
-  if (!Number.isFinite(db)) {
-    return;
-  }
-
-  if (db < micNoiseFloorDb) {
-    micNoiseFloorDb = (micNoiseFloorDb * (1 - micNoiseFloorAdaptDown)) + (db * micNoiseFloorAdaptDown);
-  } else {
-    micNoiseFloorDb = (micNoiseFloorDb * (1 - micNoiseFloorAdaptUp)) + (db * micNoiseFloorAdaptUp);
-  }
-
-  const thresholdDb = micNoiseFloorDb + micNoiseReductionMarginDb;
-  let targetGain = 1;
-
-  if (db <= thresholdDb) {
-    targetGain = micNoiseReductionMinGain;
-  } else if (db < thresholdDb + micNoiseReductionRangeDb) {
-    const normalized = (db - thresholdDb) / micNoiseReductionRangeDb;
-    targetGain = micNoiseReductionMinGain + ((1 - micNoiseReductionMinGain) * normalized);
-  }
-
-  const smoothing = targetGain < 1 ? 0.03 : 0.08;
-  micNoiseReductionGainNode.gain.setTargetAtTime(targetGain, audioContext.currentTime, smoothing);
+  if (!audioContext || !micNoiseReductionGainNode || !micStream) return;
+  // DeepFilterNet owns noise reduction. Off/fallback use AEC without an expander.
+  micNoiseReductionGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.02);
 }
 
 function updateMicNoiseGate() {
-  if (!audioContext || !micGateAnalyser || !micGateData || !micGateGainNode || !micStream) {
-    return;
-  }
-
-  if (micIsolationSession) {
-    isMicGateOpen = true;
-    micGateGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.02);
-    return;
-  }
-
-  micGateAnalyser.getFloatTimeDomainData(micGateData);
-
-  let sumSquares = 0;
-  for (let index = 0; index < micGateData.length; index += 1) {
-    const sample = micGateData[index];
-    sumSquares += sample * sample;
-  }
-
-  const rms = Math.sqrt(sumSquares / micGateData.length) || 0;
-  const db = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
-
-  if (!isMicGateOpen && db > micGateOpenThresholdDb) {
-    isMicGateOpen = true;
-    micGateGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.02);
-  } else if (isMicGateOpen && db < micGateCloseThresholdDb) {
-    isMicGateOpen = false;
-    micGateGainNode.gain.setTargetAtTime(micGateClosedGain, audioContext.currentTime, 0.03);
-  }
+  if (!audioContext || !micGateGainNode || !micStream) return;
+  // A hard gate clips quiet speech and must not obscure the AEC fallback.
+  micGateGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.02);
 }
 
-function ensureMicGateUpdater() {
-  if (micGateIntervalId) {
+function scheduleLevelMeter() {
+  if (meterHidden) {
+    meterAnimationFrame = null;
     return;
   }
-
-  micGateIntervalId = window.setInterval(() => {
-    updateMicNoiseReduction();
-    updateMicNoiseGate();
-  }, 50);
+  meterAnimationFrame = window.requestAnimationFrame(updateLevelMeter);
 }
 
-function updateLevelMeter() {
-  if (!levelAnalyser || !levelData) {
+function bindLevelMeterVisibility() {
+  if (meterVisibilityBound) return;
+  meterVisibilityBound = true;
+  meterHidden = document.hidden;
+  document.addEventListener("visibilitychange", () => {
+    meterHidden = document.hidden;
+    if (!meterHidden && !meterAnimationFrame) scheduleLevelMeter();
+  });
+}
+
+function updateLevelMeter(timestamp = 0) {
+  if (!levelAnalyser || !levelData || meterHidden) {
+    meterAnimationFrame = null;
     return;
   }
+
+  // The frequency peak scan runs a 4096-point FFT. It does not need to run at
+  // display rate, so throttle it and the DOM meter writes to reduce idle CPU.
+  const doFrequency = (meterFrameSerial++ % 6) === 0;
+  if (timestamp - meterLastUpdateTime < 1000 / 30 && !doFrequency) {
+    scheduleLevelMeter();
+    return;
+  }
+  meterLastUpdateTime = timestamp;
 
   levelAnalyser.getFloatTimeDomainData(levelData);
 
@@ -2870,7 +2948,7 @@ function updateLevelMeter() {
     meterTrackFooter.setAttribute("aria-valuenow", String(Math.round(boundedDb)));
   }
 
-  if (hzValue && micFrequencyAnalyser && micFrequencyData) {
+  if (doFrequency && hzValue && micFrequencyAnalyser && micFrequencyData) {
     micFrequencyAnalyser.getByteFrequencyData(micFrequencyData);
 
     const minHz = 40;
@@ -2898,22 +2976,60 @@ function updateLevelMeter() {
     }
   }
 
-  meterAnimationFrame = window.requestAnimationFrame(updateLevelMeter);
+  scheduleLevelMeter();
 }
 
 function updateVoiceIsolationUi(status = voiceIsolationStatus) {
   voiceIsolationStatus = status;
   if (voiceIsolationToggle) voiceIsolationToggle.checked = isVoiceIsolationEnabled;
+  if (voiceIsolationMode) voiceIsolationMode.value = isVoiceIsolationEnabled ? selectedVoiceIsolationMode : "off";
   if (!voiceIsolationState) return;
   const messages = {
     waiting: "Mic only · Waiting for microphone",
     starting: "Mic only · Starting isolation…",
-    active: "Mic only · Background noise reduced",
-    off: "Mic only · Isolation off",
-    unavailable: "Isolation unavailable · Mic continues without it"
+    active: `Mic only · DeepFilterNet3 / ${selectedVoiceIsolationMode === "strong" ? "Strong" : "Standard"}`,
+    off: "Mic only · Echo cancellation only",
+    unavailable: "Isolation unavailable · Echo cancellation remains on"
   };
   voiceIsolationState.textContent = messages[status] || messages.waiting;
   voiceIsolationState.parentElement.dataset.state = status;
+  if (status !== 'active') updateEchoDiagnostics(null);
+}
+
+function updateEchoDiagnostics(diagnostics) {
+  if (!echoReferenceState) return;
+  const db = Number.isFinite(diagnostics?.referenceDb) ? diagnostics.referenceDb : -100;
+  if (echoReferenceMeter) echoReferenceMeter.value = Math.max(-60, Math.min(0, db));
+  if (!diagnostics || diagnostics.engine !== 'WebRTC AEC3') {
+    echoReferenceState.textContent = voiceIsolationStatus === 'active'
+      ? 'Chromium echo cancellation · Playback reference unavailable'
+      : 'Playback reference starts with voice isolation';
+    return;
+  }
+  const level = db > -65 ? `${Math.round(db)} dBFS` : 'Quiet';
+  echoReferenceState.textContent = `WebRTC AEC3 · ${diagnostics.referenceLabel} · ${level}`;
+}
+
+async function refreshReferenceDevices() {
+  if (!echoReferenceSelect) return;
+  const generation = ++referenceRefreshGeneration;
+  try {
+    const devices = await window.soundmuncher.listReferenceDevices?.() || [];
+    if (generation !== referenceRefreshGeneration) return;
+    echoReferenceSelect.replaceChildren();
+    echoReferenceSelect.add(new Option('Windows default playback', ''));
+    for (const device of devices.filter(device => !device.virtual)) echoReferenceSelect.add(new Option(device.label, device.id));
+    // Preserve a disconnected selection so the app cannot silently listen to a different output.
+    if (selectedEchoReferenceId && !devices.some(device => device.id === selectedEchoReferenceId && !device.virtual)) echoReferenceSelect.add(new Option('Selected playback device disconnected', selectedEchoReferenceId));
+    echoReferenceSelect.value = selectedEchoReferenceId;
+    echoReferenceSelect.disabled = !devices.some(device => !device.virtual);
+    const defaultId = devices.find(device => device.isDefault && !device.virtual)?.id || '';
+    const changed = lastDefaultReferenceId !== undefined && defaultId !== lastDefaultReferenceId && !selectedEchoReferenceId;
+    lastDefaultReferenceId = defaultId;
+    if (changed && isVoiceIsolationEnabled && micStream) restartEchoReference();
+  } catch {
+    if (generation === referenceRefreshGeneration) echoReferenceSelect.disabled = true;
+  }
 }
 
 function connectMicStreamToMixer(stream) {
@@ -2922,9 +3038,24 @@ function connectMicStreamToMixer(stream) {
   micSource?.disconnect();
   micSource = nextSource;
   micSource.connect(micGainNode);
+  // The old hard gate/expander are bypassed; update on routing changes only.
+  updateMicNoiseReduction();
+  updateMicNoiseGate();
 }
 
 async function configureMicVoiceIsolation() {
+  // Standard/Strong update the running model in place; keep its stream and context.
+  if (isVoiceIsolationEnabled && micIsolationSession && !micIsolationPending) {
+    try {
+      micIsolationSession.setMode(selectedVoiceIsolationMode);
+      updateVoiceIsolationUi("active");
+      return;
+    } catch {
+      micIsolationSession.close();
+      micIsolationSession = null;
+      if (micStream) connectMicStreamToMixer(micStream);
+    }
+  }
   const generation = ++micIsolationGeneration;
   micIsolationPending?.abort();
   micIsolationPending = null;
@@ -2938,7 +3069,6 @@ async function configureMicVoiceIsolation() {
     connectMicStreamToMixer(rawStream);
     micIsolationSession?.close();
     micIsolationSession = null;
-    micNoiseFloorDb = -62;
     updateVoiceIsolationUi("off");
     return;
   }
@@ -2950,13 +3080,17 @@ async function configureMicVoiceIsolation() {
   try {
     if (!window.MicVoiceIsolation) throw new Error("Voice isolation module is missing.");
     session = await window.MicVoiceIsolation.create(rawStream, {
+      mode: selectedVoiceIsolationMode,
+      referenceDeviceId: selectedEchoReferenceId,
       signal: pending.signal,
+      onDiagnostics: diagnostics => {
+        if (generation === micIsolationGeneration && micStream === rawStream) updateEchoDiagnostics(diagnostics);
+      },
       onError: () => {
         if (generation !== micIsolationGeneration || micStream !== rawStream) return;
         micIsolationSession = null;
         session?.close();
-        connectMicStreamToMixer(rawStream);
-        micNoiseFloorDb = -62;
+        if (rawStream.getAudioTracks().some(track => track.readyState === "live")) connectMicStreamToMixer(rawStream);
         updateVoiceIsolationUi("unavailable");
       }
     });
@@ -2969,17 +3103,16 @@ async function configureMicVoiceIsolation() {
     connectMicStreamToMixer(session.stream);
     micIsolationSession = session;
     previousSession?.close();
-    updateMicNoiseReduction();
-    updateMicNoiseGate();
     updateVoiceIsolationUi("active");
+    updateEchoDiagnostics(session.diagnostics);
   } catch (error) {
     session?.close();
     if (generation !== micIsolationGeneration || micStream !== rawStream) return;
     // Failure is confined to the mic: keep its existing processing and all other audio alive.
     micIsolationSession?.close();
     micIsolationSession = null;
-    connectMicStreamToMixer(rawStream);
-    micNoiseFloorDb = -62;
+    if (rawStream.getAudioTracks().some(track => track.readyState === "live")) connectMicStreamToMixer(rawStream);
+    console.warn("[VoiceIsolation] Echo-cancellation fallback:", error.message);
     updateVoiceIsolationUi("unavailable");
   } finally {
     if (micIsolationPending === pending) micIsolationPending = null;
@@ -2990,6 +3123,12 @@ async function setVoiceIsolationEnabled(enabled) {
   isVoiceIsolationEnabled = Boolean(enabled);
   saveMixerSettings();
   await configureMicVoiceIsolation();
+}
+
+async function setVoiceIsolationMode(mode) {
+  if (!["off", "standard", "strong"].includes(mode)) return;
+  if (mode !== "off") selectedVoiceIsolationMode = mode;
+  await setVoiceIsolationEnabled(mode !== "off");
 }
 
 async function setupMixer(options = {}) {
@@ -3003,7 +3142,6 @@ async function setupMixer(options = {}) {
     micNotchNode = audioContext.createBiquadFilter();
     micNoiseReductionGainNode = audioContext.createGain();
     micNoiseAnalyser = audioContext.createAnalyser();
-    micNoiseData = new Float32Array(1024);
     micMudCutNode = audioContext.createBiquadFilter();
     micPresenceNode = audioContext.createBiquadFilter();
     micAirNode = audioContext.createBiquadFilter();
@@ -3011,7 +3149,6 @@ async function setupMixer(options = {}) {
     micCompressorNode = audioContext.createDynamicsCompressor();
     micGateGainNode = audioContext.createGain();
     micGateAnalyser = audioContext.createAnalyser();
-    micGateData = new Float32Array(1024);
     micMonitorGainNode = audioContext.createGain();
     soundGainNode = audioContext.createGain();
     appPlaybackGainNode = audioContext.createGain();
@@ -3114,8 +3251,8 @@ async function setupMixer(options = {}) {
     localOutSource = localOutContext.createMediaStreamSource(appPlaybackDestination.stream);
     localOutSource.connect(localOutContext.destination);
 
-    meterAnimationFrame = window.requestAnimationFrame(updateLevelMeter);
-    ensureMicGateUpdater();
+    bindLevelMeterVisibility();
+    scheduleLevelMeter();
   }
 
   if (audioContext.state !== "running") {
@@ -3139,18 +3276,7 @@ async function setupMixer(options = {}) {
       throw new Error("No safe microphone input selected.");
     }
 
-    const constraints = {
-      channelCount: 1,
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false
-    };
-
-    if (selectedInputDeviceId) {
-      constraints.deviceId = { exact: selectedInputDeviceId };
-    }
-
-    micNoiseFloorDb = -62;
+    const constraints = window.VoiceIsolation.captureConstraints(selectedInputDeviceId);
 
     const captureGeneration = ++micCaptureGeneration;
     const requestedDeviceId = selectedInputDeviceId;
@@ -3174,6 +3300,17 @@ async function setupMixer(options = {}) {
       }
 
       micTrack.contentHint = "speech";
+      micTrackEndedListener = () => {
+        if (micStream !== capturedStream) return;
+        micToggleRevision += 1;
+        isMicCaptureEnabled = false;
+        stopMicCapture();
+        updateMixStateText();
+        updateToggleButtonLabels();
+        setRouteState("Microphone disconnected. Select an available microphone and turn Mic on again.");
+        void refreshOutputDevices();
+      };
+      micTrack.addEventListener("ended", micTrackEndedListener, { once: true });
     }
 
     connectMicStreamToMixer(micStream);
@@ -3218,7 +3355,7 @@ async function ensureDeviceLabels() {
       return;
     }
 
-    const probeStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const probeStream = await navigator.mediaDevices.getUserMedia({ audio: window.VoiceIsolation.captureConstraints(), video: false });
     probeStream.getTracks().forEach((track) => track.stop());
   } catch (error) {
   }
@@ -3238,12 +3375,13 @@ function stopMicCapture() {
   micIsolationSession = null;
 
   if (micStream) {
+    if (micTrackEndedListener) micStream.getAudioTracks().forEach(track => track.removeEventListener("ended", micTrackEndedListener));
+    micTrackEndedListener = null;
     micStream.getTracks().forEach((track) => track.stop());
     micStream = null;
   }
 
   if (audioContext && micGateGainNode) {
-    isMicGateOpen = false;
     micGateGainNode.gain.setTargetAtTime(micGateClosedGain, audioContext.currentTime, 0.02);
   }
   updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
@@ -3361,6 +3499,7 @@ async function setMicCaptureEnabled(enabled) {
       }
 
       isMicCaptureEnabled = false;
+      stopMicCapture();
       if (/loopback|system\s*audio/i.test(String(error?.message || ""))) {
         mixState.textContent = "Mic capture blocked: selected input is loopback/system audio.";
       } else {
@@ -3410,6 +3549,8 @@ async function setSoundPlaybackEnabled(enabled) {
 
   isSoundPlaybackEnabled = enabled;
 
+  if (!enabled) discoverUi?.stopPreview();
+
   if (audioContext && appPlaybackGainNode) {
     appPlaybackGainNode.gain.setTargetAtTime(enabled ? 1 : 0, audioContext.currentTime, 0.02);
   }
@@ -3425,6 +3566,7 @@ async function setSoundPlaybackEnabled(enabled) {
 }
 
 async function switchMicInput() {
+  const revision = ++micToggleRevision;
   selectedInputDeviceId = inputDeviceSelect.value;
   saveMixerSettings();
 
@@ -3450,8 +3592,13 @@ async function switchMicInput() {
     stopMicCapture();
 
     await setupMixer({ requestMic: true });
+    if (revision !== micToggleRevision) return;
     setRouteState("Mic input switched and reconnected.");
   } catch (error) {
+    if (revision !== micToggleRevision) return;
+    isMicCaptureEnabled = false;
+    stopMicCapture();
+    updateToggleButtonLabels();
     if (/loopback|system\s*audio/i.test(String(error?.message || ""))) {
       mixState.textContent = "Mic input blocked: selected device captures desktop/system audio.";
     } else {
@@ -3465,6 +3612,22 @@ toggleMicCaptureButton?.addEventListener("click", () => {
 });
 voiceIsolationToggle?.addEventListener("change", () => {
   void setVoiceIsolationEnabled(voiceIsolationToggle.checked);
+});
+voiceIsolationMode?.addEventListener("change", () => {
+  void setVoiceIsolationMode(voiceIsolationMode.value);
+});
+function restartEchoReference() {
+  // Changing the reference requires a fresh estimator and capture session.
+  ++micIsolationGeneration;
+  micIsolationPending?.abort(); micIsolationPending = null;
+  const previous = micIsolationSession; micIsolationSession = null;
+  if (micStream) connectMicStreamToMixer(micStream);
+  void Promise.resolve(previous?.close()).then(() => configureMicVoiceIsolation());
+}
+echoReferenceSelect?.addEventListener('change', () => {
+  selectedEchoReferenceId = echoReferenceSelect.value;
+  saveMixerSettings();
+  restartEchoReference();
 });
 toggleMixToOutputButton?.addEventListener("click", () => {
   setMixToOutputEnabled(!isMixToOutputEnabled);
@@ -3605,6 +3768,62 @@ if (openLibraryButton) {
   });
 });
 
+function stopDiscoverPreview() {
+  discoverPreviewGeneration++;
+  const callback = discoverPreviewEnded;
+  discoverPreviewEnded = null;
+  if (discoverPreviewSource) {
+    discoverPreviewSource.onended = null;
+    try { discoverPreviewSource.stop(); } catch {}
+    discoverPreviewSource.disconnect(); discoverPreviewSource = null;
+  }
+  discoverPreviewGain?.disconnect(); discoverPreviewGain = null;
+  callback?.();
+}
+
+async function previewDiscoverSound(id, onEnded) {
+  stopDiscoverPreview();
+  const generation = discoverPreviewGeneration;
+  if (!isSoundPlaybackEnabled) throw new Error("Turn Hear on in the mixer to preview through your monitor.");
+  if (!audioContext) await setupMixer({ requestMic: false });
+  if (generation !== discoverPreviewGeneration) return;
+  const result = await window.soundmuncher.previewPublicSound(id);
+  if (generation !== discoverPreviewGeneration) return;
+  const bytes = result.bytes;
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength > 24 * 1024 * 1024) throw new Error("Preview unavailable. Try another sound.");
+  const buffer = await audioContext.decodeAudioData(bytes.slice().buffer);
+  if (generation !== discoverPreviewGeneration) return;
+  await audioContext.resume();
+  await localOutContext?.resume();
+  if (generation !== discoverPreviewGeneration || !isSoundPlaybackEnabled) return;
+  discoverPreviewSource = audioContext.createBufferSource();
+  discoverPreviewGain = audioContext.createGain();
+  discoverPreviewGain.gain.value = .55;
+  discoverPreviewSource.buffer = buffer;
+  // Audition locally only. Never connect to soundGainNode, master, or mic nodes.
+  discoverPreviewSource.connect(discoverPreviewGain).connect(appPlaybackGainNode);
+  discoverPreviewEnded = onEnded;
+  discoverPreviewSource.onended = stopDiscoverPreview;
+  discoverPreviewSource.start();
+}
+
+async function importDiscoverSound(sound, targetBoard) {
+  if (!boards.includes(targetBoard)) throw new Error("Choose an available board and try again.");
+  const result = await window.soundmuncher.importPublicSound(sound.id);
+  if (!result?.imported?.length) throw new Error("Could not add this sound. Please try again.");
+  // The destination is captured at click time, even if the user changes tabs.
+  const boardName = boards.includes(targetBoard) ? targetBoard : defaultBoardName;
+  result.metadata ||= {};
+  for (const item of result.imported) result.metadata[item.path] = { ...result.metadata[item.path], name: sound.title, catalogId: sound.id, board: boardName };
+  await completeAudioImport(result, "", { successMessage: `Added ${sound.title} to ${boardName}.` });
+}
+window.addEventListener('freqx-cloud-preview', event => {
+  previewDiscoverSound(event.detail.id, () => {}).catch(() => setLibraryState('Cloud preview is unavailable.'));
+});
+window.addEventListener('freqx-cloud-import', event => {
+  importDiscoverSound(event.detail.sound, selectedBoard || defaultBoardName).catch(() => setLibraryState('Cloud sound could not be added.'));
+});
+
 loadMixerSettings();
 updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
 loadLibraryMetadata();
@@ -3617,6 +3836,16 @@ loadKeybinds();
 renderStopKeybindButton();
 renderBoardControls();
 syncGlobalKeybinds();
+discoverUi = window.FreqxDiscover?.init({
+  getCatalog: () => window.soundmuncher.getPublicLibrary(),
+  previewSound: previewDiscoverSound,
+  stopPreview: stopDiscoverPreview,
+  importSound: importDiscoverSound,
+  getBoards: () => ({ boards: [...boards], preferred: boards.includes(selectedBoard) ? selectedBoard : defaultBoardName }),
+  isAdded: (id, board) => importedLibraryItems.some(item => {
+    const metadata = getSoundMetadata(item); return metadata.catalogId === id && metadata.board === board;
+  })
+});
 
 async function initializeApp() {
   await loadBackgroundSettings();
@@ -3676,3 +3905,8 @@ window.soundmuncher?.onExternalImportCompleted?.((payload) => {
 if (navigator.mediaDevices?.addEventListener) {
   navigator.mediaDevices.addEventListener("devicechange", refreshOutputDevices);
 }
+window.addEventListener("pagehide", () => {
+  stopMicCapture();
+  stopAllSounds();
+  clearImportedAudioBufferCache();
+});

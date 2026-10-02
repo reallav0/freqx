@@ -1,0 +1,41 @@
+rules:
+  - id: electron-node-in-renderer
+    languages: [javascript]
+    severity: ERROR
+    message: Renderer Node integration bypasses the restricted IPC boundary.
+    pattern: 'nodeIntegration: true'
+    paths:
+      exclude: [/tests/**]
+  - id: electron-disabled-isolation
+    languages: [javascript]
+    severity: ERROR
+    message: Electron renderer isolation must remain enabled.
+    pattern-either:
+      - pattern: 'contextIsolation: false'
+      - pattern: 'webSecurity: false'
+    paths:
+      exclude: [/tests/**]
+  - id: disabled-tls-validation
+    languages: [javascript]
+    severity: ERROR
+    message: TLS verification must not be disabled.
+    pattern: 'rejectUnauthorized: false'
+  - id: renderer-credential-persistence
+    languages: [javascript]
+    severity: ERROR
+    message: Keep persistent authentication credentials in main-process OS protection.
+    patterns:
+      - pattern-either:
+          - pattern: localStorage.setItem($KEY, $VALUE)
+          - pattern: window.localStorage.setItem($KEY, $VALUE)
+          - pattern: sessionStorage.setItem($KEY, $VALUE)
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(refresh.?token|access.?token|password).*
+  - id: child-process-shell
+    languages: [javascript]
+    severity: ERROR
+    message: Use executable paths and argument arrays instead of a shell.
+    pattern: 'shell: true'
+    paths:
+      include: [/runtime/**]

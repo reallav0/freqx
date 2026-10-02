@@ -1,0 +1,24 @@
+{
+  "upstream": {
+    "url": "https://github.com/kdrkdrkdr/DeepFilterNet3.c.wasm",
+    "commit": "1695a9b3282e20515ab08eb97c83520f20d23138"
+  },
+  "files": {
+    "dfn3.wasm": {
+      "sha256": "e80e9597b2665e34efa5674ffb452a26b658f1ade1f5cf6ec14bfad684c18bc6",
+      "bytes": 110553
+    },
+    "dfn3_weights.bin": {
+      "sha256": "1f97872409522b2c04632620ea4fd63b0465d01a84f65c2fbfe83b48a3b5a7c7",
+      "bytes": 8538564
+    }
+  },
+  "build": {
+    "compiler": "WASI SDK 25 / clang 19.1.5",
+    "target": "wasm32-wasi",
+    "simd": true,
+    "memoryBytes": 67108864,
+    "stackBytes": 1048576,
+    "sourceModified": false
+  }
+}

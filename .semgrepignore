@@ -1,0 +1,6 @@
+node_modules/
+.local/
+.audit-tools/
+dist/
+output/
+audio/vendor/

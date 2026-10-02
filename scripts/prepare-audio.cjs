@@ -1,34 +1,40 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const root = path.resolve(__dirname, "..");
-const packageDir = path.join(root, "node_modules", "@shiguredo", "rnnoise-wasm");
-const dependency = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
-if (dependency.version !== "2025.1.5") {
-  throw new Error("The RNNoise adapter must be reviewed before changing the pinned WASM build.");
+const directory = path.join(root, "audio", "vendor", "deepfilter");
+const manifest = JSON.parse(fs.readFileSync(path.join(directory, "manifest.json"), "utf8"));
+if (manifest.upstream.commit !== "1695a9b3282e20515ab08eb97c83520f20d23138") {
+  throw new Error("Review the DeepFilterNet worklet adapter before updating its pinned engine.");
 }
-
-// The dependency embeds WASM in a window-only JS loader. Extract the unchanged
-// binary at build time so our AudioWorklet can instantiate it without that loader.
-const source = fs.readFileSync(path.join(packageDir, "dist", "rnnoise.js"), "utf8");
-const encoded = source.match(/return FA\("([A-Za-z0-9+/=]+)"\);/);
-if (!encoded) throw new Error("Could not locate the pinned RNNoise WASM binary.");
-const binary = Buffer.from(encoded[1], "base64");
-const module_ = new WebAssembly.Module(binary);
-const imports = WebAssembly.Module.imports(module_).map(({ module, name, kind }) => `${module}.${name}:${kind}`).sort();
-const expectedImports = [
-  "env.__assert_fail:function", "env.emscripten_resize_heap:function", "wasi_snapshot_preview1.fd_write:function"
-];
+for (const name of ["dfn3.wasm", "dfn3_weights.bin"]) {
+  const binary = fs.readFileSync(path.join(directory, name));
+  const expected = manifest.files[name];
+  const hash = crypto.createHash("sha256").update(binary).digest("hex");
+  if (!expected || binary.length !== expected.bytes || hash !== expected.sha256) {
+    throw new Error("Packaged DeepFilterNet asset failed integrity validation: " + name);
+  }
+}
+const module_ = new WebAssembly.Module(fs.readFileSync(path.join(directory, "dfn3.wasm")));
+const imports = WebAssembly.Module.imports(module_).map(({ module, name, kind }) => module + "." + name + ":" + kind).sort();
+const expectedImports = ["fd_close", "fd_seek", "fd_write"].map(name => "wasi_snapshot_preview1." + name + ":function");
 if (JSON.stringify(imports) !== JSON.stringify(expectedImports)) {
-  throw new Error("RNNoise WASM imports changed; update the worklet adapter first.");
+  throw new Error("DeepFilterNet WASM imports changed; review the worklet adapter.");
 }
 const exported = new Set(WebAssembly.Module.exports(module_).map(({ name }) => name));
-for (const name of ["memory", "emscripten_stack_init", "__wasm_call_ctors", "rnnoise_get_frame_size", "rnnoise_create", "rnnoise_process_frame", "rnnoise_destroy", "malloc", "free"]) {
-  if (!exported.has(name)) throw new Error(`RNNoise WASM is missing ${name}.`);
+for (const name of ["memory", "malloc", "free", "dfn3_wasm_create", "dfn3_wasm_destroy", "dfn3_wasm_process", "dfn3_wasm_get_input_ptr", "dfn3_wasm_get_output_ptr", "dfn3_wasm_get_input_size", "dfn3_wasm_get_output_size", "dfn3_wasm_set_atten_lim", "dfn3_wasm_set_post_filter_beta", "dfn3_wasm_set_input_agc", "dfn3_wasm_set_output_agc", "dfn3_wasm_set_hpf"]) {
+  if (!exported.has(name)) throw new Error("DeepFilterNet WASM is missing " + name);
 }
-
-const destination = path.join(root, "audio", "vendor");
-fs.mkdirSync(destination, { recursive: true });
-const target = path.join(destination, "rnnoise.wasm");
-if (!fs.existsSync(target) || !fs.readFileSync(target).equals(binary)) fs.writeFileSync(target, binary);
-console.log(`Prepared local RNNoise model (${binary.length} bytes).`);
+console.log("Verified packaged DeepFilterNet3 SIMD engine and local model. No download or runtime compiler required.");
+const aecDirectory = path.join(root, 'audio/vendor/aec3');
+const aecManifest = JSON.parse(fs.readFileSync(path.join(aecDirectory, 'manifest.json'), 'utf8'));
+if (aecManifest.upstream.commit !== 'e1d663e86f2ab03269b9ae873af38d0103c4df3d') throw new Error('Review the AEC3 ABI before updating the pinned engine.');
+const aecBinary = fs.readFileSync(path.join(aecDirectory, 'aec3.wasm'));
+if (aecBinary.length !== aecManifest.files['aec3.wasm'].bytes || crypto.createHash('sha256').update(aecBinary).digest('hex') !== aecManifest.files['aec3.wasm'].sha256) throw new Error('AEC3 integrity validation failed.');
+const aecModule = new WebAssembly.Module(aecBinary);
+const aecImports = WebAssembly.Module.imports(aecModule).map(i => i.module + '.' + i.name + ':' + i.kind).sort();
+if (JSON.stringify(aecImports) !== JSON.stringify(['a.a:memory', 'a.b:function', 'a.c:function', 'a.d:function', 'a.e:function', 'a.f:function', 'a.g:function'])) throw new Error('AEC3 imports changed.');
+for (const name of 'hijklmnopqrstuvwxyzAB') if (!WebAssembly.Module.exports(aecModule).some(e => e.name === name && e.kind === 'function')) throw new Error('Missing AEC3 export: ' + name);
+console.log('Verified pinned WebRTC AEC3 engine.');
+require('./prepare-loopback.cjs');

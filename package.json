@@ -1,32 +1,46 @@
 {
   "name": "freqx",
-  "version": "1.6.0",
+  "version": "1.8.0",
   "description": "Freqx desktop soundboard app",
   "main": "main.js",
-  "author": "Nguyen",
+  "author": "Av0",
   "repository": {
     "type": "git",
     "url": "https://github.com/reallav0/freqx.git"
   },
   "license": "ISC",
   "scripts": {
+    "lint": "eslint . --max-warnings 0",
+    "test:unit": "node --test tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs",
+    "test:driver": "node tests/driver-security.cjs",
+    "test:auth-desktop": "node tests/auth-electron.cjs",
     "prepare:audio": "node scripts/prepare-audio.cjs",
     "prestart": "npm run prepare:audio",
-    "start": "electron .",
+    "start": "node scripts/start-freqx.cjs",
     "predev": "npm run prepare:audio",
-    "dev": "electron .",
+    "dev": "node scripts/start-freqx.cjs",
     "prepack": "npm run prepare:audio",
-    "pack": "electron-builder --dir",
+    "pack": "electron-builder --dir --publish never",
     "predist": "npm run prepare:audio",
-    "dist": "electron-builder --win",
+    "dist": "electron-builder --win --publish never",
     "postinstall": "node scripts/prepare-audio.cjs && electron-builder install-app-deps",
     "pretest:mic-isolation": "npm run prepare:audio",
     "test:mic-isolation": "node tests/mic-isolation.cjs",
+    "test:voice-security": "node tests/voice-isolation-security.cjs",
+    "test:echo": "node --test tests/aec-filter.cjs tests/loopback-reference.cjs",
+    "test:reference-desktop": "node tests/playback-reference-desktop.cjs",
+    "test:public-library": "node --test tests/public-library.cjs && node tests/discover-library.cjs",
     "test:recovery": "node tests/main-crash-recovery.cjs && node tests/crash-watchdog.cjs && node tests/recovery-integration.cjs"
   },
   "build": {
     "appId": "app.freqx.desktop",
     "productName": "freqx",
+    "publish": {
+      "provider": "github",
+      "owner": "reallav0",
+      "repo": "freqx",
+      "releaseType": "release"
+    },
     "icon": "logo.ico",
     "protocols": [
       {
@@ -37,7 +51,10 @@
       }
     ],
     "afterPack": "scripts/afterPack.js",
-    "asarUnpack": ["runtime/**/*"],
+    "asarUnpack": [
+      "runtime/**/*",
+      "audio/native/*.exe"
+    ],
     "win": {
       "icon": "logo.ico",
       "target": [
@@ -47,6 +64,7 @@
       "signAndEditExecutable": false
     },
     "nsis": {
+      "artifactName": "FreqX-Setup-${version}.${ext}",
       "oneClick": false,
       "perMachine": true,
       "allowElevation": true,
@@ -55,6 +73,9 @@
       "uninstallerIcon": "logo.ico",
       "deleteAppDataOnUninstall": true,
       "include": "installer/vbcable.nsh"
+    },
+    "portable": {
+      "artifactName": "FreqX-Portable-${version}.${ext}"
     },
     "extraResources": [
       {
@@ -69,26 +90,44 @@
       "main.js",
       "preload.js",
       "renderer.js",
+      "account.js",
+      "discover.js",
+      "discover.css",
       "crash.html",
       "crash.js",
       "index.html",
       "styles.css",
-      "audio/**/*",
+      "audio/*.js",
+      "audio/*.mjs",
+      "audio/native/*.exe",
+      "audio/vendor/aec3/*",
+      "audio/vendor/deepfilter/*.wasm",
+      "audio/vendor/deepfilter/*.bin",
+      "audio/vendor/deepfilter/*.json",
+      "audio/vendor/deepfilter/*.md",
+      "audio/vendor/deepfilter/licenses/**/*",
       "runtime/**/*",
       "assets/*.svg",
+      "assets/library/**/*",
       "logo.png",
       "logo.ico",
       "package.json",
       "node_modules/**/*"
     ]
   },
+  "overrides": {
+    "nan": "2.29.0"
+  },
   "dependencies": {
+    "codex-wake": "^0.2.0",
+    "electron-updater": "6.8.9",
     "naudiodon": "^2.3.6",
     "uiohook-napi": "^1.5.5"
   },
   "devDependencies": {
-    "@shiguredo/rnnoise-wasm": "2025.1.5",
-    "electron": "^36.0.0",
-    "electron-builder": "^26.8.1"
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "eslint": "10.11.0",
+    "rcedit": "5.0.2"
   }
 }

@@ -51,25 +51,22 @@ Var VBCableIncompleteFound
   StrCmp $VBCableSetupPath "" vbcable_done
 
   Call FindVBCableInf
-  StrCmp $VBCableInfPath "" vbcable_run_setup
+  StrCmp $VBCableInfPath "" vbcable_verification_failed
 
   DetailPrint "Installing VB-CABLE silently from $VBCableSetupPath..."
   StrCpy $VBCableLogPath "$INSTDIR\vbcable-install.log"
   File /oname=$PLUGINSDIR\install-vbcable-driver.ps1 "${PROJECT_DIR}\installer\install-vbcable-driver.ps1"
+  File /oname=$PLUGINSDIR\driver-verification.ps1 "${PROJECT_DIR}\installer\driver-verification.ps1"
+  File /oname=$PLUGINSDIR\driver-policy.json "${PROJECT_DIR}\installer\driver-policy.json"
   nsExec::ExecToStack `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\install-vbcable-driver.ps1" -SetupPath "$VBCableSetupPath" -InfPath "$VBCableInfPath" -LogPath "$VBCableLogPath"`
   Pop $VBCableInstallResult
   Pop $VBCableCommandOutput
-  StrCmp $VBCableInstallResult "0" vbcable_reboot_required
+  StrCmp $VBCableInstallResult "0" vbcable_done
   StrCmp $VBCableInstallResult "3010" vbcable_reboot_required
 
   DetailPrint "VB-CABLE silent driver install failed with exit code $VBCableInstallResult."
-  MessageBox MB_ICONEXCLAMATION|MB_YESNO "VB-CABLE silent driver installation failed with exit code $VBCableInstallResult.$\n$\nLog: $VBCableLogPath$\n$\nRun the official VB-CABLE setup window as a fallback?" IDYES vbcable_run_setup IDNO vbcable_done
-
-  vbcable_run_setup:
-  DetailPrint "Running VB-CABLE setup from $VBCableSetupDir..."
-  SetOutPath "$VBCableSetupDir"
-  ExecWait '"$VBCableSetupPath"'
-  SetOutPath "$INSTDIR"
+  vbcable_verification_failed:
+  MessageBox MB_ICONEXCLAMATION|MB_OK "Automatic VB-CABLE installation was blocked. FreqX remains installed.$\n$\nInstall a verified official driver package separately.$\nLog: $VBCableLogPath"
   Goto vbcable_done
 
   vbcable_reboot_required:
