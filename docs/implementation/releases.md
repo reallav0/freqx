@@ -2,6 +2,9 @@
 
 The existing electron-builder configuration is retained. `npm run dist` builds
 NSIS and portable Windows executables without publishing from a workstation.
+Production changes pushed or merged to `main` automatically trigger GitHub Actions
+to build and upload the release; no manual executable uploads are needed. Feature
+branch pushes and local edits do not publish releases.
 The release workflow runs reusable CI before a main-only patch increment,
 updates package.json/package-lock.json together, commits
 `chore(release): vX.Y.Z [skip ci]`, tags the release and atomically pushes both.
@@ -15,8 +18,10 @@ run, the old event stops rather than releasing unchecked newer code; the latest
 main event releases the accumulated changes. Very rapid merges can therefore be
 coalesced into one release, not one installer per displaced pending workflow.
 
-Repository configuration: enable Actions read/write contents permission; require
-CI application/security checks; allow the release automation identity to update
+Repository configuration: enable Actions. The version and build jobs explicitly
+request `contents: write`; the repository default can remain read-only when its
+Actions policy permits these job permissions. Require CI application/security
+checks; allow the release automation identity to update
 main and create v* tags. GitHub rulesets that prohibit the GITHUB_TOKEN actor
 need a narrowly scoped GitHub App added to the bypass list, with its installation
 token substituted for checkout's write token in the version job. Avoid broad PATs.

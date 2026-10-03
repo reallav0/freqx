@@ -357,8 +357,81 @@ body.compact-mode .mixer-actions .mixer-action { min-height: 54px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
-/* Account controls preserve the existing modal and theme styling. */
-.account-form { display: grid; gap: 14px; }
-.account-form[hidden] { display: none; }
-.account-form input { width: 100%; padding: 10px; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 8px; }
-.account-form .form-field[hidden] { display: none; }
+/* Account access: familiar providers, readable fields, and a focused workflow. */
+.account-panel { width: min(464px, 100%); gap: 22px; padding: 30px; border-radius: 24px; }
+.account-panel[data-session="true"] { width: min(590px, 100%); }
+.account-panel[data-mode="signup"] { gap: 18px; padding-block: 26px; }
+.account-panel[data-mode="signup"] .account-form { gap: 14px; }
+.account-panel[data-mode="signup"] .account-local-note { padding-top: 14px; }
+.account-topline { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.account-topline .brand-wordmark::before { width: 73px; height: 19px; }
+.account-topline .brand-dot { width: 6px; height: 6px; margin-bottom: 3px; }
+.account-close { flex-shrink: 0; margin: -7px -7px -7px 0; }
+.account-heading h2 { font-size: 29px; line-height: 1.15; font-weight: 650; letter-spacing: -.035em; }
+.account-heading p { margin-top: 9px; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+.account-form { display: grid; gap: 16px; }
+.account-form .form-field { gap: 8px; color: var(--text); font-size: 12px; font-weight: 500; }
+.account-form input, .account-form select { width: 100%; min-width: 0; height: 46px; padding: 0 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; font-size: 13px; font-weight: 400; transition: border-color var(--transition); }
+.account-form input::placeholder { color: var(--text-dim); }
+.account-form input:hover, .account-form select:hover { border-color: var(--border-strong); }
+.account-form input:focus-visible, .account-form select:focus-visible { outline-offset: 2px; border-color: var(--accent); }
+.account-providers { display: grid; gap: 10px; }
+.account-provider { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 46px; padding: 10px 18px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--panel); color: var(--text); font-size: 13px; font-weight: 600; }
+.account-provider img { flex-shrink: 0; object-fit: contain; }
+.account-provider:hover:not(:disabled) { background: var(--surface); border-color: var(--text-muted); }
+.account-provider:active:not(:disabled) { transform: translateY(1px); }
+.account-provider-note { margin-top: -8px; color: var(--text-dim); text-align: center; font-size: 10px; }
+.account-divider { display: flex; align-items: center; gap: 12px; margin: 1px 0; color: var(--text-dim); font-size: 11px; }
+.account-divider::before, .account-divider::after { flex: 1; height: 1px; background: var(--border); content: ""; }
+.account-label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.account-text-action { display: inline; padding: 2px 0; border: 0; background: transparent; color: var(--text); font-size: 12px; font-weight: 600; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+.account-text-action:hover:not(:disabled) { color: var(--accent); text-decoration-color: currentColor; }
+#accountForgot { color: var(--text-muted); font-size: 11px; font-weight: 400; }
+.account-password-field { position: relative; }
+.account-password-field input { padding-right: 65px; }
+.account-password-toggle { position: absolute; right: 5px; top: 5px; min-height: 36px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.account-password-toggle:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+.account-field-hint { color: var(--text-muted); font-size: 11px; font-weight: 400; line-height: 1.5; }
+.account-submit { min-height: 46px; border-radius: 10px; font-size: 13px; font-weight: 600; }
+.account-switch-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 6px; color: var(--text-muted); font-size: 12px; }
+.account-phone-action { min-height: 34px; margin-top: -5px; font-size: 11px; }
+.account-back { justify-self: center; }
+.account-status { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.account-status[data-tone="error"] { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--panel)); }
+.account-status[data-tone="pending"]::before { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border: 1.5px solid var(--border-strong); border-top-color: var(--text); border-radius: 50%; content: ""; animation: account-spin .8s linear infinite; }
+@keyframes account-spin { to { transform: rotate(360deg); } }
+.account-local-note { display: flex; align-items: baseline; justify-content: center; gap: 7px; border-top: 1px solid var(--border); padding-top: 18px; color: var(--text-dim); text-align: center; font-size: 10px; line-height: 1.5; }
+.account-local-note span { color: var(--text-muted); font-size: 7px; }
+#accountSession { display: grid; gap: 18px; }
+.account-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.account-avatar { display: grid; place-items: center; flex: 0 0 42px; height: 42px; border-radius: 13px; color: var(--text); background: var(--surface); font-size: 17px; font-weight: 600; }
+.account-identity > div { flex: 1; min-width: 0; }
+.account-identity strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
+.account-identity p { margin-top: 2px; color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+.account-session-badge { flex-shrink: 0; padding: 5px 9px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-muted); font-size: 10px; }
+.account-section { padding: 18px; border: 1px solid var(--border); border-radius: 14px; }
+.account-section h3 { font-size: 14px; font-weight: 600; }
+.account-section-copy { margin-top: 5px; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.account-section-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.account-section-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-verification { background: color-mix(in srgb, var(--accent) 4%, var(--panel)); }
+.account-security summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.account-security summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.account-security[open] summary { margin-bottom: 18px; }
+.account-signout { justify-content: space-between; padding-top: 4px; }
+.account-cloud-empty { padding-top: 17px; color: var(--text-dim); font-size: 11px; line-height: 1.5; }
+#cloudSoundList { display: grid; gap: 10px; list-style: none; }
+#cloudSoundList:not(:empty) { margin-top: 18px; }
+#cloudSoundList li { display: grid; gap: 10px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
+.account-cloud-label { min-width: 0; }
+.account-cloud-label strong { display: block; overflow-wrap: anywhere; font-size: 12px; font-weight: 500; }
+.account-cloud-label small { display: block; margin-top: 3px; color: var(--text-muted); font-size: 10px; }
+.account-cloud-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.account-cloud-actions .mixer-action { min-height: 30px; padding: 0 10px; font-size: 10px; }
+@media (max-width: 520px) {
+  .account-panel { padding: 24px 20px; gap: 20px; border-radius: 20px; }
+  .account-heading h2 { font-size: 26px; }
+  .account-section { padding: 14px; }
+  .account-signout { justify-content: flex-start; }
+}
+@media (prefers-reduced-motion: reduce) { .account-status[data-tone="pending"]::before { animation: none; } }

@@ -24,6 +24,48 @@ function section(source, from, to) {
   assert.ok(start >= 0 && end > start, `Missing production section: ${from}`);
   return source.slice(start, end);
 }
+
+test('favorites sync reports success and failure back to the account dialog', async () => {
+  for (const failure of [false, true]) {
+    const handlers = new Map();
+    const reports = [];
+    const libraryMetadata = {};
+    let saved = false;
+    const context = vm.createContext({
+      window: {
+        addEventListener: (name, handler) => handlers.set(name, handler),
+        soundmuncher: { syncFavorites: async ids => {
+          assert.deepEqual(Array.from(ids), ['cloud-tone']);
+          if (failure) throw new Error('Network unavailable');
+          return { user: { id: 'user-1' }, ids: ['cloud-tone'] };
+        } },
+      },
+      importedLibraryItems: [
+        { path: 'local.wav', metadata: { favorite: true } },
+        { path: 'cloud.wav', metadata: { favorite: true, catalogId: 'cloud-tone' } },
+      ],
+      getSoundMetadata: item => item.metadata,
+      libraryMetadata,
+      saveLibraryMetadata: () => { saved = true; },
+      renderImportedLibrary: () => {},
+      setLibraryState: () => {},
+    });
+    vm.runInContext(section(rendererSource, 'let cloudAccountUserId = null;', 'function openSettings('), context);
+    handlers.get('freqx-account-state')({ detail: { userId: 'user-1' } });
+    await handlers.get('freqx-favorites-sync')({ detail: { complete: result => reports.push(result) } });
+    assert.equal(reports.length, 1, 'The dialog receives one completion');
+    if (failure) {
+      assert.match(reports[0].error, /local favorites are preserved/);
+      assert.equal(saved, false);
+    } else {
+      assert.equal(reports[0].user.id, 'user-1');
+      assert.match(reports[0].message, /Favorites synced/);
+      assert.equal(saved, true);
+      assert.equal(libraryMetadata['cloud.wav'].favorite, true);
+    }
+  }
+});
+
 async function temporaryDirectory(t) {
   const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'freqx-desktop-races-'));
   t.after(async () => {

@@ -1,4 +1,6 @@
 Set-StrictMode -Version Latest
+# Use this engine's built-in hashing functions even when PSModulePath was inherited from another PowerShell version.
+Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1') -ErrorAction Stop
 
 function Get-BoundedDriverSignature {
   param([string]$FilePath, [int]$TimeoutSeconds = 15)
