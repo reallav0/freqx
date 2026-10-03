@@ -307,63 +307,74 @@
     </div>
 
     <div id="accountOverlay" class="modal-overlay" hidden>
-      <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
-        <div class="modal-header"><h2 id="accountTitle">Your FreqX account</h2><button id="closeAccount" class="mixer-action quiet-action" type="button">Close</button></div>
-        <p id="accountStatus" role="status">You can use your local sounds without signing in.</p>
+      <section class="modal-panel account-panel" role="dialog" aria-modal="true" aria-labelledby="accountTitle" aria-describedby="accountSubtitle" tabindex="-1">
+        <div class="account-topline"><span class="brand-wordmark" aria-label="FreqX"><span class="brand-dot" aria-hidden="true"></span></span><button id="closeAccount" class="mixer-action quiet-action icon-action account-close" type="button" aria-label="Close account"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button></div>
+        <div class="account-heading"><h2 id="accountTitle">Welcome back.</h2><p id="accountSubtitle">Log in to sync your favorites and keep your sounds close.</p></div>
+        <p id="accountStatus" class="account-status" role="status" aria-live="polite" aria-atomic="true" hidden></p>
         <form id="accountForm" class="account-form">
-          <label class="form-field">Email<input id="accountEmail" type="email" autocomplete="email" maxlength="254" required /></label>
-          <label class="form-field">Password<input id="accountPassword" type="password" autocomplete="current-password" maxlength="128" required /></label>
-          <label id="accountUsernameField" class="form-field" hidden>Username<input id="accountUsername" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_]{3,32}" /></label>
-          <button id="accountSubmit" class="mixer-action primary-action" type="submit">Log in</button>
-          <button id="accountSwitch" class="mixer-action quiet-action" type="button">Create an account</button>
-          <button id="accountForgot" class="mixer-action quiet-action" type="button">Forgot password</button>
-          <button id="accountDiscord" class="mixer-action quiet-action" type="button">Continue with Discord</button>
-          <button id="accountGoogle" class="mixer-action quiet-action" type="button">Continue with Google</button>
-          <button id="accountPhone" class="mixer-action quiet-action" type="button">Continue with phone</button>
+          <div class="account-providers">
+            <button id="accountGoogle" class="account-provider" type="button"><img src="assets/oauth-google.svg" width="20" height="20" alt="" /><span>Continue with Google</span></button>
+            <button id="accountDiscord" class="account-provider" type="button"><img src="assets/oauth-discord.svg" width="22" height="20" alt="" /><span>Continue with Discord</span></button>
+          </div>
+          <p class="account-provider-note">A secure sign-in window opens in your browser.</p>
+          <div class="account-divider"><span>or continue with email</span></div>
+          <label id="accountUsernameField" class="form-field" hidden>Username<input id="accountUsername" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_]{3,32}" aria-describedby="accountUsernameHint" /><span id="accountUsernameHint" class="account-field-hint">3–32 letters, numbers or underscores.</span></label>
+          <label class="form-field">Email address<input id="accountEmail" type="email" autocomplete="email" placeholder="you@example.com" maxlength="254" required /></label>
+          <div class="form-field"><div class="account-label-row"><label for="accountPassword">Password</label><button id="accountForgot" class="account-text-action" type="button">Forgot password?</button></div><div class="account-password-field"><input id="accountPassword" type="password" autocomplete="current-password" maxlength="128" required /><button id="accountPasswordToggle" class="account-password-toggle" type="button" aria-label="Show password" aria-controls="accountPassword" aria-pressed="false">Show</button></div><p id="accountPasswordHint" class="account-field-hint" hidden>Use at least 12 characters for your password.</p></div>
+          <button id="accountSubmit" class="mixer-action primary-action account-submit" type="submit">Log in</button>
+          <p class="account-switch-row"><span id="accountSwitchPrompt">New to FreqX?</span> <button id="accountSwitch" class="account-text-action" type="button">Create an account</button></p>
+          <button id="accountPhone" class="mixer-action quiet-action account-phone-action" type="button"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3" /><path d="M10 18h4" /></svg>Continue with phone</button>
         </form>
         <form id="accountPhoneForm" class="account-form" hidden>
-          <label class="form-field">Phone with country code<input id="accountPhoneNumber" type="tel" autocomplete="tel" placeholder="+1 415 555 2671" maxlength="32" required /></label>
-          <button id="accountPhoneSend" class="mixer-action quiet-action" type="button">Send code</button>
-          <label class="form-field">Verification code<input id="accountPhoneCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
-          <button class="mixer-action primary-action" type="submit">Log in</button>
-          <button id="accountPhoneCancel" class="mixer-action quiet-action" type="button">Back to login</button>
+          <label class="form-field">Phone number<input id="accountPhoneNumber" type="tel" autocomplete="tel" placeholder="+1 415 555 2671" maxlength="32" aria-describedby="accountPhoneHint" required /><span id="accountPhoneHint" class="account-field-hint">Include your country code, such as +1 or +44.</span></label>
+          <button id="accountPhoneSend" class="mixer-action" type="button">Send verification code</button>
+          <label class="form-field">6-digit verification code<input id="accountPhoneCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required /></label>
+          <button class="mixer-action primary-action account-submit" type="submit">Verify and log in</button>
+          <button id="accountPhoneCancel" class="account-text-action account-back" type="button">Back to login</button>
         </form>
         <form id="accountResetForm" class="account-form" hidden>
-          <label class="form-field">Email<input id="accountResetEmail" type="email" autocomplete="email" maxlength="254" required /></label>
-          <label class="form-field">Reset code<input id="accountResetCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
-          <label class="form-field">New password<input id="accountResetPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label>
-          <button class="mixer-action primary-action" type="submit">Reset password</button>
-          <button id="accountResetCancel" class="mixer-action quiet-action" type="button">Back to login</button>
+          <label class="form-field">Email address<input id="accountResetEmail" type="email" autocomplete="email" maxlength="254" required /></label>
+          <button id="accountResetSend" class="mixer-action" type="button">Send reset code</button>
+          <div id="accountResetFields" class="account-form" hidden>
+            <label class="form-field">6-digit reset code<input id="accountResetCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" /></label>
+            <label class="form-field">New password<input id="accountResetPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" aria-describedby="accountResetHint" /><span id="accountResetHint" class="account-field-hint">Use at least 12 characters for your password.</span></label>
+            <button class="mixer-action primary-action account-submit" type="submit">Reset password</button>
+          </div>
+          <button id="accountResetCancel" class="account-text-action account-back" type="button">Back to login</button>
         </form>
         <div id="accountSession" hidden>
-          <form id="accountVerifyForm" class="account-form" hidden>
-            <p>Verify your email using the code we sent you.</p>
-            <label class="form-field">Verification code<input id="accountVerifyCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
-            <button class="mixer-action primary-action" type="submit">Verify email</button>
-            <button id="accountResend" class="mixer-action quiet-action" type="button">Resend code</button>
+          <div class="account-identity"><span id="accountAvatar" class="account-avatar" aria-hidden="true">F</span><div><strong id="accountIdentityName"></strong><p id="accountIdentityDetail"></p></div><span class="account-session-badge">Signed in</span></div>
+          <form id="accountVerifyForm" class="account-form account-section account-verification" hidden>
+            <div><h3>Verify your email</h3><p class="account-section-copy">Enter the code from your inbox to finish setting up your account.</p></div>
+            <label class="form-field">6-digit verification code<input id="accountVerifyCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
+            <div class="account-section-actions"><button class="mixer-action primary-action" type="submit">Verify email</button><button id="accountResend" class="mixer-action quiet-action" type="button">Resend code</button></div>
           </form>
-          <button id="accountLogout" class="mixer-action danger-action" type="button">Logout</button>
-          <button id="accountLogoutAll" class="mixer-action quiet-action" type="button">Log out of all devices</button>
-          <form id="accountProfileForm" class="account-form">
-            <label class="form-field">Display name<input id="accountDisplayName" maxlength="80" required /></label>
-            <button class="mixer-action quiet-action" type="submit">Save profile</button>
+          <form id="accountProfileForm" class="account-form account-section">
+            <div><h3>Your profile</h3><p class="account-section-copy">Make your account feel like you.</p></div>
+            <label class="form-field">Display name<input id="accountDisplayName" autocomplete="nickname" maxlength="80" required /></label>
+            <div class="account-section-actions"><button class="mixer-action" type="submit">Save profile</button><button id="accountSyncFavorites" class="mixer-action quiet-action" type="button">Sync favorites</button></div>
           </form>
-          <form id="accountPasswordForm" class="account-form">
-            <label class="form-field">Current password<input id="accountCurrentPassword" type="password" autocomplete="current-password" maxlength="128" required /></label>
-            <label class="form-field">New password<input id="accountNewPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /></label>
-            <button class="mixer-action quiet-action" type="submit">Change password and log out all devices</button>
-          </form>
-          <button id="accountSyncFavorites" class="mixer-action quiet-action" type="button">Sync library favorites with this account</button>
+          <section class="account-section account-cloud-section" aria-labelledby="accountCloudTitle">
           <form id="cloudUploadForm" class="account-form">
-            <h3>My cloud sounds</h3>
+            <div class="account-section-header"><div><h3 id="accountCloudTitle">My cloud sounds</h3><p class="account-section-copy">Upload a sound to your account.</p></div><button id="cloudRefresh" class="mixer-action quiet-action compact-action" type="button">Refresh</button></div>
             <label class="form-field">Title<input id="cloudTitle" maxlength="120" required /></label>
             <label class="form-field">Visibility<select id="cloudVisibility"><option value="private">Private</option><option value="public">Public</option></select></label>
             <button class="mixer-action primary-action" type="submit">Choose audio and upload</button>
-            <button id="cloudRefresh" class="mixer-action quiet-action" type="button">Refresh my sounds</button>
-            <p>Up to 24 MiB and 60 seconds. New uploads are checked before becoming available.</p>
+            <p class="account-field-hint">Up to 24 MiB · 60 seconds. Uploads are checked before they are ready to play.</p>
           </form>
+          <p id="cloudSoundEmpty" class="account-cloud-empty">Your cloud library will appear here. Refresh to load your sounds.</p>
           <ul id="cloudSoundList"></ul>
+          </section>
+          <details class="account-section account-security"><summary>Password &amp; security</summary>
+            <form id="accountPasswordForm" class="account-form">
+              <label class="form-field">Current password<input id="accountCurrentPassword" type="password" autocomplete="current-password" maxlength="128" required /></label>
+              <label class="form-field">New password<input id="accountNewPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required /><span class="account-field-hint">At least 12 characters. Changing your password signs you out on all devices.</span></label>
+              <button class="mixer-action" type="submit">Update password</button>
+            </form>
+          </details>
+          <div class="account-section-actions account-signout"><button id="accountLogout" class="mixer-action danger-action" type="button">Log out</button><button id="accountLogoutAll" class="mixer-action quiet-action" type="button">Log out of all devices</button></div>
         </div>
+        <p id="accountLocalNote" class="account-local-note"><span aria-hidden="true">●</span> Your local soundboard works without an account.</p>
       </section>
     </div>
     <div id="settingsOverlay" class="modal-overlay" hidden>

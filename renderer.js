@@ -1616,9 +1616,10 @@ function toggleSoundFlag(item, flagName) {
 
 let cloudAccountUserId = null;
 window.addEventListener('freqx-account-state', event => { cloudAccountUserId = event.detail.userId; });
-window.addEventListener('freqx-favorites-sync', async () => {
+window.addEventListener('freqx-favorites-sync', async event => {
   const userId = cloudAccountUserId;
-  if (!userId) return;
+  const complete = result => event.detail?.complete?.(result);
+  if (!userId) { complete({ error: 'Please log in to sync your favorites.' }); return; }
   try {
     const ids = [...new Set(importedLibraryItems.map(getSoundMetadata).filter(metadata => metadata.favorite && metadata.catalogId).map(metadata => metadata.catalogId))];
     let result;
@@ -1632,7 +1633,11 @@ window.addEventListener('freqx-favorites-sync', async () => {
       if (metadata.catalogId && favorites.has(metadata.catalogId)) libraryMetadata[item.path] = { ...metadata, favorite: true };
     }
     saveLibraryMetadata(); renderImportedLibrary(); setLibraryState('Favorites synced. Local-only favorites are preserved.');
-  } catch { setLibraryState('Cloud sync is unavailable. Your local favorites are preserved.'); }
+    complete({ user: result.user, message: 'Favorites synced. Local-only favorites are preserved.' });
+  } catch {
+    const error = 'Cloud sync is unavailable. Your local favorites are preserved.';
+    setLibraryState(error); complete({ error });
+  }
 });
 
 function openSettings() {
