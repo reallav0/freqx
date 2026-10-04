@@ -1,0 +1,302 @@
+{
+  "version": 1,
+  "app": {
+    "websiteUrl": "https://freqx.app",
+    "window": {
+      "width": 1200,
+      "height": 760,
+      "minWidth": 900,
+      "minHeight": 620,
+      "backgroundColor": "#111111"
+    },
+    "preferences": {
+      "launchOnStartup": true,
+      "startHidden": false,
+      "keepRunningInTray": true
+    },
+    "hardwareAcceleration": false,
+    "nativeKeyHookEnabled": false,
+    "disabledFeatures": [
+      "CalculateNativeWinOcclusion"
+    ],
+    "externalProcessBufferBytes": 1048576,
+    "importReservationAttempts": 9999,
+    "externalProcessTimeoutMs": 1800000
+  },
+  "ui": {
+    "preferences": {
+      "compactMode": false,
+      "uiTheme": "midnight",
+      "padTheme": "mono"
+    },
+    "themes": [
+      "midnight",
+      "studio",
+      "ember",
+      "daylight"
+    ],
+    "padPalettes": {
+      "spectrum": [
+        "#4da8ff",
+        "#7dd3c7",
+        "#80d489",
+        "#e2b86f",
+        "#ef6b63",
+        "#bd8cff"
+      ],
+      "neon": [
+        "#00f5d4",
+        "#00bbf9",
+        "#fee440",
+        "#f15bb5",
+        "#9b5de5",
+        "#70e000"
+      ],
+      "candy": [
+        "#ff8fab",
+        "#ffc2d1",
+        "#bde0fe",
+        "#a2d2ff",
+        "#cdb4db",
+        "#fdffb6"
+      ],
+      "mono": [
+        "#eeeeeb",
+        "#a6a6a3",
+        "#c6c6c2",
+        "#90908d",
+        "#d8d8d4",
+        "#b6b6b2"
+      ]
+    },
+    "defaultBoardName": "Main",
+    "soundDefaults": {
+      "color": "#4da8ff",
+      "volume": 1,
+      "trimStart": 0,
+      "trimEnd": 0,
+      "fadeIn": 0,
+      "fadeOut": 0,
+      "playbackMode": "overlap",
+      "favorite": false,
+      "pinned": false
+    },
+    "discoverPageSize": 60,
+    "meterFramesPerSecond": 30,
+    "frequencyMeterFrameStride": 6,
+    "frequencyMeterMinHz": 40,
+    "frequencyMeterMaxHz": 12000,
+    "referenceQuietDb": -65,
+    "rendererCrashTextLength": 16000
+  },
+  "audio": {
+    "defaults": {
+      "voiceIsolation": true,
+      "voiceIsolationMode": "standard",
+      "micEnabled": true,
+      "mixEnabled": true,
+      "playbackEnabled": true,
+      "micGain": 0.75,
+      "soundGain": 0.5,
+      "masterGain": 1
+    },
+    "voiceModes": {
+      "standard": {
+        "attenuationDb": 20,
+        "postFilterBeta": 0
+      },
+      "strong": {
+        "attenuationDb": 20,
+        "postFilterBeta": 0
+      }
+    },
+    "limiter": {
+      "threshold": -3,
+      "knee": 0,
+      "ratio": 20,
+      "attack": 0.002,
+      "release": 0.08
+    },
+    "micCompressor": {
+      "threshold": 0,
+      "knee": 0,
+      "ratio": 1,
+      "attack": 0.003,
+      "release": 0.1
+    },
+    "mixCompressor": {
+      "threshold": -3,
+      "knee": 6,
+      "ratio": 1.3,
+      "attack": 0.002,
+      "release": 0.06
+    },
+    "equalizer": {
+      "highPass": {
+        "frequency": 20,
+        "Q": 0.7
+      },
+      "notch": {
+        "frequency": 20,
+        "Q": 8
+      },
+      "mudCut": {
+        "frequency": 240,
+        "Q": 1.1,
+        "gain": 0
+      },
+      "presence": {
+        "frequency": 3200,
+        "Q": 1,
+        "gain": 0
+      },
+      "air": {
+        "frequency": 8500,
+        "gain": 0
+      },
+      "lowPass": {
+        "frequency": 24000,
+        "Q": 0.7
+      }
+    },
+    "analysers": {
+      "noise": {
+        "fftSize": 2048,
+        "smoothing": 0.8
+      },
+      "gate": {
+        "fftSize": 2048,
+        "smoothing": 0.55
+      },
+      "level": {
+        "fftSize": 2048,
+        "smoothing": 0.82
+      },
+      "frequency": {
+        "fftSize": 4096,
+        "smoothing": 0.72
+      }
+    },
+    "soundToMixBoost": 1.4,
+    "micGateClosedGain": 0,
+    "previewGain": 0.55,
+    "gainRampSeconds": 0.01,
+    "routeRampSeconds": 0.02,
+    "bufferCacheBytes": 268435456,
+    "testTone": {
+      "frequency": 880,
+      "durationSeconds": 0.32,
+      "gain": 0.28,
+      "rampSeconds": 0.02
+    },
+    "nativeTestTone": {
+      "frequency": 440,
+      "durationSeconds": 1.1,
+      "gain": 0.22,
+      "stopPaddingMs": 120
+    },
+    "timing": {
+      "captureTimeoutMs": 4000,
+      "teardownTimeoutMs": 250,
+      "resumeTimeoutMs": 2500,
+      "startupTimeoutMs": 12000,
+      "healthIntervalMs": 5000
+    },
+    "aec": {
+      "captureDelaySamples": 1440,
+      "queueSamples": 2048,
+      "statsIntervalBlocks": 100
+    },
+    "reference": {
+      "capacitySeconds": 0.15,
+      "targetSeconds": 0.015,
+      "staleSeconds": 0.1,
+      "maxClockCorrection": 0.002,
+      "clockCorrectionSeconds": 10
+    },
+    "loopback": {
+      "chunkBytes": 131072,
+      "backlogBytes": 163840,
+      "enumerateTimeoutMs": 4000,
+      "enumerateBytes": 131072,
+      "maxDevices": 256,
+      "killTimeoutMs": 500,
+      "startupTimeoutMs": 3500,
+      "stderrBytes": 16384,
+      "maxInFlightPackets": 8,
+      "heartbeatTimeoutMs": 4000,
+      "heartbeatIntervalMs": 1000
+    }
+  },
+  "network": {
+    "apiBaseUrl": "https://api.freqx.app",
+    "allowedAudioHosts": [
+      "pub-3e766a9775054398bfddde72d1f10686.r2.dev",
+      "audio.freqx.app",
+      "freqx.app",
+      "www.freqx.app"
+    ],
+    "maxUrlLength": 8192,
+    "downloadTimeoutMs": 8000,
+    "maxRedirects": 5,
+    "protocolAudioBytes": 104857600,
+    "protocolAudioTimeoutMs": 30000,
+    "platformAudioTimeoutMs": 30000
+  },
+  "auth": {
+    "requestTimeoutMs": 10000,
+    "responseBytes": 131072,
+    "credentialBytes": 8192,
+    "refreshEarlyMs": 30000,
+    "oauthAttemptTimeoutMs": 600000,
+    "uploadTimeoutMs": 120000,
+    "uploadBytes": 25165824,
+    "favoritesBatchSize": 100
+  },
+  "catalog": {
+    "mode": "remote",
+    "catalogFile": "sound1.json",
+    "catalogUrl": "",
+    "audioBaseUrl": "",
+    "catalogBytes": 2097152,
+    "bundledSoundBytes": 2097152,
+    "remoteSoundBytes": 25165824,
+    "maxSounds": 5000,
+    "maxDurationSeconds": 300,
+    "pageSize": 100,
+    "maxPages": 50
+  },
+  "updater": {
+    "feed": {
+      "provider": "github",
+      "owner": "reallav0",
+      "repo": "freqx",
+      "releaseType": "release"
+    },
+    "startupDelayMs": 5000,
+    "requestTimeoutMs": 12000,
+    "installerBytes": 536870912,
+    "releaseResponseBytes": 1048576
+  },
+  "recovery": {
+    "restartWindowMs": 300000,
+    "maxRestarts": 3,
+    "initialBackoffMs": 1000,
+    "backoffMultiplier": 2,
+    "parentExitTimeoutMs": 30000,
+    "pollIntervalMs": 100,
+    "watchdogStartupTimeoutMs": 30000,
+    "watchdogReadyTimeoutMs": 4000,
+    "unresponsiveTimeoutMs": 15000,
+    "mainCrashTextLength": 20000,
+    "detailLimits": {
+      "nameLength": 240,
+      "typeLength": 160,
+      "stringLength": 4000,
+      "keyLength": 120,
+      "arrayEntries": 50,
+      "objectEntries": 80,
+      "maxDepth": 5
+    }
+  }
+}

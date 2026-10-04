@@ -15,7 +15,7 @@ test('branded source launches use the local API while packaged launches ignore i
       Object.defineProperty(process, 'defaultApp', { value: development, configurable: true });
       const handler = registerAuthIpc({ ipcMain: { handle() {} }, getWindow: () => null,
         app: { isPackaged: true, getPath: () => 'unused-fixture-profile' }, safeStorage: null });
-      assert.equal(handler.client().base, development ? process.env.FREQX_API_BASE_URL : require('../runtime/platform.json').apiBaseUrl);
+      assert.equal(handler.client().base, development ? process.env.FREQX_API_BASE_URL : require('../runtime/desktop-config.cjs').config.network.apiBaseUrl);
     }
     Object.defineProperty(process, 'defaultApp', { value: true, configurable: true });
     const updater = require('../runtime/update-client.cjs').createUpdateClient({

@@ -3,13 +3,15 @@ const { spawn, execFile } = require('node:child_process');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const fs = require('node:fs');
+const { config: desktopConfig } = require('./desktop-config.cjs');
+const loopback = desktopConfig.audio.loopback;
 const virtualPattern = /cable|voicemeeter|vb-audio|virtual|sonar.*stream/i;
 
 // Framed float32 PCM; reject malformed lengths before allocating or forwarding.
 class PcmDecoder {
   constructor(onPacket, onReset = () => {}) { this.pending = Buffer.alloc(0); this.onPacket = onPacket; this.onReset = onReset; }
   push(chunk) {
-    if (chunk.length > 128 * 1024 || this.pending.length + chunk.length > 160 * 1024) throw new Error('Loopback PCM backlog exceeded.');
+    if (chunk.length > loopback.chunkBytes || this.pending.length + chunk.length > loopback.backlogBytes) throw new Error('Loopback PCM backlog exceeded.');
     this.pending = Buffer.concat([this.pending, chunk]);
     while (this.pending.length >= 4) {
       const size = this.pending.readUInt32LE(0);
@@ -39,9 +41,9 @@ class LoopbackService {
   available() { return this.platform === 'win32' && fs.existsSync(this.helper); }
   async list() {
     if (!this.available()) return [];
-    const output = await new Promise((resolve, reject) => this.exec(this.helper, ['list'], { windowsHide: true, timeout: 4000, maxBuffer: 128 * 1024 }, (error, stdout) => error ? reject(error) : resolve(stdout)));
+    const output = await new Promise((resolve, reject) => this.exec(this.helper, ['list'], { windowsHide: true, timeout: loopback.enumerateTimeoutMs, maxBuffer: loopback.enumerateBytes }, (error, stdout) => error ? reject(error) : resolve(stdout)));
     const parsed = JSON.parse(output);
-    if (!Array.isArray(parsed) || parsed.length > 256) throw new Error('Invalid WASAPI endpoint list.');
+    if (!Array.isArray(parsed) || parsed.length > loopback.maxDevices) throw new Error('Invalid WASAPI endpoint list.');
     return parsed.filter(d => typeof d?.id === 'string' && d.id.length < 1024 && typeof d.label === 'string')
       .map(d => ({ id: d.id, label: d.label.slice(0, 256), isDefault: Boolean(d.isDefault), isCommunications: Boolean(d.isCommunications), virtual: virtualPattern.test(d.label) }));
   }
@@ -72,7 +74,7 @@ class LoopbackService {
       closed = true; clearTimeout(timer);
       clearInterval(heartbeatTimer);
       child.stdin.end('\n');
-      killTimer = setTimeout(() => { if (child.exitCode === null) child.kill(); }, 500);
+      killTimer = setTimeout(() => { if (child.exitCode === null) child.kill(); }, loopback.killTimeoutMs);
       killTimer.unref?.();
       session.reject?.(new Error('Playback capture canceled.'));
     } };
@@ -95,17 +97,17 @@ class LoopbackService {
     const decoder = new PcmDecoder(samples => {
       if (!settled || closed) return;
       // Renderer acknowledges each packet. Bound queues during a frozen renderer.
-      if (inFlight >= 8) { session.closeOnError(new Error('Playback reference delivery stalled.')); return; }
+      if (inFlight >= loopback.maxInFlightPackets) { session.closeOnError(new Error('Playback reference delivery stalled.')); return; }
       inFlight++;
       send({ type: 'pcm', sequence: ++sequence, samples });
     }, () => send({ type: 'reset' }));
     child.stdout.on('data', chunk => { try { decoder.push(chunk); } catch (error) { session.closeOnError(error); } });
     return new Promise((resolve, reject) => {
       session.reject = error => { if (!settled) { settled = true; clearTimeout(timer); reject(error); } };
-      timer = setTimeout(() => session.closeOnError(new Error('Playback capture startup timed out.')), 3500);
+      timer = setTimeout(() => session.closeOnError(new Error('Playback capture startup timed out.')), loopback.startupTimeoutMs);
       child.stderr.on('data', chunk => {
         stderr += chunk.toString('utf8');
-        if (stderr.length > 16384) { session.closeOnError(new Error('Invalid playback helper response.')); return; }
+        if (stderr.length > loopback.stderrBytes) { session.closeOnError(new Error('Invalid playback helper response.')); return; }
         let newline;
         while ((newline = stderr.indexOf('\n')) >= 0) {
           const line = stderr.slice(0, newline); stderr = stderr.slice(newline + 1);
@@ -118,8 +120,8 @@ class LoopbackService {
               settled = true; clearTimeout(timer);
               lastHeartbeat = Date.now();
               heartbeatTimer = setInterval(() => {
-                if (Date.now() - lastHeartbeat > 4000) session.closeOnError(new Error('Playback capture stopped responding.'));
-              }, 1000);
+                if (Date.now() - lastHeartbeat > loopback.heartbeatTimeoutMs) session.closeOnError(new Error('Playback capture stopped responding.'));
+              }, loopback.heartbeatIntervalMs);
               heartbeatTimer.unref?.();
               resolve({ id, endpointId: endpoint.id, label: endpoint.label, sampleRate: message.sampleRate, channels: 1 });
             }

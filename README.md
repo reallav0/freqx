@@ -58,6 +58,12 @@ Do not set Discord output to VB-CABLE.
 
 ## Development
 
+Desktop runtime defaults and internal tuning live in
+[`runtime/desktop-config.json`](runtime/desktop-config.json), including voice-isolation
+strength, audio processing, networking, updates, and recovery. See
+[developer configuration](docs/implementation/desktop-configuration.md) for editing
+and validation. The app exposes no editor for this file.
+
 After a fatal renderer/main error or unexpected main-process termination, a
 separate hidden monitor restarts freqx in the tray. Library files and saved
 settings remain in the normal profile; interrupted sounds are not replayed.
@@ -96,8 +102,9 @@ Run `npm.cmd run test:recovery` to check crash handling and hidden restart using
 isolated test profiles. These checks deliberately terminate test processes.
 
 Electron Builder rebuilds the app's native audio dependencies during installation.
-Global keybinds use Electron's built-in shortcuts by default. Set
-`FREQX_ENABLE_NATIVE_KEY_HOOK=1` to enable the optional `uiohook-napi` keyboard hook.
+Global keybinds use Electron's built-in shortcuts by default. Developers can enable
+the optional `uiohook-napi` keyboard hook with `app.nativeKeyHookEnabled` in the
+configuration; source launches also accept `FREQX_ENABLE_NATIVE_KEY_HOOK=1`.
 
 ## Protocol Imports
 

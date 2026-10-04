@@ -3,8 +3,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const RESTART_WINDOW_MS = 5 * 60 * 1000;
-const MAX_AUTOMATIC_RESTARTS = 3;
+const { config: desktopConfig } = require('./desktop-config.cjs');
+const RESTART_WINDOW_MS = desktopConfig.recovery.restartWindowMs;
+const MAX_AUTOMATIC_RESTARTS = desktopConfig.recovery.maxRestarts;
 
 function planRestart(history, now = Date.now()) {
   if (!Number.isFinite(now) || !history || history.version !== 1 ||
@@ -24,7 +25,7 @@ function planRestart(history, now = Date.now()) {
   return {
     allowed: true,
     attempt,
-    delayMs: 1000 * (2 ** (attempt - 1)),
+    delayMs: desktopConfig.recovery.initialBackoffMs * (desktopConfig.recovery.backoffMultiplier ** (attempt - 1)),
     history: { version: 1, restarts: [...recent, now] }
   };
 }

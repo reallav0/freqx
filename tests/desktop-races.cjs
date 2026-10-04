@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const vm = require('node:vm');
+const { config: desktopConfig } = require('../runtime/desktop-config.cjs');
 const { pathToFileURL } = require('node:url');
 
 const root = path.resolve(__dirname, '..');
@@ -25,13 +26,42 @@ function section(source, from, to) {
   return source.slice(start, end);
 }
 
+test('developer UI and sound defaults apply only when saved preferences are missing', () => {
+  const config = structuredClone(desktopConfig);
+  Object.assign(config.ui.preferences, { compactMode: true, uiTheme: 'daylight', padTheme: 'candy' });
+  Object.assign(config.ui.soundDefaults, { volume: 0.9, trimStart: 0.25, trimEnd: 0.5, fadeIn: 0.4, fadeOut: 0.3, favorite: true, pinned: true });
+  require('../runtime/desktop-config.cjs').validateConfig(config);
+  let stored;
+  const context = vm.createContext({ desktopConfig: config, defaultBoardName: config.ui.defaultBoardName,
+    defaultAppPreferences: config.ui.preferences, appPreferences: null, appPreferencesStorageKey: 'preferences',
+    window: { localStorage: { getItem: () => stored }, FreqxCatalogId: require('../runtime/catalog-id.js') }
+  });
+  vm.runInContext(section(rendererSource, 'function sanitizeBoardName(', 'function getSoundMetadata('), context);
+  vm.runInContext(section(rendererSource, 'function loadAppPreferences(', 'function applyAppPreferences('), context);
+  context.loadAppPreferences();
+  assert.equal(context.appPreferences.compactMode, true);
+  assert.equal(context.appPreferences.uiTheme, 'daylight');
+  const defaults = context.normalizeSoundMetadata({ name: 'Sound' });
+  for (const key of ['volume', 'trimStart', 'trimEnd', 'fadeIn', 'fadeOut', 'favorite', 'pinned']) assert.equal(defaults[key], config.ui.soundDefaults[key]);
+  stored = JSON.stringify({ compactMode: false, uiTheme: 'midnight', padTheme: 'mono' });
+  context.loadAppPreferences();
+  assert.equal(context.appPreferences.compactMode, false);
+  assert.equal(context.appPreferences.uiTheme, 'midnight');
+  const saved = context.normalizeSoundMetadata({ name: 'Sound' }, { volume: 0, trimStart: 0, fadeIn: 0, favorite: false, pinned: false });
+  assert.equal(saved.volume, 0);
+  assert.equal(saved.trimStart, 0);
+  assert.equal(saved.fadeIn, 0);
+  assert.equal(saved.favorite, false);
+  assert.equal(saved.pinned, false);
+});
+
 test('favorites sync reports success and failure back to the account dialog', async () => {
   for (const failure of [false, true]) {
     const handlers = new Map();
     const reports = [];
     const libraryMetadata = {};
     let saved = false;
-    const context = vm.createContext({
+    const context = vm.createContext({ desktopConfig,
       window: {
         addEventListener: (name, handler) => handlers.set(name, handler),
         soundmuncher: { syncFavorites: async ids => {
@@ -76,7 +106,7 @@ async function temporaryDirectory(t) {
   return directory;
 }
 function importFixture(directory, promises) {
-  const context = vm.createContext({
+  const context = vm.createContext({ desktopConfig,
     fs: { ...fs, promises: { ...fs.promises, ...promises } }, path, process, pathToFileURL,
     app: { getPath: () => directory }, isSupportedAudioPath: name => path.extname(name) === '.wav',
   });
@@ -202,7 +232,7 @@ function playbackFixture(mode, { delayedEngine = false } = {}) {
     createGain: () => ({ ...makeNode(), gain: { setValueAtTime() {}, linearRampToValueAtTime() {} } }),
   };
   const item = { path: 'fixture.wav', name: 'Fixture' };
-  const context = vm.createContext({
+  const context = vm.createContext({ desktopConfig,
     audioContext: delayedEngine ? null : audioContext, activeSoundNodes: new Set(), pendingSoundStarts: new Set(),
     getSoundMetadata: () => ({ name: 'Fixture', playbackMode: mode, trimStart: 0, trimEnd: 0, volume: 1, fadeIn: 0, fadeOut: 0 }),
     decodeImportedAudio: () => { decodes++; return decode.promise; }, soundGainNode: {},
@@ -342,9 +372,10 @@ function isolationFixture(t, { failAssets = false, deferModel = false, needsRawC
   const events = new Map();
   const window = {
     addEventListener: (name, callback) => events.set(name, callback),
+    FreqxDesktopConfig: { current: desktopConfig, ready: Promise.resolve(desktopConfig) },
     LoopbackReference: { acquire: () => loopback.promise, release: value => released.push(value) },
   };
-  const context = vm.createContext({
+  const context = vm.createContext({ desktopConfig,
     window, document: { currentScript: { src: 'file:///audio/mic-isolation.js' } }, URL, Uint8Array,
     AudioContext: Context, AudioWorkletNode: Worklet,
     WebAssembly: { validate: () => true, compile: async () => ({}) },
@@ -419,6 +450,8 @@ test('cancellation releases late loopback captures and stops delayed AEC setup',
     const fixture = isolationFixture(t);
     const controller = new AbortController();
     const pending = fixture.create({ signal: controller.signal });
+    // Configuration readiness is an async boundary before capture is acquired.
+    await tick();
     if (cancelDuringAec) {
       fixture.loopback.resolve(fixture.referenceTrack);
       await tick();

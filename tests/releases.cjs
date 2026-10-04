@@ -10,7 +10,7 @@ const { bump } = require('../scripts/release-version.cjs');
 const { createUpdateClient, verifyDownload } = require('../runtime/update-client.cjs');
 test('runtime update feed matches the release publisher independently of build metadata', () => {
   const metadata = require('../package.json');
-  assert.deepEqual(require('../runtime/update-config.json'), metadata.build.publish);
+  assert.deepEqual(require('../runtime/desktop-config.cjs').config.updater.feed, metadata.build.publish);
   assert.ok(metadata.build.files.includes('runtime/**/*'), 'runtime update configuration ships in releases');
 });
 test('patch release updates both authoritative versions and rejects inconsistent locks', async () => {

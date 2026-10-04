@@ -5,7 +5,8 @@ const isPackaged = isPackagedApp(app, process);
 const { PlatformLibrary } = require('./runtime/platform-library.cjs');
 const { createUpdateClient } = require('./runtime/update-client.cjs');
 // Electron Builder removes package.json's build field from release archives.
-const updateConfiguration = require('./runtime/update-config.json');
+const { config: desktopConfig } = require('./runtime/desktop-config.cjs');
+const updateConfiguration = desktopConfig.updater.feed;
 let updateClient;
 const dns = require("dns");
 const { execFile } = require("child_process");
@@ -21,7 +22,7 @@ const { createCrashRecovery } = require("./runtime/crash-recovery.cjs");
 const { PublicLibrary } = require("./runtime/public-library.cjs");
 const { LoopbackService } = require('./runtime/loopback-reference.cjs');
 const loopbackService = new LoopbackService({ appRoot: __dirname });
-const publicLibrary = new PublicLibrary({ appRoot: __dirname, tempRoot: () => path.join(app.getPath('userData'), 'library-import-tmp') });
+const publicLibrary = new PublicLibrary({ appRoot: __dirname, development: !isPackaged, tempRoot: () => path.join(app.getPath('userData'), 'library-import-tmp') });
 app.setName("freqx");
 
 
@@ -45,7 +46,7 @@ let crashRecovery = null;
 let recoveryScheduled = false;
 const isRecoveryLaunch = process.argv.includes("--recovered");
 const appUserModelId = "app.freqx.desktop";
-const websiteUrl = "https://freqx.app";
+const websiteUrl = desktopConfig.app.websiteUrl;
 const protocolScheme = "freqx";
 const protocolUrlPrefix = `${protocolScheme}:`;
 const protocolImportAction = "import-sound";
@@ -85,16 +86,12 @@ const genericRemoteAudioContentTypes = new Set([
   "application/x-download",
   "binary/octet-stream"
 ]);
-const maxProtocolUrlLength = 8192;
-const maxRemoteAudioBytes = 100 * 1024 * 1024;
-const maxRemoteAudioRedirects = 5;
-const remoteAudioRequestTimeoutMs = 30000;
-const enableNativeKeyHook = process.env.FREQX_ENABLE_NATIVE_KEY_HOOK === "1";
-let appSettings = {
-  launchOnStartup: true,
-  startHidden: false,
-  keepRunningInTray: true
-};
+const maxProtocolUrlLength = desktopConfig.network.maxUrlLength;
+const maxRemoteAudioBytes = desktopConfig.network.protocolAudioBytes;
+const maxRemoteAudioRedirects = desktopConfig.network.maxRedirects;
+const remoteAudioRequestTimeoutMs = desktopConfig.network.protocolAudioTimeoutMs;
+const enableNativeKeyHook = desktopConfig.app.nativeKeyHookEnabled || (!isPackaged && process.env.FREQX_ENABLE_NATIVE_KEY_HOOK === "1");
+let appSettings = { ...desktopConfig.app.preferences };
 const pendingProtocolUrls = [];
 const pendingExternalImportEvents = [];
 let externalImportQueue = Promise.resolve();
@@ -142,9 +139,13 @@ function configureDevelopmentStoragePaths() {
 }
 
 function configureRuntimeStability() {
-  app.disableHardwareAcceleration();
-  app.commandLine.appendSwitch("disable-gpu");
-  app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
+  if (!desktopConfig.app.hardwareAcceleration) {
+    app.disableHardwareAcceleration();
+    app.commandLine.appendSwitch("disable-gpu");
+  }
+  if (desktopConfig.app.disabledFeatures.length) {
+    app.commandLine.appendSwitch("disable-features", desktopConfig.app.disabledFeatures.join(","));
+  }
 }
 
 function startNativeCrashReporter() {
@@ -202,7 +203,7 @@ function scheduleCrashRecovery(report) {
   }, 0);
 }
 
-function limitCrashText(value, maxLength = 20000) {
+function limitCrashText(value, maxLength = desktopConfig.recovery.mainCrashTextLength) {
   const text = value === undefined || value === null ? "" : String(value);
   if (text.length <= maxLength) {
     return text;
@@ -214,7 +215,7 @@ function limitCrashText(value, maxLength = 20000) {
 function normalizeCrashError(error) {
   if (error instanceof Error) {
     return {
-      name: limitCrashText(error.name || "Error", 240),
+      name: limitCrashText(error.name || "Error", desktopConfig.recovery.detailLimits.nameLength),
       message: limitCrashText(error.message || "Unknown error"),
       stack: limitCrashText(error.stack || "")
     };
@@ -222,7 +223,7 @@ function normalizeCrashError(error) {
 
   if (error && typeof error === "object") {
     return {
-      name: limitCrashText(error.name || "Error", 240),
+      name: limitCrashText(error.name || "Error", desktopConfig.recovery.detailLimits.nameLength),
       message: limitCrashText(error.message || JSON.stringify(toCrashSafeValue(error))),
       stack: limitCrashText(error.stack || "")
     };
@@ -245,7 +246,7 @@ function toCrashSafeValue(value, seen = new WeakSet(), depth = 0) {
   }
 
   if (typeof value === "string") {
-    return limitCrashText(value, 4000);
+    return limitCrashText(value, desktopConfig.recovery.detailLimits.stringLength);
   }
 
   if (typeof value === "number" || typeof value === "boolean") {
@@ -257,25 +258,25 @@ function toCrashSafeValue(value, seen = new WeakSet(), depth = 0) {
   }
 
   if (typeof value !== "object") {
-    return limitCrashText(value, 4000);
+    return limitCrashText(value, desktopConfig.recovery.detailLimits.stringLength);
   }
 
   if (seen.has(value)) {
     return "[Circular]";
   }
 
-  if (depth >= 5) {
+  if (depth >= desktopConfig.recovery.detailLimits.maxDepth) {
     return "[MaxDepth]";
   }
 
   seen.add(value);
 
   if (Array.isArray(value)) {
-    return value.slice(0, 50).map((item) => toCrashSafeValue(item, seen, depth + 1));
+    return value.slice(0, desktopConfig.recovery.detailLimits.arrayEntries).map((item) => toCrashSafeValue(item, seen, depth + 1));
   }
 
-  return Object.fromEntries(Object.entries(value).slice(0, 80).map(([key, item]) => [
-    limitCrashText(key, 120),
+  return Object.fromEntries(Object.entries(value).slice(0, desktopConfig.recovery.detailLimits.objectEntries).map(([key, item]) => [
+    limitCrashText(key, desktopConfig.recovery.detailLimits.keyLength),
     toCrashSafeValue(item, seen, depth + 1)
   ]));
 }
@@ -298,7 +299,7 @@ function getCrashDumpsPath() {
 
 function createCrashReport(type, error, details = {}) {
   const normalizedError = normalizeCrashError(error);
-  const crashType = limitCrashText(type || "app-error", 160);
+  const crashType = limitCrashText(type || "app-error", desktopConfig.recovery.detailLimits.typeLength);
 
   return {
     id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
@@ -835,14 +836,14 @@ function fetchJson(url) {
         Accept: "application/vnd.github+json",
         "User-Agent": `${packageMetadata.name || "freqx"}-${app.getVersion()}`
       },
-      timeout: 12000
+      timeout: desktopConfig.updater.requestTimeoutMs
     }, (response) => {
       let body = "";
 
       response.setEncoding("utf8");
       response.on("data", (chunk) => {
         body += chunk;
-        if (body.length > 1024 * 1024) {
+        if (body.length > desktopConfig.updater.releaseResponseBytes) {
           request.destroy(new Error("GitHub response was too large."));
         }
       });
@@ -1562,9 +1563,9 @@ function loadAppSettings() {
     const parsed = JSON.parse(raw);
     appSettings = {
       ...appSettings,
-      launchOnStartup: parsed.launchOnStartup !== false,
-      startHidden: Boolean(parsed.startHidden),
-      keepRunningInTray: parsed.keepRunningInTray !== false
+      launchOnStartup: typeof parsed.launchOnStartup === "boolean" ? parsed.launchOnStartup : desktopConfig.app.preferences.launchOnStartup,
+      startHidden: typeof parsed.startHidden === "boolean" ? parsed.startHidden : desktopConfig.app.preferences.startHidden,
+      keepRunningInTray: typeof parsed.keepRunningInTray === "boolean" ? parsed.keepRunningInTray : desktopConfig.app.preferences.keepRunningInTray
     };
   } catch (error) {
   }
@@ -1692,11 +1693,7 @@ function createWindow(options = {}) {
   const shouldStartHidden = isRecoveryLaunch || (!options.forceShow && !options.showCrashScreen && (appSettings.startHidden || process.argv.includes("--hidden")));
 
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 760,
-    minWidth: 900,
-    minHeight: 620,
-    backgroundColor: "#111111",
+    ...desktopConfig.app.window,
     title: "freqx",
     icon: getAppIconPath(),
     autoHideMenuBar: true,
@@ -1769,7 +1766,7 @@ function createWindow(options = {}) {
       url: mainWindow?.webContents?.getURL?.() || ""
     }));
     if (!unresponsiveTimer && !isQuitting) {
-      unresponsiveTimer = setTimeout(() => scheduleCrashRecovery(report), 15000);
+      unresponsiveTimer = setTimeout(() => scheduleCrashRecovery(report), desktopConfig.recovery.unresponsiveTimeoutMs);
     }
   });
   mainWindow.on("responsive", () => {
@@ -1852,11 +1849,11 @@ function writeTestTone(deviceId) {
   }
 
   const sampleRate = 48000;
-  const durationSeconds = 1.1;
+  const durationSeconds = desktopConfig.audio.nativeTestTone.durationSeconds;
   const channelCount = 2;
   const frameCount = Math.floor(sampleRate * durationSeconds);
-  const frequency = 440;
-  const amplitude = 0.22;
+  const frequency = desktopConfig.audio.nativeTestTone.frequency;
+  const amplitude = desktopConfig.audio.nativeTestTone.gain;
   const data = new Float32Array(frameCount * channelCount);
 
   for (let frame = 0; frame < frameCount; frame += 1) {
@@ -1886,7 +1883,7 @@ function writeTestTone(deviceId) {
       output.quit();
     } catch (error) {
     }
-  }, Math.ceil(durationSeconds * 1000) + 120);
+  }, Math.ceil(durationSeconds * 1000) + desktopConfig.audio.nativeTestTone.stopPaddingMs);
 }
 
 function isLikelyLocalWindowsPath(filePath) {
@@ -1953,8 +1950,8 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
         ...process.env,
         FREQX_IMPORT_INITIAL_DIR: getImportDialogDefaultPath()
       },
-      maxBuffer: 1024 * 1024,
-      timeout: 30 * 60 * 1000,
+      maxBuffer: desktopConfig.app.externalProcessBufferBytes,
+      timeout: desktopConfig.app.externalProcessTimeoutMs,
       windowsHide: true
     }, (error, stdout, stderr) => {
       if (error) {
@@ -2063,7 +2060,7 @@ function registerAudioIpc() {
   ipcMain.handle('audio:reference-stop', (event, id) => { referenceSender(event); loopbackService.stop(event.sender, id); });
   ipcMain.handle('audio:reference-cancel', event => { referenceSender(event); loopbackService.stopOwner(event.sender); });
   ipcMain.on('audio:reference-ack', (event, id) => { try { referenceSender(event); loopbackService.ack(event.sender, id); } catch {} });
-  const catalog = new PlatformLibrary({ getClient: () => authProtocolHandler.client(), fallback: publicLibrary });
+  const catalog = new PlatformLibrary({ getClient: () => authProtocolHandler.client(), fallback: publicLibrary, development: !isPackaged });
   ipcMain.handle("library:catalog", async (event) => {
     assertTrustedIpcSender(event);
     return catalog.getCatalog();
@@ -2422,7 +2419,7 @@ function createUniqueDestinationPath(directoryPath, sourcePath) {
 
   let attempt = 0;
 
-  while (attempt < 9999) {
+  while (attempt < desktopConfig.app.importReservationAttempts) {
     const suffix = attempt === 0 ? "" : `-${attempt}`;
     const fileName = `${safeBaseName}${suffix}${sourceExtension.toLowerCase()}`;
     const candidatePath = path.join(directoryPath, fileName);
@@ -2438,7 +2435,7 @@ function createUniqueDestinationPath(directoryPath, sourcePath) {
 }
 
 async function reserveLibraryDestination(directoryPath, sourcePath) {
-  for (let attempt = 0; attempt < 9999; attempt += 1) {
+  for (let attempt = 0; attempt < desktopConfig.app.importReservationAttempts; attempt += 1) {
     const destinationPath = createUniqueDestinationPath(directoryPath, sourcePath);
     try {
       const handle = await fs.promises.open(destinationPath, "wx");
@@ -2451,7 +2448,7 @@ async function reserveLibraryDestination(directoryPath, sourcePath) {
 }
 
 async function copyAudioFileToLibrary(directoryPath, sourcePath) {
-  for (let attempt = 0; attempt < 9999; attempt += 1) {
+  for (let attempt = 0; attempt < desktopConfig.app.importReservationAttempts; attempt += 1) {
     const destinationPath = createUniqueDestinationPath(directoryPath, sourcePath);
     try {
       await fs.promises.copyFile(sourcePath, destinationPath, fs.constants.COPYFILE_EXCL);
@@ -2509,7 +2506,7 @@ if (hasSingleInstanceLock) {
     createWindow({ forceShow: pendingProtocolUrls.length > 0 });
     updateClient = createUpdateClient({ app, getWindow: () => mainWindow, config: updateConfiguration,
       updater: isPackaged ? require('electron-updater').autoUpdater : null, portable: Boolean(process.env.PORTABLE_EXECUTABLE_DIR) });
-    if (isPackaged) setTimeout(() => updateClient.check(), 5000).unref();
+    if (isPackaged) setTimeout(() => updateClient.check(), desktopConfig.updater.startupDelayMs).unref();
     startPendingProtocolImports();
 
     app.on("activate", () => {

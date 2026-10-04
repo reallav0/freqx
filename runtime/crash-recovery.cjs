@@ -4,6 +4,8 @@ const { randomUUID } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { reserveRestart } = require("./recovery-policy.cjs");
 const { isPackagedApp } = require('./app-mode.cjs');
+const { config: desktopConfig } = require('./desktop-config.cjs');
+
 
 function createCrashRecovery({ app, logEvent = () => {} }) {
   const runId = randomUUID();
@@ -96,8 +98,8 @@ function createCrashRecovery({ app, logEvent = () => {} }) {
         app.exit(1);
         return;
       }
-      if (Date.now() - startTime < 4000) {
-        restartTimer = setTimeout(exitForRecovery, 100);
+      if (Date.now() - startTime < desktopConfig.recovery.watchdogReadyTimeoutMs) {
+        restartTimer = setTimeout(exitForRecovery, desktopConfig.recovery.pollIntervalMs);
         return;
       }
       // A failed monitor can still recover handled JS/renderer failures using
@@ -123,7 +125,7 @@ function createCrashRecovery({ app, logEvent = () => {} }) {
       }, reservation.delayMs);
     }
     // In particular, never navigate/exit synchronously in render-process-gone.
-    restartTimer = setTimeout(exitForRecovery, 100);
+    restartTimer = setTimeout(exitForRecovery, desktopConfig.recovery.pollIntervalMs);
     return true;
   }
 

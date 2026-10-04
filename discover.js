@@ -15,7 +15,8 @@
     let sourceLabel = 'FREQX ORIGINALS';
     let failed = false, playingId = null, previewRevision = 0;
     let boardChosen = false;
-    let visibleLimit = 60;
+    const pageSize = window.FreqxDesktopConfig.current.ui.discoverPageSize;
+    let visibleLimit = pageSize;
     const pendingAdds = new Set();
     const cards = new Map();
     function element(tag, className, text) {
@@ -159,7 +160,7 @@
       syncAdded();
     }
     function resetFilters() {
-      search.value = ''; selectedCategory = 'all'; visibleLimit = 60; stopPreview(); render();
+      search.value = ''; selectedCategory = 'all'; visibleLimit = pageSize; stopPreview(); render();
     }
     async function load() {
       if (loading) return;
@@ -171,11 +172,11 @@
         sounds = catalog.sounds;
         sourceLabel = catalog.sourceLabel || sourceLabel;
         cards.clear();
-        visibleLimit = 60;
+        visibleLimit = pageSize;
         categories.replaceChildren(...['all', ...new Set(sounds.map(sound => sound.category))].map(category => {
           const button = element('button', 'discover-category', category === 'all' ? 'All sounds' : category);
           button.type = 'button'; button.dataset.category = category;
-          button.addEventListener('click', () => { selectedCategory = category; visibleLimit = 60; stopPreview(); render(); });
+          button.addEventListener('click', () => { selectedCategory = category; visibleLimit = pageSize; stopPreview(); render(); });
           return button;
         }));
         $('discoverState').textContent = catalog.source === 'remote'
@@ -209,12 +210,12 @@
         show(next === 1); tabs[next].focus();
       });
     });
-    search.addEventListener('input', () => { stopPreview(); visibleLimit = 60; render(); });
-    $('discoverSort').addEventListener('change', () => { stopPreview(); visibleLimit = 60; render(); });
+    search.addEventListener('input', () => { stopPreview(); visibleLimit = pageSize; render(); });
+    $('discoverSort').addEventListener('change', () => { stopPreview(); visibleLimit = pageSize; render(); });
     board.addEventListener('change', () => { boardChosen = true; syncAdded(); });
     $('discoverReset').addEventListener('click', resetFilters);
     $('discoverRetry').addEventListener('click', () => void load());
-    loadMoreButton.addEventListener('click', () => { visibleLimit += 60; render(); });
+    loadMoreButton.addEventListener('click', () => { visibleLimit += pageSize; render(); });
     $('discoverExplore').addEventListener('click', () => {
       resetFilters();
       $('discoverCount').scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });

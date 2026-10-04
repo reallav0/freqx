@@ -63,7 +63,7 @@ test('production 128/480 worklet framing stays finite and releases engine on des
   const messages = [];
   global.AudioWorkletProcessor = class { constructor() { this.port = { postMessage: m => messages.push(m) }; } };
   const { AecProcessor } = await import('../audio/aec-worklet.mjs');
-  const processor = new AecProcessor({ processorOptions: { wasmModule: wasm } });
+  const processor = new AecProcessor({ processorOptions: { wasmModule: wasm, tuning: { aec: require('../runtime/desktop-config.cjs').config.audio.aec } } });
   const block = new Float32Array(128), output = new Float32Array(128);
   for (let p = 0; p < 48000 * 3; p += 128) {
     block.set(reference.subarray(p, p + 128));

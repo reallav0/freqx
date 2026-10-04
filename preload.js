@@ -2,7 +2,6 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("soundmuncher", {
   appName: "freqx",
-  websiteUrl: "https://freqx.app",
   authStatus: () => ipcRenderer.invoke('auth:status'),
   login: input => ipcRenderer.invoke('auth:login', input),
   signup: input => ipcRenderer.invoke('auth:signup', input),

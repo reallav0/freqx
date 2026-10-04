@@ -137,18 +137,18 @@
           <div class="mixer-grid">
             <label class="mixer-control" for="micGain">
               <span>Microphone</span>
-              <input id="micGain" type="range" min="0" max="1" step="0.01" value="0.75" />
-              <output id="micGainValue">75%</output>
+              <input id="micGain" type="range" min="0" max="1" step="0.01" />
+              <output id="micGainValue">—</output>
             </label>
             <label class="mixer-control" for="soundGain">
               <span>Soundboard</span>
-              <input id="soundGain" type="range" min="0" max="1" step="0.01" value="0.5" />
-              <output id="soundGainValue">50%</output>
+              <input id="soundGain" type="range" min="0" max="1" step="0.01" />
+              <output id="soundGainValue">—</output>
             </label>
             <label class="mixer-control" for="masterGain">
               <span>Main output</span>
-              <input id="masterGain" type="range" min="0" max="1" step="0.01" value="1" />
-              <output id="masterGainValue">100%</output>
+              <input id="masterGain" type="range" min="0" max="1" step="0.01" />
+              <output id="masterGainValue">—</output>
             </label>
           </div>
 
@@ -477,6 +477,8 @@
         </div>
       </div>
     </section>
+    <script src="runtime/config-schema.js"></script>
+    <script src="runtime/desktop-config.js"></script>
     <script src="audio/loopback-reference.js"></script>
     <script src="audio/mic-isolation.js"></script>
     <script src="runtime/catalog-id.js"></script>

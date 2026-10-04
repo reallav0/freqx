@@ -1,6 +1,7 @@
 // Exercise the actual packaged SIMD model. No microphone, network, or audio output.
 const fs = require('node:fs');
 const path = require('node:path');
+const { config } = require('../runtime/desktop-config.cjs');
 const directory = path.resolve(__dirname, '../audio/vendor/deepfilter');
 const module_ = new WebAssembly.Module(fs.readFileSync(path.join(directory, 'dfn3.wasm')));
 let engine;
@@ -18,7 +19,7 @@ const pointer = engine.malloc(weights.length);
 new Uint8Array(engine.memory.buffer, pointer, weights.length).set(weights);
 const results = [];
 try {
-  for (const [mode, attenuation, beta] of [['standard', 20, 0], ['strong', 60, .02]]) {
+  for (const [mode, { attenuationDb: attenuation, postFilterBeta: beta }] of Object.entries(config.audio.voiceModes)) {
     if (engine.dfn3_wasm_create(pointer, weights.length) !== 0) throw new Error('Model initialization failed.');
     engine.dfn3_wasm_set_input_agc(0); engine.dfn3_wasm_set_output_agc(0); engine.dfn3_wasm_set_hpf(0);
     engine.dfn3_wasm_set_atten_lim(attenuation); engine.dfn3_wasm_set_post_filter_beta(beta);

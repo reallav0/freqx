@@ -22,19 +22,24 @@ Physical microphone
 
 No processed microphone is connected to the isolation context's speakers.
 `micIsolationSession.stream` is the reusable cleaned MediaStream consumed by the
-current mixer. DeepFilterNet's built-in AGC and high-pass filter are disabled;
-the app retains its existing mic EQ/compressor. The old adaptive expander and
+current mixer. DeepFilterNet's built-in AGC and high-pass filter are disabled.
+The microphone EQ uses zero gain adjustments, a 20 Hz high-pass and narrow
+20 Hz notch, and a 24 kHz low-pass. Its compressor uses a 1:1 ratio for transparent
+level handling. The old adaptive expander and
 hard gate are bypassed so they do not cut quiet speech, including during fallback.
 The shared master compressor is unchanged.
 
 | Mode | Processing |
 | --- | --- |
 | Off | Chromium echo cancellation; isolation context is released |
-| Standard | DeepFilterNet3, maximum attenuation 20 dB, post-filter disabled |
-| Strong | DeepFilterNet3, maximum attenuation 40 dB, post-filter beta 0.2 |
+| Standard | DeepFilterNet3, maximum attenuation 20 dB, post-filter disabled (beta 0) |
+| Strong | DeepFilterNet3, maximum attenuation 20 dB, post-filter disabled (beta 0) |
 
-These are attenuation limits, not guaranteed measured noise reductions. Strong
-can remove more background noise but may alter speech more than Standard.
+Both enabled modes use the same gentle profile to preserve natural speech.
+Disabling the post-filter reduces speech coloration and can leave more background
+noise. The attenuation setting is a limit, not a guaranteed measured reduction.
+Developer tuning lives in `audio.voiceModes` in
+[`runtime/desktop-config.json`](../runtime/desktop-config.json).
 The checkbox retains the last active mode. Both preferences persist. Standard
 and Strong send parameters to the same worklet; Off reconnects the existing
 protected capture stream. Enabling AEC3 may acquire an additional raw track on
@@ -45,6 +50,9 @@ track and its model alive. The app does not need to restart for mode changes.
 
 `audio/mic-isolation.js` exports `window.VoiceIsolation` and the compatible
 `window.MicVoiceIsolation` alias. It does not require renderer Node integration.
+Load `runtime/config-schema.js` and `runtime/desktop-config.js` before the audio
+scripts, as the production `index.html` does. `create()` waits for validated
+configuration and passes selected tuning into the worklets.
 
 ```js
 const raw = await navigator.mediaDevices.getUserMedia({

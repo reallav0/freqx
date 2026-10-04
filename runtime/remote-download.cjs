@@ -3,11 +3,10 @@
 const https = require('node:https');
 const dns = require('node:dns');
 const net = require('node:net');
+const { config: desktopConfig } = require('./desktop-config.cjs');
 
-const DEFAULT_HOSTS = Object.freeze([
-  'pub-3e766a9775054398bfddde72d1f10686.r2.dev',
-  'audio.freqx.app', 'freqx.app', 'www.freqx.app'
-]);
+
+const DEFAULT_HOSTS = desktopConfig.network.allowedAudioHosts;
 const blockedV4 = new net.BlockList();
 for (const [address, prefix] of [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
@@ -41,7 +40,7 @@ function parseRemoteUrl(value, allowedHosts = DEFAULT_HOSTS) {
   let url;
   try { url = new URL(value); } catch { throw downloadError('Invalid remote library URL.'); }
   if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')
-      || !allowedHosts.includes(url.hostname) || url.hash || value.length > 8192) {
+      || !allowedHosts.includes(url.hostname) || url.hash || value.length > desktopConfig.network.maxUrlLength) {
     throw downloadError('Remote library URL is not allowed.');
   }
   return url;
@@ -62,7 +61,7 @@ function publicLookup(hostname, options, callback) {
 // request injection is only for tests; production always uses HTTPS and the
 // DNS policy at the actual connection, avoiding a validation/connection race.
 async function downloadBytes(value, limit, {
-  signal, timeoutMs = 8000, maxRedirects = 5, allowedHosts = DEFAULT_HOSTS,
+  signal, timeoutMs = desktopConfig.network.downloadTimeoutMs, maxRedirects = desktopConfig.network.maxRedirects, allowedHosts = DEFAULT_HOSTS,
   request = https.get, lookup = publicLookup
 } = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new TypeError('Invalid download limit');

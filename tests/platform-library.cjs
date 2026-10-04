@@ -20,3 +20,23 @@ test('platform catalog preserves IDs and pagination while keeping its original f
     assert.equal((await library.getCatalog()).source, 'bundled');
   } finally { if (previous === undefined) delete process.env.FREQX_LIBRARY_BUNDLED; else process.env.FREQX_LIBRARY_BUNDLED = previous; }
 });
+
+test('packaged catalogs ignore the development-only bundled environment override', async () => {
+  const previous = process.env.FREQX_LIBRARY_BUNDLED;
+  process.env.FREQX_LIBRARY_BUNDLED = '1';
+  try {
+    const fallback = { getCatalog: async () => ({ source: 'bundled', sounds: [] }) };
+    const getClient = () => ({ request: async () => ({ sounds: [{ id: 'existing-id', title: 'Existing', mimeType: 'audio/wav' }] }) });
+    const release = new PlatformLibrary({ getClient, fallback, development: false });
+    assert.equal((await release.getCatalog()).source, 'remote');
+    const development = new PlatformLibrary({ getClient, fallback, development: true });
+    assert.equal((await development.getCatalog()).source, 'bundled');
+    const { PublicLibrary } = require('../runtime/public-library.cjs');
+    const appRoot = require('node:path').resolve(__dirname, '..');
+    assert.equal((await new PublicLibrary({ appRoot, development: false }).readConfig()).mode, 'remote');
+    assert.equal((await new PublicLibrary({ appRoot, development: true }).readConfig()).mode, 'bundled');
+  } finally {
+    if (previous === undefined) delete process.env.FREQX_LIBRARY_BUNDLED;
+    else process.env.FREQX_LIBRARY_BUNDLED = previous;
+  }
+});

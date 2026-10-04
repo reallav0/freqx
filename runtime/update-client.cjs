@@ -3,6 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, timingSafeEqual } = require('node:crypto');
 const { isPackagedApp } = require('./app-mode.cjs');
+const { config: desktopConfig } = require('./desktop-config.cjs');
+
 async function verifyDownload(info) {
   if (!/^\d+\.\d+\.\d+$/.test(info.version || '')) throw new Error('Invalid update version.');
   const filename = info.downloadedFile;
@@ -10,7 +12,7 @@ async function verifyDownload(info) {
   const entry = info.files?.find(file => typeof file.url === 'string' && path.basename(new URL(file.url, 'https://github.com').pathname) === path.basename(filename));
   if (!entry || typeof entry.sha512 !== 'string' || !/^[A-Za-z0-9+/]{86}==$/.test(entry.sha512)) throw new Error('Update checksum is missing.');
   const stat = await fs.promises.lstat(filename);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > 536870912) throw new Error('Invalid update size.');
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > desktopConfig.updater.installerBytes) throw new Error('Invalid update size.');
   const digest = createHash('sha512'); let bytes = 0;
   for await (const chunk of fs.createReadStream(filename)) { bytes += chunk.length; if (bytes > stat.size) throw new Error('Update file changed.'); digest.update(chunk); }
   if (bytes !== stat.size || !timingSafeEqual(digest.digest(), Buffer.from(entry.sha512, 'base64'))) throw new Error('Update checksum failed.');

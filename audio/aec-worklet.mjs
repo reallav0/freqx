@@ -1,17 +1,21 @@
 import { Aec3Engine } from './aec3-engine.mjs';
+import '../runtime/config-schema.js';
 
 const WorkletBase = typeof AudioWorkletProcessor === 'undefined' ? class {} : AudioWorkletProcessor;
 export class AecProcessor extends WorkletBase {
   constructor(options = {}) {
     super();
+    const tuning = options.processorOptions?.tuning;
+    if (!tuning?.aec) throw new Error('Missing AEC tuning.');
+    this.tuning = globalThis.FreqxConfigSchema.validateAudioTuning(tuning).aec;
     this.closed = false;
     this.position = 0;
     this.reference = new Float32Array(480);
     this.microphone = new Float32Array(480);
-    // Delay capture 30 ms so IPC delivery of WASAPI reference precedes it.
-    this.captureDelay = new Float32Array(1440);
+    // Delay capture so IPC delivery of WASAPI reference precedes it.
+    this.captureDelay = new Float32Array(this.tuning.captureDelaySamples);
     this.delayPosition = 0;
-    this.queue = new Float32Array(2048);
+    this.queue = new Float32Array(this.tuning.queueSamples);
     this.read = 0;
     this.write = 480;
     this.blocks = 0;
@@ -22,7 +26,7 @@ export class AecProcessor extends WorkletBase {
     };
     try {
       this.engine = new Aec3Engine(options.processorOptions.wasmModule);
-      this.port.postMessage({ type: 'ready', engine: 'WebRTC AEC3', latencyMs: 40 });
+      this.port.postMessage({ type: 'ready', engine: 'WebRTC AEC3', latencyMs: (this.captureDelay.length + 480) / 48 });
     } catch (error) {
       this.port.postMessage({ type: 'error', message: error.message });
       this.closed = true;
@@ -54,19 +58,19 @@ export class AecProcessor extends WorkletBase {
           for (let j = 0; j < 480; j++) {
             const sample = processed[j];
             if (!Number.isFinite(sample)) throw new Error('Non-finite WebRTC AEC3 output.');
-            this.queue[this.write++ & 2047] = Math.max(-1, Math.min(1, sample));
+            this.queue[this.write++ & (this.tuning.queueSamples - 1)] = Math.max(-1, Math.min(1, sample));
             this.referencePower += this.reference[j] ** 2;
             this.inputPower += this.microphone[j] ** 2;
             this.outputPower += sample ** 2;
           }
           this.position = 0;
-          if (++this.blocks === 100) {
-            const db = power => Math.max(-100, 10 * Math.log10(Math.max(1e-10, power / 48000)));
-            this.port.postMessage({ type: 'stats', engine: 'WebRTC AEC3', referenceDb: db(this.referencePower), inputDb: db(this.inputPower), outputDb: db(this.outputPower), latencyMs: 40 });
+          if (++this.blocks === this.tuning.statsIntervalBlocks) {
+            const db = power => Math.max(-100, 10 * Math.log10(Math.max(1e-10, power / (this.tuning.statsIntervalBlocks * 480))));
+            this.port.postMessage({ type: 'stats', engine: 'WebRTC AEC3', referenceDb: db(this.referencePower), inputDb: db(this.inputPower), outputDb: db(this.outputPower), latencyMs: (this.captureDelay.length + 480) / 48 });
             this.blocks = this.referencePower = this.inputPower = this.outputPower = 0;
           }
         }
-        output[i] = this.queue[this.read++ & 2047];
+        output[i] = this.queue[this.read++ & (this.tuning.queueSamples - 1)];
       }
     } catch (error) {
       output.fill(0);

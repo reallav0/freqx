@@ -3,6 +3,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID, randomBytes, createHash } = require('node:crypto');
 const { isPackagedApp } = require('./app-mode.cjs');
+const { config: desktopConfig } = require('./desktop-config.cjs');
+
 
 function trustedBase(value, development = false) {
   const url = new URL(value);
@@ -31,7 +33,7 @@ class SecureCredentialStore {
   async read() {
     const stat = await fs.lstat(this.filename).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
     if (!stat) return null;
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 8192 || !await this.available()) throw new Error('Stored session cannot be read securely.');
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > desktopConfig.auth.credentialBytes || !await this.available()) throw new Error('Stored session cannot be read securely.');
     const decrypted = await this.safeStorage.decryptStringAsync(await fs.readFile(this.filename));
     if (!decrypted || typeof decrypted.result !== 'string' || !/^[A-Za-z0-9_-]{64}$/.test(decrypted.result)) throw new Error('Stored session is invalid.');
     if (decrypted.shouldReEncrypt) await this.save(decrypted.result);
@@ -55,7 +57,7 @@ class AuthClient {
     // Callers inside this module provide route constants; the renderer has no
     // generic request method and cannot choose endpoints or override headers.
     const response = await this.fetch(this.base + route, { method: method || (body === undefined ? 'GET' : 'POST'),
-      redirect: 'error', signal: AbortSignal.timeout(10000),
+      redirect: 'error', signal: AbortSignal.timeout(desktopConfig.auth.requestTimeoutMs),
       headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(authenticated ? { Authorization: `Bearer ${this.accessToken}` } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -67,7 +69,7 @@ class AuthClient {
         const { value, done } = await reader.read();
         if (done) break;
         length += value.length;
-        if (length > 131072) throw new Error('Unexpected API response size.');
+        if (length > desktopConfig.auth.responseBytes) throw new Error('Unexpected API response size.');
         chunks.push(Buffer.from(value));
       }
     } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
@@ -116,7 +118,7 @@ class AuthClient {
     });
   }
   async restore() {
-    if (this.accessToken && Date.now() < this.expiresAt - 30000) return { user: this.user };
+    if (this.accessToken && Date.now() < this.expiresAt - desktopConfig.auth.refreshEarlyMs) return { user: this.user };
     const refreshToken = await this.store.read();
     if (!refreshToken) return { user: null };
     try { return await this.accept(await this.request('/api/auth/refresh', { refreshToken })); }
@@ -140,7 +142,7 @@ class AuthClient {
       const url = new URL(result.browserUrl);
       if (url.origin !== this.base || url.pathname !== `/api/auth/${provider}` || url.searchParams.get('attempt') !== result.attemptId ||
         [...url.searchParams.keys()].length !== 1 || url.hash || url.username || url.password) throw new Error('Invalid OAuth browser URL.');
-      this.oauthAttempt = { id: result.attemptId, verifier, expiresAt: Date.now() + 600000 };
+      this.oauthAttempt = { id: result.attemptId, verifier, expiresAt: Date.now() + desktopConfig.auth.oauthAttemptTimeoutMs };
       await openBrowser(url.href);
       return { user: this.user, message: 'Complete login in your browser, then return to FreqX.' };
     });
@@ -191,7 +193,7 @@ class AuthClient {
       await this.restore();
       if (!this.accessToken) throw new Error('Please sign in first.');
       const validId = require('./catalog-id').valid;
-      if (kind === 'list') return { user: this.user, cloud: await this.request('/api/sounds?scope=mine&limit=100', undefined, true) };
+      if (kind === 'list') return { user: this.user, cloud: await this.request(`/api/sounds?scope=mine&limit=${desktopConfig.catalog.pageSize}`, undefined, true) };
       if (kind === 'delete') {
         if (!validId(input)) throw new Error('Invalid sound ID.');
         await this.request('/api/sounds/' + encodeURIComponent(input), undefined, true, 'DELETE');
@@ -207,7 +209,7 @@ class AuthClient {
       const handle = await fs.open(filename, 'r'); let bytes;
       try {
         const stat = await handle.stat();
-        if (!stat.isFile() || stat.size < 12 || stat.size > 25165824) throw Object.assign(new Error('Audio must be between 12 bytes and 24 MiB.'), { code: 'UPLOAD_INVALID' });
+        if (!stat.isFile() || stat.size < 12 || stat.size > desktopConfig.auth.uploadBytes) throw Object.assign(new Error('Audio must be between 12 bytes and 24 MiB.'), { code: 'UPLOAD_INVALID' });
         bytes = Buffer.alloc(stat.size); const read = await handle.read(bytes, 0, bytes.length, 0);
         if (read.bytesRead !== bytes.length || (await handle.stat()).size !== stat.size) throw new Error('Audio file changed while being read.');
       } finally { await handle.close(); }
@@ -219,11 +221,11 @@ class AuthClient {
       if (url.protocol !== 'https:' || !/^[a-f0-9]{32}\.r2\.cloudflarestorage\.com$/.test(url.hostname) || url.username || url.password || url.port || url.hash ||
         !url.pathname.includes(`/quarantine/${this.user.id}/${authorization.uploadId}/original.${extension}`) ||
         authorization.headers?.['Content-Type'] !== formats[extension] || authorization.headers?.['Content-Length'] !== String(bytes.length) || authorization.expiresIn !== 120) throw new Error('Invalid upload authorization.');
-      const response = await this.fetch(url.href, { method: 'PUT', headers: { 'Content-Type': formats[extension], 'Content-Length': String(bytes.length) }, body: bytes, redirect: 'error', signal: AbortSignal.timeout(120000) });
+      const response = await this.fetch(url.href, { method: 'PUT', headers: { 'Content-Type': formats[extension], 'Content-Length': String(bytes.length) }, body: bytes, redirect: 'error', signal: AbortSignal.timeout(desktopConfig.auth.uploadTimeoutMs) });
       await response.body?.cancel();
       if (!response.ok) throw new Error('Audio upload failed.');
       await this.request('/api/uploads/' + authorization.uploadId + '/complete', {}, true);
-      return { user: this.user, message: 'Audio uploaded. Validation is pending.', cloud: await this.request('/api/sounds?scope=mine&limit=100', undefined, true) };
+      return { user: this.user, message: 'Audio uploaded. Validation is pending.', cloud: await this.request(`/api/sounds?scope=mine&limit=${desktopConfig.catalog.pageSize}`, undefined, true) };
     });
   }
   accountAction(kind, input) {
@@ -241,7 +243,7 @@ class AuthClient {
       }
       const validId = require('./catalog-id').valid;
       if (kind === 'sync') {
-        if (!Array.isArray(input) || input.length > 100 || !input.every(validId)) throw new Error('Invalid favorite IDs.');
+        if (!Array.isArray(input) || input.length > desktopConfig.auth.favoritesBatchSize || !input.every(validId)) throw new Error('Invalid favorite IDs.');
         return { user: this.user, ...await this.request('/api/favorites/sync', { ids: input }, true) };
       }
       if (kind === 'favorite') {
@@ -280,7 +282,7 @@ function registerAuthIpc({ ipcMain, getWindow, app, safeStorage, shell, dialog }
   let client;
   function getClient() {
     if (!client) {
-      const config = require('./platform.json');
+      const config = desktopConfig.network;
       const development = !isPackagedApp(app);
       client = new AuthClient({ apiBaseUrl: development && process.env.FREQX_API_BASE_URL || config.apiBaseUrl,
         development, store: new SecureCredentialStore({ directory: app.getPath('userData'), safeStorage }) });
