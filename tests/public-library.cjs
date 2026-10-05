@@ -8,13 +8,19 @@ const os = require('node:os');
 const { createHash } = require('node:crypto');
 const { PublicLibrary } = require('../runtime/public-library.cjs');
 const appRoot = path.resolve(__dirname, '..');
+const { config: desktopConfig } = require('../runtime/desktop-config.cjs');
+async function saveConfig(directory, catalog) {
+  const config = structuredClone(desktopConfig);
+  Object.assign(config.catalog, catalog);
+  await fs.writeFile(path.join(directory, 'runtime/desktop-config.json'), JSON.stringify(config));
+}
 
 async function fixture(run) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'freqx-public-library-'));
   try {
     await fs.mkdir(path.join(directory, 'runtime'));
     await fs.mkdir(path.join(directory, 'assets'));
-    await fs.writeFile(path.join(directory, 'runtime/public-library.json'), JSON.stringify({ mode: 'bundled', catalogUrl: '', audioBaseUrl: '' }));
+    await saveConfig(directory, { mode: 'bundled', catalogUrl: '', audioBaseUrl: '' });
     await fs.cp(path.join(appRoot, 'assets/library'), path.join(directory, 'assets/library'), { recursive: true });
     const catalogPath = path.join(directory, 'assets/library/catalog.json');
     const catalog = JSON.parse(await fs.readFile(catalogPath, 'utf8'));
@@ -100,13 +106,10 @@ test('catalog paths are ignored; only strictly validated IDs derive filenames', 
   });
 });
 
-test('non-https and disallowed remote endpoints are ignored and bundled is used', async () => {
+test('invalid developer configuration cannot enable an untrusted library endpoint', async () => {
   await fixture(async ({ directory, service }) => {
-    await fs.writeFile(path.join(directory, 'runtime/public-library.json'), JSON.stringify({ mode: 'remote', catalogUrl: 'http://example.com/catalog.json', audioBaseUrl: 'ftp://example.com' }));
-    const catalog = await service.getCatalog();
-    assert.equal(catalog.source, 'bundled');
-    assert.equal(catalog.remoteConfigured, false);
-    assert.equal(catalog.sounds.length, 6);
+    await saveConfig(directory, { mode: 'remote', catalogUrl: 'http://example.com/catalog.json', audioBaseUrl: 'ftp://example.com' });
+    await assert.rejects(service.getCatalog(), /Invalid desktop configuration/);
   });
 });
 
@@ -128,11 +131,11 @@ function fakeResponse(buffer, contentType) {
 
 test('validated remote catalog and audio are fetched without leaking paths or URLs', async () => {
   await fixture(async ({ directory, service }) => {
-    await fs.writeFile(path.join(directory, 'runtime/public-library.json'), JSON.stringify({
+    await saveConfig(directory, {
       mode: 'remote',
       catalogUrl: 'https://audio.freqx.app/sound1.json',
       audioBaseUrl: 'https://audio.freqx.app'
-    }));
+    });
     const remoteCatalog = [{
       title: 'Test-sound',
       category: 'Test',
@@ -173,11 +176,11 @@ test('validated remote catalog and audio are fetched without leaking paths or UR
 
 test('remote failures fall back to the packaged catalog and audio', async () => {
   await fixture(async ({ directory, service }) => {
-    await fs.writeFile(path.join(directory, 'runtime/public-library.json'), JSON.stringify({
+    await saveConfig(directory, {
       mode: 'remote',
       catalogUrl: 'https://audio.freqx.app/sound1.json',
       audioBaseUrl: 'https://audio.freqx.app'
-    }));
+    });
     service.download = async () => { throw new Error('offline'); };
     try {
       const catalog = await service.getCatalog();

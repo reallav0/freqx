@@ -23,5 +23,5 @@ test('desktop package and CI are independent of backend deployment and PostgreSQ
   checkClientImports(path.join(root, 'runtime'));
   assert.ok(pkg.build.files.includes('account.js'));
   assert.ok(pkg.build.files.includes('runtime/**/*'));
-  assert.equal(require('../runtime/platform.json').apiBaseUrl, 'https://api.freqx.app');
+  assert.equal(require('../runtime/desktop-config.cjs').config.network.apiBaseUrl, 'https://api.freqx.app');
 });

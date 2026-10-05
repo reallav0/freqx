@@ -18,3 +18,15 @@ replaced with a maintained resource editor when compatible tooling is available.
 The generated Windows installer is **NotSigned** according to
 Get-AuthenticodeSignature. Builder's signing log lines do not establish that
 signing occurred. No trusted signing certificate is configured.
+
+## Audit remediation — 2026-10-03
+
+The CI audit gate remains enabled. Advisory
+[GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp)
+affects `http-cache-semantics`, pulled in by Electron Builder's legacy downloader.
+The `@electron/get: 5.1.0` override uses the native-fetch downloader already required
+by Electron 44, removing the vulnerable cache dependency instead of suppressing
+the audit. This requires Node 22.12 or newer; CI uses Node 22.
+
+The updated lockfile reports zero vulnerabilities with `npm audit --audit-level=high`.
+Windows packaging and native dependency rebuilding are verified with the override.

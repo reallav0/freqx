@@ -88,7 +88,7 @@ test('reference worklet queue resamples without unbounded growth and destroys it
   const messages = [];
   global.AudioWorkletProcessor = class { constructor() { this.port = { postMessage: m => messages.push(m) }; } };
   const { ReferenceProcessor } = await import('../audio/reference-worklet.mjs');
-  const processor = new ReferenceProcessor({ processorOptions: { sampleRate: 44100 } });
+  const processor = new ReferenceProcessor({ processorOptions: { sampleRate: 44100, tuning: { reference: require('../runtime/desktop-config.cjs').config.audio.reference } } });
   const pcm = new Float32Array(441).fill(.25), out = new Float32Array(128);
   for (let i = 0; i < 100; i++) {
     processor.port.onmessage({ data: { type: 'pcm', samples: pcm } });

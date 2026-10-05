@@ -41,6 +41,25 @@ async function run() {
     await fs.writeFile(path.join(directory, 'account.html'), html);
     await window.loadFile(path.join(directory, 'account.html'));
     const evaluate = source => window.webContents.executeJavaScript(source);
+    async function resizeContent(width, height) {
+      window.setContentSize(width, height);
+      const deadline = Date.now() + 2000;
+      while (await evaluate('innerWidth') !== width && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      assert.equal(await evaluate('innerWidth'), width, 'Renderer finishes resizing before keyboard input');
+    }
+    async function assertFocus(id, message) {
+      // Native input delivery and renderer evaluation use different queues.
+      // Wait for the actual focus transition rather than sampling the preceding key.
+      const deadline = Date.now() + 2000;
+      let activeId = await evaluate('document.activeElement.id');
+      while (activeId !== id && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+        activeId = await evaluate('document.activeElement.id');
+      }
+      assert.equal(activeId, id, message);
+    }
     async function capture(name) {
       if (!process.env.FREQX_AUTH_SCREENSHOTS) return;
       await new Promise(resolve => setTimeout(resolve, 200));
@@ -61,18 +80,19 @@ async function run() {
       await evaluate(`document.body.dataset.theme='daylight'`);
       await capture('login-daylight');
       await evaluate(`delete document.body.dataset.theme`);
-      window.setContentSize(390, 760);
+      await resizeContent(390, 760);
       await capture('login-narrow');
       assert.equal(await evaluate(`document.getElementById('accountOverlay').scrollWidth <= innerWidth`), true, 'Narrow dialog has no horizontal overflow');
-      window.setContentSize(1100, 860);
+      await resizeContent(1100, 860);
     }
     await evaluate(`document.getElementById('closeAccount').focus()`);
     window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
     window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab', modifiers: ['shift'] });
+    await assertFocus('accountPhone', 'Shift+Tab wraps to the last dialog control');
     assert.equal(await evaluate(`document.getElementById('accountOverlay').contains(document.activeElement)`), true, 'Shift+Tab stays in the dialog');
     window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
     window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
-    assert.equal(await evaluate(`document.activeElement.id`), 'closeAccount', 'Tab wraps back to the first dialog control');
+    await assertFocus('closeAccount', 'Tab wraps back to the first dialog control');
     await evaluate(`document.getElementById('accountPassword').value='temporary-secret'; document.getElementById('accountPasswordToggle').click()`);
     assert.equal(await evaluate(`document.getElementById('accountPassword').type`), 'text');
     assert.equal(await evaluate(`document.getElementById('accountPasswordToggle').getAttribute('aria-pressed')`), 'true');

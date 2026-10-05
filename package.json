@@ -11,7 +11,7 @@
   "license": "ISC",
   "scripts": {
     "lint": "eslint . --max-warnings 0",
-    "test:unit": "node --test tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs",
+    "test:unit": "node --test tests/desktop-config.cjs tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs",
     "test:driver": "node tests/driver-security.cjs",
     "test:auth-desktop": "node tests/auth-electron.cjs",
     "prepare:audio": "node scripts/prepare-audio.cjs",
@@ -116,7 +116,8 @@
     ]
   },
   "overrides": {
-    "nan": "2.29.0"
+    "nan": "2.29.0",
+    "@electron/get": "5.1.0"
   },
   "dependencies": {
     "codex-wake": "^0.2.0",

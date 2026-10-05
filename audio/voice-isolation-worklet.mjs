@@ -1,16 +1,9 @@
 // DeepFilterNet3 accepts normalized mono float audio at 48 kHz in 480-sample hops.
 // Only the microphone is connected here; this node never sees the soundboard mix.
 // Compilation/fetching happen outside the real-time thread. See vendor/deepfilter.
+import '../runtime/config-schema.js';
 const FRAME_SIZE = 480;
 const MODEL_BYTES = 8538564;
-const MODES = Object.freeze({
-  // Increased attenuation/post-filter for stronger noise removal.
-  // Values here are decibel limits and filter betas sent to the native engine.
-  // 'attenuationDb' is logarithmic (dB). These settings represent ~10× the
-  // original defaults: standard (20 dB -> 200 dB), strong (60 dB -> 600 dB).
-  standard: Object.freeze({ attenuationDb: 20, postFilterBeta: 0.02 }),
-  strong: Object.freeze({ attenuationDb: 40, postFilterBeta: 0.2 })
-});
 
 class VoiceIsolationProcessor extends AudioWorkletProcessor {
   constructor(options) {
@@ -40,7 +33,9 @@ class VoiceIsolationProcessor extends AudioWorkletProcessor {
 
     try {
       if (sampleRate !== 48000) throw new Error("DeepFilterNet3 requires a microphone context at 48 kHz.");
-      const { wasmModule, modelBytes, mode = "standard" } = options.processorOptions || {};
+      const { wasmModule, modelBytes, mode, tuning } = options.processorOptions || {};
+      if (!tuning?.voiceModes) throw new Error("Missing voice isolation tuning.");
+      this.modes = globalThis.FreqxConfigSchema.validateAudioTuning(tuning).voiceModes;
       if (!(wasmModule instanceof WebAssembly.Module)) throw new Error("DeepFilterNet3 WASM was not compiled before worklet initialization.");
       const weights = modelBytes instanceof ArrayBuffer ? new Uint8Array(modelBytes) : modelBytes;
       if (!(weights instanceof Uint8Array) || weights.byteLength !== MODEL_BYTES) throw new Error("DeepFilterNet3 model has an unexpected size.");
@@ -78,13 +73,13 @@ class VoiceIsolationProcessor extends AudioWorkletProcessor {
       this.setMode(mode, false);
       this.port.postMessage({
         type: "ready", frameSize: FRAME_SIZE, sampleRate: 48000, mode: this.mode,
-        ...MODES[this.mode], bufferLatencyMs: 10, modelLatencyMs: 30
+        ...this.modes[this.mode], bufferLatencyMs: 10, modelLatencyMs: 30
       });
     } catch (error) { this.fail(error); }
   }
 
   setMode(mode, acknowledge) {
-    const settings = MODES[mode];
+    const settings = this.modes[mode];
     if (!settings) throw new Error("Unknown DeepFilterNet3 mode.");
     this.engine.dfn3_wasm_set_atten_lim(settings.attenuationDb);
     this.engine.dfn3_wasm_set_post_filter_beta(settings.postFilterBeta);

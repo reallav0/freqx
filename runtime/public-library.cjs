@@ -10,10 +10,11 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { valid: validId } = require('./catalog-id.js');
 const { downloadBytes, parseRemoteUrl } = require('./remote-download.cjs');
+const { config: desktopConfig, loadConfig } = require('./desktop-config.cjs');
 
-const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
-const MAX_SOUND_BYTES = 2 * 1024 * 1024;
-const MAX_REMOTE_SOUND_BYTES = 24 * 1024 * 1024;
+const MAX_CATALOG_BYTES = desktopConfig.catalog.catalogBytes;
+const MAX_SOUND_BYTES = desktopConfig.catalog.bundledSoundBytes;
+const MAX_REMOTE_SOUND_BYTES = desktopConfig.catalog.remoteSoundBytes;
 
 const MIME_BY_EXT = Object.freeze({
   '.wav': 'audio/wav',
@@ -105,9 +106,10 @@ function parseJson(buffer, label) {
 }
 
 class PublicLibrary {
-  constructor({ appRoot, download = downloadBytes, tempRoot } = {}) {
+  constructor({ appRoot, download = downloadBytes, tempRoot, development = !process.versions.electron || process.defaultApp === true } = {}) {
     if (typeof appRoot !== 'string' || !path.isAbsolute(appRoot)) fail('Library requires an absolute application root.');
     this.appRoot = path.resolve(appRoot);
+    this.development = development;
     this.assetRoot = path.join(this.appRoot, 'assets', 'library');
     this.catalogPromise = null;
     this.config = null;
@@ -118,14 +120,11 @@ class PublicLibrary {
   }
 
   async readConfig() {
-    const config = parseJson(await readBounded(path.join(this.appRoot, 'runtime', 'public-library.json'), 4096), 'configuration');
-    const bundled = config?.mode === 'bundled' || process.env.FREQX_LIBRARY_BUNDLED === '1';
-    const catalogFile = (typeof config?.catalogFile === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(config.catalogFile))
-      ? config.catalogFile
-      : 'sound1.json';
+    const config = loadConfig(path.join(this.appRoot, 'runtime', 'desktop-config.json')).catalog;
+    const bundled = config.mode === 'bundled' || this.development && process.env.FREQX_LIBRARY_BUNDLED === '1';
     return {
       mode: bundled ? 'bundled' : 'remote',
-      catalogFile,
+      catalogFile: config.catalogFile,
       catalogUrl: validRemoteUrl(config?.catalogUrl),
       audioBaseUrl: validRemoteUrl(config?.audioBaseUrl)
     };
@@ -167,7 +166,7 @@ class PublicLibrary {
     const entries = Array.isArray(catalog)
       ? catalog
       : (catalog && catalog.version === 1 && Array.isArray(catalog.sounds) ? catalog.sounds : null);
-    if (!entries || entries.length > 5000) fail('Invalid library catalog.');
+    if (!entries || entries.length > desktopConfig.catalog.maxSounds) fail('Invalid library catalog.');
 
     const byId = new Map();
     for (const raw of entries) {
@@ -193,7 +192,7 @@ class PublicLibrary {
       let sha256 = null;
       let waveform = [];
       if (remote) {
-        if (Number.isFinite(raw.duration) && raw.duration > 0 && raw.duration <= 300) duration = raw.duration;
+        if (Number.isFinite(raw.duration) && raw.duration > 0 && raw.duration <= desktopConfig.catalog.maxDurationSeconds) duration = raw.duration;
         if (Number.isInteger(raw.sizeBytes) && raw.sizeBytes > 0 && raw.sizeBytes <= MAX_REMOTE_SOUND_BYTES) sizeBytes = raw.sizeBytes;
         if (typeof raw.sha256 === 'string' && /^[a-f0-9]{64}$/.test(raw.sha256)) sha256 = raw.sha256;
         if (Array.isArray(raw.waveform) && raw.waveform.length === 32 && raw.waveform.every(value => Number.isFinite(value) && value >= 0 && value <= 1)) {

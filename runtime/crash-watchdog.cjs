@@ -5,8 +5,9 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { reserveRestart } = require("./recovery-policy.cjs");
 
-const PARENT_EXIT_TIMEOUT_MS = 30_000;
-const PARENT_EXIT_POLL_MS = 100;
+const { config: desktopConfig } = require('./desktop-config.cjs');
+const PARENT_EXIT_TIMEOUT_MS = desktopConfig.recovery.parentExitTimeoutMs;
+const PARENT_EXIT_POLL_MS = desktopConfig.recovery.pollIntervalMs;
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 function log(config, type, details = {}) {
@@ -131,7 +132,7 @@ async function handleParentDisconnect(config) {
 function runWatchdog() {
   let config;
   let recovering = false;
-  const startupTimeout = setTimeout(() => process.exit(1), 30_000);
+  const startupTimeout = setTimeout(() => process.exit(1), desktopConfig.recovery.watchdogStartupTimeoutMs);
   process.on("message", (message) => {
     if (config && message?.type === "stop" && message.runId === config.runId) {
       // A second disarm channel also covers a full/read-only disk preventing

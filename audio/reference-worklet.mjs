@@ -1,15 +1,18 @@
 // Bounded mono reference queue. WASAPI keeps its native rate; conversion and
 // modest clock drift compensation happen here without changing the mixer.
+import '../runtime/config-schema.js';
 const WorkletBase = typeof AudioWorkletProcessor === 'undefined' ? class {} : AudioWorkletProcessor;
 export class ReferenceProcessor extends WorkletBase {
   constructor({ processorOptions } = {}) {
     super();
+    if (!processorOptions?.tuning?.reference) throw new Error('Missing playback reference tuning.');
+    this.tuning = globalThis.FreqxConfigSchema.validateAudioTuning(processorOptions.tuning).reference;
     this.rate = processorOptions?.sampleRate || 48000;
     this.outputRate = typeof sampleRate === 'number' ? sampleRate : 48000;
-    this.capacity = Math.ceil(this.rate * .15);
+    this.capacity = Math.ceil(this.rate * this.tuning.capacitySeconds);
     this.queue = new Float32Array(this.capacity);
     this.read = this.write = 0;
-    this.target = Math.ceil(this.rate * .015);
+    this.target = Math.ceil(this.rate * this.tuning.targetSeconds);
     this.primed = false;
     this.closed = false;
     this.port.onmessage = ({ data }) => {
@@ -21,8 +24,8 @@ export class ReferenceProcessor extends WorkletBase {
       } else if (data?.type === 'pcm' && !this.closed) {
         const samples = data.samples;
         if (!(samples instanceof Float32Array) || samples.length > 1920) return;
-        // A burst exceeding 100 ms is stale; reset instead of increasing delay.
-        if (this.write - this.read + samples.length > this.rate * .1) {
+        // Reset a stale burst instead of increasing reference delay.
+        if (this.write - this.read + samples.length > this.rate * this.tuning.staleSeconds) {
           this.read = this.write = 0; this.primed = false;
           this.port.postMessage({ type: 'discontinuity' });
         }
@@ -35,9 +38,9 @@ export class ReferenceProcessor extends WorkletBase {
     if (this.closed) return false;
     const output = outputs[0]?.[0];
     if (!output) return true;
-    // The clock correction remains within +/-0.2%; delay changes don't accumulate.
+    // Bound clock correction so delay changes do not accumulate.
     const backlog = this.write - this.read;
-    const correction = Math.max(-.002, Math.min(.002, (backlog - this.target) / (this.rate * 10)));
+    const correction = Math.max(-this.tuning.maxClockCorrection, Math.min(this.tuning.maxClockCorrection, (backlog - this.target) / (this.rate * this.tuning.clockCorrectionSeconds)));
     const increment = this.rate / this.outputRate * (1 + correction);
     for (let i = 0; i < output.length; i++) {
       if (!this.primed || this.write - this.read < 2) {

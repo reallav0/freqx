@@ -20,7 +20,7 @@ const checks = [];
 function fixture(options = {}) {
   const calls = {
     nativeLoads: [], starts: 0, restarts: [], stops: [], recoveries: [],
-    exits: [], quits: 0, windows: [], writes: [], sends: [], referenceRequests: [], updateConfigs: [],
+    exits: [], quits: 0, windows: [], writes: [], sends: [], referenceRequests: [], updateConfigs: [], switches: [], hardwareDisabled: 0,
   };
   const timers = [];
   let timerClock = 0;
@@ -35,10 +35,10 @@ function fixture(options = {}) {
   };
   const app = Object.assign(new EventEmitter(), {
     isPackaged: true,
-    commandLine: { appendSwitch() {}, hasSwitch() { return false; } },
+    commandLine: { appendSwitch(...args) { calls.switches.push(args); }, hasSwitch() { return false; } },
     getPath(name) { return path.join(root, name === 'userData' ? 'fixture-profile' : `fixture-${name}`); },
     setPath() {}, setName(name) { assert.equal(name, 'freqx'); }, getAppPath() { return root; },
-    disableHardwareAcceleration() {}, requestSingleInstanceLock() { return options.lock !== false; },
+    disableHardwareAcceleration() { calls.hardwareDisabled++; }, requestSingleInstanceLock() { return options.lock !== false; },
     hasSingleInstanceLock() { return options.lock !== false; },
     isReady() { return isReady; },
     whenReady() { return new Promise(resolve => pendingReady.push(resolve)); },
@@ -145,7 +145,7 @@ function fixture(options = {}) {
         delete packaged.build;
         return packaged;
       }
-      if (name === './runtime/update-config.json') return require('../runtime/update-config.json');
+      if (name === './runtime/desktop-config.cjs') return { config: options.config || require('../runtime/desktop-config.cjs').config };
       if (name === './runtime/auth-client.cjs') return { registerAuthIpc() {} };
       if (name === './runtime/app-mode.cjs') return require('../runtime/app-mode.cjs');
       if (name === './runtime/public-library.cjs') return {
@@ -237,6 +237,22 @@ function assertNotRecoveredSynchronously(subject) {
 }
 
 async function main() {
+  await check('developer configuration controls startup and window behavior while packaged env flags are ignored', async () => {
+    const { config: defaults, validateConfig } = require('../runtime/desktop-config.cjs');
+    const config = structuredClone(defaults);
+    config.app.window.width = 1400;
+    config.app.hardwareAcceleration = true;
+    config.app.disabledFeatures = [];
+    config.app.preferences.startHidden = true;
+    const subject = fixture({ config: validateConfig(config), env: { FREQX_ENABLE_NATIVE_KEY_HOOK: '1' } });
+    await subject.ready();
+    assert.equal(subject.window.options.width, 1400);
+    assert.equal(subject.window.visible, false);
+    assert.equal(subject.calls.hardwareDisabled, 0);
+    assert.deepEqual(subject.calls.switches, []);
+    assert.deepEqual(subject.calls.nativeLoads, []);
+  });
+
   await check('release starts when packaged metadata has no build field', async () => {
     const subject = fixture({ packagedMetadata: true });
     await subject.ready();

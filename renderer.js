@@ -1,8 +1,9 @@
+let desktopConfig;
 let visibleCrashReport = null;
 let visibleCrashLogPath = "";
 let crashScreenControlsBound = false;
 
-function limitRendererCrashText(value, maxLength = 16000) {
+function limitRendererCrashText(value, maxLength = desktopConfig?.ui.rendererCrashTextLength ?? Number.MAX_SAFE_INTEGER) {
   const text = value === undefined || value === null ? "" : String(value);
   if (text.length <= maxLength) {
     return text;
@@ -313,8 +314,8 @@ let micIsolationPending = null;
 let micIsolationGeneration = 0;
 let micCaptureGeneration = 0;
 let micToggleRevision = 0;
-let isVoiceIsolationEnabled = true;
-let selectedVoiceIsolationMode = "standard";
+let isVoiceIsolationEnabled;
+let selectedVoiceIsolationMode;
 let voiceIsolationStatus = "waiting";
 let micGainNode;
 let micHighPassNode;
@@ -352,17 +353,17 @@ let meterHidden = false;
 let meterVisibilityBound = false;
 let selectedInputDeviceId = "";
 let selectedOutputDeviceId = "";
-let isMicCaptureEnabled = true;
-let isMixToOutputEnabled = true;
-let isSoundPlaybackEnabled = true;
+let isMicCaptureEnabled;
+let isMixToOutputEnabled;
+let isSoundPlaybackEnabled;
 let selectedLocalPlaybackDeviceId = "";
 let availableInputDevices = [];
 let availableOutputDevices = [];
-const soundToMixBoost = 1.4;
-const micGateClosedGain = 0;
+let soundToMixBoost;
+let micGateClosedGain;
 const importedAudioBuffers = new Map();
 const importedAudioBufferSizes = new Map();
-const importedAudioBufferCacheLimitBytes = 256 * 1024 * 1024;
+let importedAudioBufferCacheLimitBytes;
 let importedAudioBufferTotalBytes = 0;
 const activeSoundNodes = new Set();
 const pendingSoundStarts = new Set();
@@ -379,24 +380,20 @@ const libraryMetadataStorageKey = "soundmuncher:library-metadata";
 const libraryViewStorageKey = "soundmuncher:library-view";
 const appPreferencesStorageKey = "soundmuncher:app-preferences";
 const walkthroughStorageKey = "soundmuncher:walkthrough-complete:v1";
-const defaultBoardName = "Main";
+let defaultBoardName;
 const allBoardsValue = "__all__";
-const defaultAppPreferences = {
-  compactMode: false,
-  uiTheme: "midnight",
-  padTheme: "mono"
-};
+let defaultAppPreferences;
 let importedKeybinds = {};
 let keybindCapturePath = "";
 let libraryMetadata = {};
-let boards = [defaultBoardName];
+let boards = [];
 let selectedBoard = allBoardsValue;
 let soundSearchQuery = "";
 let soundSortMode = "name";
 let editingSoundPath = "";
 let preferVirtualOutputOnce = false;
 let showFavoritesOnly = false;
-let appPreferences = { ...defaultAppPreferences };
+let appPreferences;
 let latestUpdateUrl = "";
 let activeWalkthroughStep = 0;
 let walkthroughActionMessage = "";
@@ -691,15 +688,7 @@ function defaultMetadataForItem(item) {
   return {
     name: item?.name || "Untitled sound",
     board: defaultBoardName,
-    color: "#4da8ff",
-    volume: 1,
-    trimStart: 0,
-    trimEnd: 0,
-    fadeIn: 0,
-    fadeOut: 0,
-    playbackMode: "overlap",
-    favorite: false,
-    pinned: false
+    ...desktopConfig.ui.soundDefaults
   };
 }
 
@@ -715,13 +704,13 @@ function normalizeSoundMetadata(item, metadata = {}) {
     board,
     color,
     volume: clampNumber(metadata.volume, 0, 1.5, defaults.volume),
-    trimStart: clampNumber(metadata.trimStart, 0, 3600, 0),
-    trimEnd: clampNumber(metadata.trimEnd, 0, 3600, 0),
-    fadeIn: clampNumber(metadata.fadeIn, 0, 30, 0),
-    fadeOut: clampNumber(metadata.fadeOut, 0, 30, 0),
+    trimStart: clampNumber(metadata.trimStart, 0, 3600, defaults.trimStart),
+    trimEnd: clampNumber(metadata.trimEnd, 0, 3600, defaults.trimEnd),
+    fadeIn: clampNumber(metadata.fadeIn, 0, 30, defaults.fadeIn),
+    fadeOut: clampNumber(metadata.fadeOut, 0, 30, defaults.fadeOut),
     playbackMode,
-    favorite: Boolean(metadata.favorite),
-    pinned: Boolean(metadata.pinned),
+    favorite: metadata.favorite === undefined ? defaults.favorite : Boolean(metadata.favorite),
+    pinned: metadata.pinned === undefined ? defaults.pinned : Boolean(metadata.pinned),
     catalogId: window.FreqxCatalogId.valid(metadata.catalogId) ? metadata.catalogId : ""
   };
 }
@@ -840,11 +829,11 @@ function loadAppPreferences() {
   try {
     const raw = window.localStorage.getItem(appPreferencesStorageKey);
     const parsed = raw ? JSON.parse(raw) : {};
-    const allowedThemes = new Set(["midnight", "studio", "ember", "daylight"]);
-    const allowedPadThemes = new Set(["spectrum", "neon", "candy", "mono"]);
+    const allowedThemes = new Set(desktopConfig.ui.themes);
+    const allowedPadThemes = new Set(Object.keys(desktopConfig.ui.padPalettes));
 
     appPreferences = {
-      compactMode: Boolean(parsed.compactMode),
+      compactMode: typeof parsed.compactMode === 'boolean' ? parsed.compactMode : defaultAppPreferences.compactMode,
       uiTheme: allowedThemes.has(parsed.uiTheme) ? parsed.uiTheme : defaultAppPreferences.uiTheme,
       padTheme: allowedPadThemes.has(parsed.padTheme) ? parsed.padTheme : defaultAppPreferences.padTheme
     };
@@ -890,12 +879,7 @@ function hashString(value) {
 }
 
 function getPadThemePalette() {
-  const palettes = {
-    spectrum: ["#4da8ff", "#7dd3c7", "#80d489", "#e2b86f", "#ef6b63", "#bd8cff"],
-    neon: ["#00f5d4", "#00bbf9", "#fee440", "#f15bb5", "#9b5de5", "#70e000"],
-    candy: ["#ff8fab", "#ffc2d1", "#bde0fe", "#a2d2ff", "#cdb4db", "#fdffb6"],
-    mono: ["#eeeeeb", "#a6a6a3", "#c6c6c2", "#90908d", "#d8d8d4", "#b6b6b2"]
-  };
+  const palettes = desktopConfig.ui.padPalettes;
 
   return palettes[appPreferences.padTheme] || palettes.mono;
 }
@@ -1310,13 +1294,13 @@ function renderLibraryEmptyState(hasLibraryItems) {
 
   const title = document.createElement("h3");
   title.className = "empty-title";
-  title.textContent = hasLibraryItems ? "No sounds found." : "Make some noise.";
+  title.textContent = hasLibraryItems ? "No matching sounds" : "Your soundboard starts here";
 
   const copy = document.createElement("p");
   copy.className = "empty-copy";
   copy.textContent = hasLibraryItems
     ? "Try another search, or clear your filters to see every sound."
-    : "Drop your audio here. Build a board. Find your frequency.";
+    : "Import an audio file or drop it here. Your sounds stay on this device, ready to play.";
 
   const action = document.createElement("button");
   action.type = "button";
@@ -1339,6 +1323,14 @@ function renderLibraryEmptyState(hasLibraryItems) {
   });
 
   placeholder.append(glyph, title, copy, action);
+  if (!hasLibraryItems) {
+    const browse = document.createElement("button");
+    browse.type = "button";
+    browse.className = "mixer-action quiet-action empty-browse";
+    browse.textContent = "Browse public sounds";
+    browse.addEventListener("click", () => document.getElementById("discoverTab").click());
+    placeholder.appendChild(browse);
+  }
   importedList.appendChild(placeholder);
 }
 
@@ -1623,8 +1615,8 @@ window.addEventListener('freqx-favorites-sync', async event => {
   try {
     const ids = [...new Set(importedLibraryItems.map(getSoundMetadata).filter(metadata => metadata.favorite && metadata.catalogId).map(metadata => metadata.catalogId))];
     let result;
-    for (let offset = 0; offset < Math.max(ids.length, 1); offset += 100) {
-      result = await window.soundmuncher.syncFavorites(ids.slice(offset, offset + 100));
+    for (let offset = 0; offset < Math.max(ids.length, 1); offset += desktopConfig.auth.favoritesBatchSize) {
+      result = await window.soundmuncher.syncFavorites(ids.slice(offset, offset + desktopConfig.auth.favoritesBatchSize));
       if (result.error || userId !== cloudAccountUserId || result.user?.id !== userId) throw new Error('Sync unavailable.');
     }
     const favorites = new Set(result.ids);
@@ -2799,19 +2791,19 @@ async function sendTestTone() {
   const now = audioContext.currentTime;
   const osc = audioContext.createOscillator();
   const gain = audioContext.createGain();
-  const duration = 0.32;
+  const duration = desktopConfig.audio.testTone.durationSeconds;
 
   osc.type = "sine";
-  osc.frequency.setValueAtTime(880, now);
+  osc.frequency.setValueAtTime(desktopConfig.audio.testTone.frequency, now);
   gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(0.28, now + 0.02);
+  gain.gain.exponentialRampToValueAtTime(desktopConfig.audio.testTone.gain, now + desktopConfig.audio.testTone.rampSeconds);
   gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
   osc.connect(gain);
   gain.connect(soundGainNode);
   trackSoundNode(osc, gain);
   osc.start(now);
-  osc.stop(now + duration + 0.02);
+  osc.stop(now + duration + desktopConfig.audio.testTone.rampSeconds);
 
   setRouteState("Test tone injected into mix.");
 }
@@ -2865,21 +2857,21 @@ function updateMixerGains() {
   }
 
   const now = audioContext.currentTime;
-  micGainNode.gain.setTargetAtTime(Number(micGainSlider.value), now, 0.01);
-  soundGainNode.gain.setTargetAtTime(Number(soundGainSlider.value), now, 0.01);
-  masterGainNode.gain.setTargetAtTime(Number(masterGainSlider.value), now, 0.01);
+  micGainNode.gain.setTargetAtTime(Number(micGainSlider.value), now, desktopConfig.audio.gainRampSeconds);
+  soundGainNode.gain.setTargetAtTime(Number(soundGainSlider.value), now, desktopConfig.audio.gainRampSeconds);
+  masterGainNode.gain.setTargetAtTime(Number(masterGainSlider.value), now, desktopConfig.audio.gainRampSeconds);
 }
 
 function updateMicNoiseReduction() {
   if (!audioContext || !micNoiseReductionGainNode || !micStream) return;
   // DeepFilterNet owns noise reduction. Off/fallback use AEC without an expander.
-  micNoiseReductionGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.02);
+  micNoiseReductionGainNode.gain.setTargetAtTime(1, audioContext.currentTime, desktopConfig.audio.routeRampSeconds);
 }
 
 function updateMicNoiseGate() {
   if (!audioContext || !micGateGainNode || !micStream) return;
   // A hard gate clips quiet speech and must not obscure the AEC fallback.
-  micGateGainNode.gain.setTargetAtTime(1, audioContext.currentTime, 0.02);
+  micGateGainNode.gain.setTargetAtTime(1, audioContext.currentTime, desktopConfig.audio.routeRampSeconds);
 }
 
 function scheduleLevelMeter() {
@@ -2908,8 +2900,8 @@ function updateLevelMeter(timestamp = 0) {
 
   // The frequency peak scan runs a 4096-point FFT. It does not need to run at
   // display rate, so throttle it and the DOM meter writes to reduce idle CPU.
-  const doFrequency = (meterFrameSerial++ % 6) === 0;
-  if (timestamp - meterLastUpdateTime < 1000 / 30 && !doFrequency) {
+  const doFrequency = (meterFrameSerial++ % desktopConfig.ui.frequencyMeterFrameStride) === 0;
+  if (timestamp - meterLastUpdateTime < 1000 / desktopConfig.ui.meterFramesPerSecond && !doFrequency) {
     scheduleLevelMeter();
     return;
   }
@@ -2956,8 +2948,8 @@ function updateLevelMeter(timestamp = 0) {
   if (doFrequency && hzValue && micFrequencyAnalyser && micFrequencyData) {
     micFrequencyAnalyser.getByteFrequencyData(micFrequencyData);
 
-    const minHz = 40;
-    const maxHz = 12000;
+    const minHz = desktopConfig.ui.frequencyMeterMinHz;
+    const maxHz = desktopConfig.ui.frequencyMeterMaxHz;
     const nyquist = audioContext.sampleRate / 2;
     const minBin = Math.max(1, Math.floor((minHz / nyquist) * micFrequencyData.length));
     const maxBin = Math.min(micFrequencyData.length - 1, Math.floor((maxHz / nyquist) * micFrequencyData.length));
@@ -3011,7 +3003,7 @@ function updateEchoDiagnostics(diagnostics) {
       : 'Playback reference starts with voice isolation';
     return;
   }
-  const level = db > -65 ? `${Math.round(db)} dBFS` : 'Quiet';
+  const level = db > desktopConfig.ui.referenceQuietDb ? `${Math.round(db)} dBFS` : 'Quiet';
   echoReferenceState.textContent = `WebRTC AEC3 · ${diagnostics.referenceLabel} · ${level}`;
 }
 
@@ -3164,64 +3156,64 @@ async function setupMixer(options = {}) {
     micFrequencyAnalyser = audioContext.createAnalyser();
     mixDestination = audioContext.createMediaStreamDestination();
     appPlaybackDestination = audioContext.createMediaStreamDestination();
-    levelData = new Float32Array(1024);
-    micFrequencyData = new Uint8Array(2048);
+    levelData = new Float32Array(desktopConfig.audio.analysers.level.fftSize / 2);
+    micFrequencyData = new Uint8Array(desktopConfig.audio.analysers.frequency.fftSize / 2);
 
     micHighPassNode.type = "highpass";
-    micHighPassNode.frequency.value = 85;
-    micHighPassNode.Q.value = 0.7;
+    micHighPassNode.frequency.value = desktopConfig.audio.equalizer.highPass.frequency;
+    micHighPassNode.Q.value = desktopConfig.audio.equalizer.highPass.Q;
 
     micNotchNode.type = "notch";
-    micNotchNode.frequency.value = 60;
-    micNotchNode.Q.value = 8;
+    micNotchNode.frequency.value = desktopConfig.audio.equalizer.notch.frequency;
+    micNotchNode.Q.value = desktopConfig.audio.equalizer.notch.Q;
 
     micNoiseReductionGainNode.gain.value = 1;
-    micNoiseAnalyser.fftSize = 2048;
-    micNoiseAnalyser.smoothingTimeConstant = 0.8;
+    micNoiseAnalyser.fftSize = desktopConfig.audio.analysers.noise.fftSize;
+    micNoiseAnalyser.smoothingTimeConstant = desktopConfig.audio.analysers.noise.smoothing;
 
     micMudCutNode.type = "peaking";
-    micMudCutNode.frequency.value = 240;
-    micMudCutNode.Q.value = 1.1;
-    micMudCutNode.gain.value = -3;
+    micMudCutNode.frequency.value = desktopConfig.audio.equalizer.mudCut.frequency;
+    micMudCutNode.Q.value = desktopConfig.audio.equalizer.mudCut.Q;
+    micMudCutNode.gain.value = desktopConfig.audio.equalizer.mudCut.gain;
 
     micPresenceNode.type = "peaking";
-    micPresenceNode.frequency.value = 3200;
-    micPresenceNode.Q.value = 1;
-    micPresenceNode.gain.value = 2.5;
+    micPresenceNode.frequency.value = desktopConfig.audio.equalizer.presence.frequency;
+    micPresenceNode.Q.value = desktopConfig.audio.equalizer.presence.Q;
+    micPresenceNode.gain.value = desktopConfig.audio.equalizer.presence.gain;
 
     micAirNode.type = "highshelf";
-    micAirNode.frequency.value = 8500;
-    micAirNode.gain.value = 2;
+    micAirNode.frequency.value = desktopConfig.audio.equalizer.air.frequency;
+    micAirNode.gain.value = desktopConfig.audio.equalizer.air.gain;
 
     micLowPassNode.type = "lowpass";
-    micLowPassNode.frequency.value = 12000;
-    micLowPassNode.Q.value = 0.7;
+    micLowPassNode.frequency.value = desktopConfig.audio.equalizer.lowPass.frequency;
+    micLowPassNode.Q.value = desktopConfig.audio.equalizer.lowPass.Q;
 
-    micCompressorNode.threshold.value = -28;
-    micCompressorNode.knee.value = 18;
-    micCompressorNode.ratio.value = 4;
-    micCompressorNode.attack.value = 0.003;
-    micCompressorNode.release.value = 0.1;
+    micCompressorNode.threshold.value = desktopConfig.audio.micCompressor.threshold;
+    micCompressorNode.knee.value = desktopConfig.audio.micCompressor.knee;
+    micCompressorNode.ratio.value = desktopConfig.audio.micCompressor.ratio;
+    micCompressorNode.attack.value = desktopConfig.audio.micCompressor.attack;
+    micCompressorNode.release.value = desktopConfig.audio.micCompressor.release;
 
     micGateGainNode.gain.value = micGateClosedGain;
-    micGateAnalyser.fftSize = 2048;
-    micGateAnalyser.smoothingTimeConstant = 0.55;
+    micGateAnalyser.fftSize = desktopConfig.audio.analysers.gate.fftSize;
+    micGateAnalyser.smoothingTimeConstant = desktopConfig.audio.analysers.gate.smoothing;
 
     micMonitorGainNode.gain.value = 0;
     appPlaybackGainNode.gain.value = isSoundPlaybackEnabled ? 1 : 0;
     soundToMixGainNode.gain.value = isMixToOutputEnabled ? soundToMixBoost : 0;
 
-    levelAnalyser.fftSize = 2048;
-    levelAnalyser.smoothingTimeConstant = 0.82;
+    levelAnalyser.fftSize = desktopConfig.audio.analysers.level.fftSize;
+    levelAnalyser.smoothingTimeConstant = desktopConfig.audio.analysers.level.smoothing;
 
-    micFrequencyAnalyser.fftSize = 4096;
-    micFrequencyAnalyser.smoothingTimeConstant = 0.72;
+    micFrequencyAnalyser.fftSize = desktopConfig.audio.analysers.frequency.fftSize;
+    micFrequencyAnalyser.smoothingTimeConstant = desktopConfig.audio.analysers.frequency.smoothing;
 
-    compressorNode.threshold.value = -3;
-    compressorNode.knee.value = 6;
-    compressorNode.ratio.value = 1.3;
-    compressorNode.attack.value = 0.002;
-    compressorNode.release.value = 0.06;
+    compressorNode.threshold.value = desktopConfig.audio.mixCompressor.threshold;
+    compressorNode.knee.value = desktopConfig.audio.mixCompressor.knee;
+    compressorNode.ratio.value = desktopConfig.audio.mixCompressor.ratio;
+    compressorNode.attack.value = desktopConfig.audio.mixCompressor.attack;
+    compressorNode.release.value = desktopConfig.audio.mixCompressor.release;
 
     micGainNode.connect(micHighPassNode);
     micHighPassNode.connect(micNotchNode);
@@ -3387,7 +3379,7 @@ function stopMicCapture() {
   }
 
   if (audioContext && micGateGainNode) {
-    micGateGainNode.gain.setTargetAtTime(micGateClosedGain, audioContext.currentTime, 0.02);
+    micGateGainNode.gain.setTargetAtTime(micGateClosedGain, audioContext.currentTime, desktopConfig.audio.routeRampSeconds);
   }
   updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
 }
@@ -3535,7 +3527,7 @@ async function setMixToOutputEnabled(enabled) {
   isMixToOutputEnabled = enabled;
 
   if (audioContext && soundToMixGainNode) {
-    soundToMixGainNode.gain.setTargetAtTime(enabled ? soundToMixBoost : 0, audioContext.currentTime, 0.02);
+    soundToMixGainNode.gain.setTargetAtTime(enabled ? soundToMixBoost : 0, audioContext.currentTime, desktopConfig.audio.routeRampSeconds);
   }
 
   updateMixStateText();
@@ -3557,7 +3549,7 @@ async function setSoundPlaybackEnabled(enabled) {
   if (!enabled) discoverUi?.stopPreview();
 
   if (audioContext && appPlaybackGainNode) {
-    appPlaybackGainNode.gain.setTargetAtTime(enabled ? 1 : 0, audioContext.currentTime, 0.02);
+    appPlaybackGainNode.gain.setTargetAtTime(enabled ? 1 : 0, audioContext.currentTime, desktopConfig.audio.routeRampSeconds);
   }
 
   if (enabled) {
@@ -3795,7 +3787,7 @@ async function previewDiscoverSound(id, onEnded) {
   const result = await window.soundmuncher.previewPublicSound(id);
   if (generation !== discoverPreviewGeneration) return;
   const bytes = result.bytes;
-  if (!(bytes instanceof Uint8Array) || bytes.byteLength > 24 * 1024 * 1024) throw new Error("Preview unavailable. Try another sound.");
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength > desktopConfig.catalog.remoteSoundBytes) throw new Error("Preview unavailable. Try another sound.");
   const buffer = await audioContext.decodeAudioData(bytes.slice().buffer);
   if (generation !== discoverPreviewGeneration) return;
   await audioContext.resume();
@@ -3803,7 +3795,7 @@ async function previewDiscoverSound(id, onEnded) {
   if (generation !== discoverPreviewGeneration || !isSoundPlaybackEnabled) return;
   discoverPreviewSource = audioContext.createBufferSource();
   discoverPreviewGain = audioContext.createGain();
-  discoverPreviewGain.gain.value = .55;
+  discoverPreviewGain.gain.value = desktopConfig.audio.previewGain;
   discoverPreviewSource.buffer = buffer;
   // Audition locally only. Never connect to soundGainNode, master, or mic nodes.
   discoverPreviewSource.connect(discoverPreviewGain).connect(appPlaybackGainNode);
@@ -3829,19 +3821,49 @@ window.addEventListener('freqx-cloud-import', event => {
   importDiscoverSound(event.detail.sound, selectedBoard || defaultBoardName).catch(() => setLibraryState('Cloud sound could not be added.'));
 });
 
-loadMixerSettings();
-updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
-loadLibraryMetadata();
-loadLibraryView();
-loadAppPreferences();
-applyAppPreferences();
-updateGainLabels();
-updateToggleButtonLabels();
-loadKeybinds();
-renderStopKeybindButton();
-renderBoardControls();
-syncGlobalKeybinds();
-discoverUi = window.FreqxDiscover?.init({
+async function initializeApp() {
+  await loadBackgroundSettings();
+  await ensureDeviceLabels();
+  await refreshOutputDevices();
+  await setMicCaptureEnabled(desktopConfig.audio.defaults.micEnabled);
+  await setMixToOutputEnabled(desktopConfig.audio.defaults.mixEnabled);
+  await loadImportedLibrary();
+  maybeOpenWalkthroughOnce();
+  await window.soundmuncher?.externalImportsReady?.();
+}
+
+async function initializeConfiguredApp() {
+  desktopConfig = await window.FreqxDesktopConfig.ready;
+  const defaults = desktopConfig.audio.defaults;
+  isVoiceIsolationEnabled = defaults.voiceIsolation;
+  selectedVoiceIsolationMode = defaults.voiceIsolationMode;
+  isMicCaptureEnabled = defaults.micEnabled;
+  isMixToOutputEnabled = defaults.mixEnabled;
+  isSoundPlaybackEnabled = defaults.playbackEnabled;
+  soundToMixBoost = desktopConfig.audio.soundToMixBoost;
+  micGateClosedGain = desktopConfig.audio.micGateClosedGain;
+  importedAudioBufferCacheLimitBytes = desktopConfig.audio.bufferCacheBytes;
+  defaultBoardName = desktopConfig.ui.defaultBoardName;
+  boards = [defaultBoardName];
+  defaultAppPreferences = desktopConfig.ui.preferences;
+  appPreferences = { ...defaultAppPreferences };
+  micGainSlider.value = defaults.micGain;
+  soundGainSlider.value = defaults.soundGain;
+  masterGainSlider.value = defaults.masterGain;
+
+  loadMixerSettings();
+  updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
+  loadLibraryMetadata();
+  loadLibraryView();
+  loadAppPreferences();
+  applyAppPreferences();
+  updateGainLabels();
+  updateToggleButtonLabels();
+  loadKeybinds();
+  renderStopKeybindButton();
+  renderBoardControls();
+  syncGlobalKeybinds();
+  discoverUi = window.FreqxDiscover?.init({
   getCatalog: () => window.soundmuncher.getPublicLibrary(),
   previewSound: previewDiscoverSound,
   stopPreview: stopDiscoverPreview,
@@ -3850,20 +3872,12 @@ discoverUi = window.FreqxDiscover?.init({
   isAdded: (id, board) => importedLibraryItems.some(item => {
     const metadata = getSoundMetadata(item); return metadata.catalogId === id && metadata.board === board;
   })
-});
+  });
 
-async function initializeApp() {
-  await loadBackgroundSettings();
-  await ensureDeviceLabels();
-  await refreshOutputDevices();
-  await setMicCaptureEnabled(true);
-  await setMixToOutputEnabled(true);
-  await loadImportedLibrary();
-  maybeOpenWalkthroughOnce();
-  await window.soundmuncher?.externalImportsReady?.();
+  await initializeApp();
 }
 
-initializeApp().catch((error) => {
+initializeConfiguredApp().catch((error) => {
   reportRendererFatalError(error, {
     type: "renderer-initialization-error"
   });

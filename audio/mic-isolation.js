@@ -37,7 +37,7 @@
 
   function acquireLoopback(endpointId, signal) {
     if (!window.LoopbackReference || typeof window.LoopbackReference.acquire !== 'function') return Promise.resolve(null);
-    return Promise.resolve(window.LoopbackReference.acquire({ timeoutMs: 4000, endpointId, signal })).catch(() => null);
+    return Promise.resolve(window.LoopbackReference.acquire({ timeoutMs: window.FreqxDesktopConfig.current.audio.timing.captureTimeoutMs, endpointId, signal })).catch(() => null);
   }
 
   function releaseLoopback(track) {
@@ -109,8 +109,9 @@
     return aecAssetsPromise;
   }
 
-  async function create(stream, { mode = 'standard', onError = () => {}, onDiagnostics = () => {}, referenceDeviceId = '', signal, compressor = false } = {}) {
-    mode = normalizedMode(mode);
+  async function create(stream, { mode, onError = () => {}, onDiagnostics = () => {}, referenceDeviceId = '', signal, compressor = false } = {}) {
+    const config = (await window.FreqxDesktopConfig.ready).audio;
+    mode = normalizedMode(mode || config.defaults.voiceIsolationMode);
     if (signal?.aborted) throw new Error("Voice isolation startup canceled.");
     const track = stream?.getAudioTracks().find((value) => value.readyState === 'live');
     if (!track) {
@@ -166,7 +167,7 @@
       try {
         const capture = await Promise.race([pending, new Promise((resolve, reject) => {
           rejectAecCapture = reject;
-          timer = setTimeout(() => reject(new Error('Unprocessed microphone startup timed out.')), 4000);
+          timer = setTimeout(() => reject(new Error('Unprocessed microphone startup timed out.')), config.timing.captureTimeoutMs);
         })]);
         const input = capture?.getAudioTracks().find(value => value.readyState === 'live');
         if (!input || input.getSettings().echoCancellation !== false || input.label !== track.label) {
@@ -187,7 +188,7 @@
       let finished = false;
       const finish = () => { if (finished) return; finished = true; clearTimeout(timer); closingAec.disconnect(); closingAec.port.onmessage = null; closingAec.port.close(); resolveTeardown(); };
       closingAec.port.onmessage = ({ data }) => { if (data?.type === 'destroyed') finish(); };
-      timer = setTimeout(finish, 250);
+      timer = setTimeout(finish, config.timing.teardownTimeoutMs);
       closingAec.port.postMessage({ type: 'destroy' });
       aecNode = null;
     };
@@ -281,7 +282,7 @@
       if (closingNode) {
         closingNode.removeEventListener("processorerror", processorError);
         closingNode.port.onmessage = ({ data }) => { if (data?.type === 'destroyed') finish(); };
-        teardownTimer = setTimeout(() => finish(false), 250);
+        teardownTimer = setTimeout(() => finish(false), config.timing.teardownTimeoutMs);
         try { closingNode.port.postMessage({ type: 'destroy' }); } catch { finish(false); }
       } else finish();
       source = aecNode = refSource = node = destination = limiter = context = null;
@@ -303,7 +304,7 @@
       if (context.state === 'closed') { fail(new Error('The voice isolation audio context closed.')); return; }
       if (context.state === 'running') return;
       if (!resumePending) {
-        resumeTimer = setTimeout(() => fail(new Error('Voice isolation could not resume; using microphone echo cancellation.')), 2500);
+        resumeTimer = setTimeout(() => fail(new Error('Voice isolation could not resume; using microphone echo cancellation.')), config.timing.resumeTimeoutMs);
         resumePending = context.resume().then(() => {
           if (!closed && context.state !== 'running') throw new Error('Voice isolation audio context is unavailable.');
         }).catch(fail).finally(() => { clearTimeout(resumeTimer); resumePending = null; });
@@ -335,7 +336,7 @@
           resolve();
         };
         signal?.addEventListener("abort", abortStartup, { once: true });
-        startupTimer = setTimeout(() => fail(new Error("DeepFilterNet startup timed out; using microphone echo cancellation.")), 12000);
+        startupTimer = setTimeout(() => fail(new Error("DeepFilterNet startup timed out; using microphone echo cancellation.")), config.timing.startupTimeoutMs);
         // Compilation occurs off the audio thread; the compiled module is cloned into it.
         void (async () => {
           const [assets, , loopbackTrack] = await Promise.all([
@@ -361,7 +362,7 @@
             outputChannelCount: [1],
             channelCount: 1,
             channelCountMode: "explicit",
-            processorOptions: { ...assets, mode }
+            processorOptions: { ...assets, mode, tuning: { voiceModes: config.voiceModes } }
           });
           node.addEventListener("processorerror", processorError);
           node.port.onmessage = ({ data }) => {
@@ -378,8 +379,7 @@
           if (compressor) {
             // Optional mic-only peak control; the app already has a mic compressor.
             limiter = context.createDynamicsCompressor();
-            limiter.threshold.value = -3; limiter.knee.value = 0; limiter.ratio.value = 20;
-            limiter.attack.value = .002; limiter.release.value = .08;
+            for (const [name, value] of Object.entries(config.limiter)) limiter[name].value = value;
             node.connect(limiter).connect(destination);
           } else node.connect(destination);
           if (loopbackTrack) {
@@ -392,7 +392,7 @@
                 outputChannelCount: [1],
                 channelCount: 1,
                 channelCountMode: "explicit",
-                processorOptions: { wasmModule }
+                processorOptions: { wasmModule, tuning: { aec: config.aec } }
               });
               aecNode.addEventListener("processorerror", aecProcessorError);
               const aecReady = new Promise((resolve, reject) => {
@@ -460,7 +460,7 @@
         refSource.connect(aecNode, 0, 1);
         aecActive = true;
         const detail = window.LoopbackReference?.details?.(referenceTrack);
-        publish({ engine: 'WebRTC AEC3', reference: 'quiet', referenceLabel: detail?.label || 'Playback reference', referenceEndpointId: detail?.endpointId || '', latencyMs: 40 });
+        publish({ engine: 'WebRTC AEC3', reference: 'quiet', referenceLabel: detail?.label || 'Playback reference', referenceEndpointId: detail?.endpointId || '', latencyMs: (config.aec.captureDelaySamples + 480) / 48 });
       } else {
         source.connect(node);
         publish({ engine: 'Chromium AEC', reference: 'unavailable' });
@@ -476,7 +476,7 @@
           if (pendingAecPing !== null) { bypassAec(); return; }
           pendingAecPing = pingId; aecNode.port.postMessage({ type: 'ping', id: pendingAecPing });
         }
-      }, 5000);
+      }, config.timing.healthIntervalMs);
       console.info(`[VoiceIsolation] DeepFilterNet3 ready (${mode}, 48 kHz, local assets).`);
       return Object.freeze({
         stream: destination.stream, close, resume,

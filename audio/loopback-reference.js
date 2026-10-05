@@ -7,7 +7,9 @@
   let runtime;
   const supported = Boolean(window.soundmuncher?.startReference && window.soundmuncher?.onReferenceData);
 
-  async function acquire({ timeoutMs = 4000, endpointId = '', signal } = {}) {
+  async function acquire({ timeoutMs, endpointId = '', signal } = {}) {
+    const config = (await window.FreqxDesktopConfig.ready).audio;
+    timeoutMs ??= config.timing.captureTimeoutMs;
     if (!supported || signal?.aborted) return null;
     let capture, node, destination, unsubscribe, timer, track, closed = false;
     let sessionRuntime;
@@ -38,7 +40,7 @@
           releaseRuntime();
         };
         closingNode.port.onmessage = ({ data }) => { if (data?.type === 'destroyed') finish(); };
-        teardownTimer = setTimeout(finish, 250);
+        teardownTimer = setTimeout(finish, config.timing.teardownTimeoutMs);
         closingNode.port.postMessage({ type: 'destroy' });
       } else releaseRuntime();
       destination?.stream.getTracks().forEach(value => value.stop());
@@ -75,7 +77,7 @@
       if (closed) { void window.soundmuncher.stopReference(capture.id).catch(() => {}); return null; }
       node = new AudioWorkletNode(context, 'freqx-playback-reference', {
         numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1],
-        processorOptions: { sampleRate: capture.sampleRate }
+        processorOptions: { sampleRate: capture.sampleRate, tuning: { reference: config.reference } }
       });
       destination = context.createMediaStreamDestination();
       destination.channelCount = 1;
