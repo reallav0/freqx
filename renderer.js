@@ -1294,13 +1294,13 @@ function renderLibraryEmptyState(hasLibraryItems) {
 
   const title = document.createElement("h3");
   title.className = "empty-title";
-  title.textContent = hasLibraryItems ? "No sounds found." : "Make some noise.";
+  title.textContent = hasLibraryItems ? "No matching sounds" : "Your soundboard starts here";
 
   const copy = document.createElement("p");
   copy.className = "empty-copy";
   copy.textContent = hasLibraryItems
     ? "Try another search, or clear your filters to see every sound."
-    : "Drop your audio here. Build a board. Find your frequency.";
+    : "Import an audio file or drop it here. Your sounds stay on this device, ready to play.";
 
   const action = document.createElement("button");
   action.type = "button";
@@ -1323,6 +1323,14 @@ function renderLibraryEmptyState(hasLibraryItems) {
   });
 
   placeholder.append(glyph, title, copy, action);
+  if (!hasLibraryItems) {
+    const browse = document.createElement("button");
+    browse.type = "button";
+    browse.className = "mixer-action quiet-action empty-browse";
+    browse.textContent = "Browse public sounds";
+    browse.addEventListener("click", () => document.getElementById("discoverTab").click());
+    placeholder.appendChild(browse);
+  }
   importedList.appendChild(placeholder);
 }
 

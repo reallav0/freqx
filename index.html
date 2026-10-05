@@ -53,12 +53,10 @@
           <div class="library-tabs" role="tablist" aria-label="Library navigation">
             <button id="soundboardTab" class="library-tab" type="button" role="tab" aria-selected="true" aria-controls="soundboardPage">Soundboard</button>
             <button id="discoverTab" class="library-tab" type="button" role="tab" aria-selected="false" aria-controls="discoverPage" tabindex="-1">Discover <span aria-hidden="true">↗</span></button>
-            <span class="library-nav-note">YOUR NEXT FAVOURITE</span>
           </div>
         <section id="soundboardPage" class="library" role="tabpanel" aria-labelledby="soundboardTab">
           <div class="library-header">
             <div>
-              <span class="section-kicker">01 / Your sound, on demand</span>
               <h1 class="dot-heading">Soundboard</h1>
               <p id="libraryState" class="routing-tip" role="status">Drop a sound. Make it yours.</p>
             </div>
@@ -94,8 +92,8 @@
           <div class="library-footnote"><span>Click to play · Bind a key for instant access</span><span>Local files / Yours to play</span></div>
         </section>
         <section id="discoverPage" class="discover-page" role="tabpanel" aria-labelledby="discoverTab" hidden>
-          <div class="discover-heading"><div><span class="section-kicker">03 / Find your frequency</span><h1 class="discover-title">Discover</h1><p id="discoverState" class="routing-tip" role="status">A little inspiration for your next board.</p></div><span class="discover-access"><i aria-hidden="true"></i> Open library</span></div>
-          <div class="discover-feature"><div class="discover-feature-copy"><span class="section-kicker">FREQX ORIGINALS / VOL. 01</span><h2>Small sounds.<br>Big personality.</h2><p>A collection of original tones for the little moments.</p><button id="discoverExplore" class="mixer-action compact-action" type="button">Explore collection <span aria-hidden="true">↘</span></button></div><div class="discover-art" aria-hidden="true"><div class="discover-record"><span>FQ<span>01</span></span></div><span class="discover-art-label">SIGNALS / TEXTURES / TONES</span></div></div>
+          <div class="discover-heading"><div><h1 class="discover-title">Discover</h1><p id="discoverState" class="routing-tip" role="status">Find a sound, preview it, and add it to your board.</p></div><span class="discover-access"><i aria-hidden="true"></i> Public library</span></div>
+          <div class="discover-feature"><div class="discover-feature-copy"><span class="section-kicker">Public sound library</span><h2>Find something worth playing.</h2><p>Preview a sound and add it to your board.</p><button id="discoverExplore" class="mixer-action compact-action" type="button">Browse sounds <span aria-hidden="true">↘</span></button></div></div>
           <div class="discover-controls"><div class="discover-search"><svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><label class="sr-only" for="discoverSearch">Search public sounds</label><input id="discoverSearch" class="text-input" type="search" placeholder="Find your next sound…" maxlength="120" /></div><label class="discover-sort-label" for="discoverSort">Sort<select id="discoverSort" class="device-select"><option value="name">Name</option><option value="duration">Duration</option></select></label></div>
           <div id="discoverCategories" class="discover-categories" aria-label="Sound categories"><button class="discover-category" type="button" data-category="all" aria-pressed="true">All sounds</button></div>
           <div class="discover-results-heading"><span id="discoverCount" class="panel-label">EXPLORING THE LIBRARY</span><label for="discoverBoard">Add to<select id="discoverBoard" class="device-select" aria-label="Destination board"><option value="Main">Main</option></select></label></div>
@@ -111,7 +109,6 @@
         <aside class="mixer" aria-label="Mixer controls">
           <div class="mixer-header">
             <div>
-              <span class="section-kicker">02 / Live controls</span>
               <h2 class="dot-heading">Mixer</h2>
               <p id="mixState" class="sr-only" role="status"></p>
             </div>
@@ -163,6 +160,15 @@
             <div class="route-field">
               <label for="inputDevice">Microphone input</label>
               <select id="inputDevice" class="device-select"></select>
+            </div>
+            <div class="route-field">
+              <label for="outputDevice">Virtual output</label>
+              <select id="outputDevice" class="device-select"></select>
+            </div>
+            <div class="route-field">
+              <label for="localPlaybackDevice">Monitor output</label>
+              <select id="localPlaybackDevice" class="device-select"></select>
+            </div>
               <div class="voice-isolation-control">
                 <label class="setting-toggle" for="voiceIsolationToggle">
                   <input id="voiceIsolationToggle" type="checkbox" checked aria-describedby="voiceIsolationState" />
@@ -177,23 +183,16 @@
                   </select>
                 </div>
                 <p id="voiceIsolationState" class="routing-tip" role="status">Mic only · Waiting for microphone</p>
-                <label for="echoReferenceDevice">Call playback / echo reference</label>
+                <details class="echo-reference-control"><summary>Echo cancellation</summary>
+                <label class="field-label" for="echoReferenceDevice">Call playback device</label>
                 <select id="echoReferenceDevice" class="device-select" aria-describedby="echoReferenceHelp echoReferenceState">
                   <option value="">Windows default playback</option>
                 </select>
-                <p id="echoReferenceHelp" class="routing-tip">Choose the headphones or speakers playing Discord and other apps. Use the same output for soundboard monitoring.</p>
+                <p id="echoReferenceHelp" class="routing-tip">Select the headphones or speakers playing your calls. Match your monitor output to this device.</p>
                 <meter id="echoReferenceMeter" min="-60" max="0" value="-60" aria-label="Playback reference level in dBFS"></meter>
                 <p id="echoReferenceState" class="routing-tip" role="status">Playback reference starts with voice isolation</p>
+                </details>
               </div>
-            </div>
-            <div class="route-field">
-              <label for="outputDevice">Virtual output</label>
-              <select id="outputDevice" class="device-select"></select>
-            </div>
-            <div class="route-field">
-              <label for="localPlaybackDevice">Monitor output</label>
-              <select id="localPlaybackDevice" class="device-select"></select>
-            </div>
             <p id="routeState" class="routing-tip" role="status">Send the final mix to a virtual cable, then choose that cable as the input in your target app.</p>
           </div>
 
@@ -313,8 +312,8 @@
         <p id="accountStatus" class="account-status" role="status" aria-live="polite" aria-atomic="true" hidden></p>
         <form id="accountForm" class="account-form">
           <div class="account-providers">
-            <button id="accountGoogle" class="account-provider" type="button"><img src="assets/oauth-google.svg" width="20" height="20" alt="" /><span>Continue with Google</span></button>
-            <button id="accountDiscord" class="account-provider" type="button"><img src="assets/oauth-discord.svg" width="22" height="20" alt="" /><span>Continue with Discord</span></button>
+            <button id="accountGoogle" class="account-provider" type="button" aria-label="Continue with Google"><img src="assets/oauth-google.svg" width="20" height="20" alt="" /><span>Google</span></button>
+            <button id="accountDiscord" class="account-provider" type="button" aria-label="Continue with Discord"><img src="assets/oauth-discord.svg" width="22" height="20" alt="" /><span>Discord</span></button>
           </div>
           <p class="account-provider-note">A secure sign-in window opens in your browser.</p>
           <div class="account-divider"><span>or continue with email</span></div>
@@ -349,22 +348,12 @@
             <label class="form-field">6-digit verification code<input id="accountVerifyCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required /></label>
             <div class="account-section-actions"><button class="mixer-action primary-action" type="submit">Verify email</button><button id="accountResend" class="mixer-action quiet-action" type="button">Resend code</button></div>
           </form>
+          <div class="account-personal">
           <form id="accountProfileForm" class="account-form account-section">
-            <div><h3>Your profile</h3><p class="account-section-copy">Make your account feel like you.</p></div>
+            <div><h3>Profile</h3><p class="account-section-copy">Your name across FreqX.</p></div>
             <label class="form-field">Display name<input id="accountDisplayName" autocomplete="nickname" maxlength="80" required /></label>
             <div class="account-section-actions"><button class="mixer-action" type="submit">Save profile</button><button id="accountSyncFavorites" class="mixer-action quiet-action" type="button">Sync favorites</button></div>
           </form>
-          <section class="account-section account-cloud-section" aria-labelledby="accountCloudTitle">
-          <form id="cloudUploadForm" class="account-form">
-            <div class="account-section-header"><div><h3 id="accountCloudTitle">My cloud sounds</h3><p class="account-section-copy">Upload a sound to your account.</p></div><button id="cloudRefresh" class="mixer-action quiet-action compact-action" type="button">Refresh</button></div>
-            <label class="form-field">Title<input id="cloudTitle" maxlength="120" required /></label>
-            <label class="form-field">Visibility<select id="cloudVisibility"><option value="private">Private</option><option value="public">Public</option></select></label>
-            <button class="mixer-action primary-action" type="submit">Choose audio and upload</button>
-            <p class="account-field-hint">Up to 24 MiB · 60 seconds. Uploads are checked before they are ready to play.</p>
-          </form>
-          <p id="cloudSoundEmpty" class="account-cloud-empty">Your cloud library will appear here. Refresh to load your sounds.</p>
-          <ul id="cloudSoundList"></ul>
-          </section>
           <details class="account-section account-security"><summary>Password &amp; security</summary>
             <form id="accountPasswordForm" class="account-form">
               <label class="form-field">Current password<input id="accountCurrentPassword" type="password" autocomplete="current-password" maxlength="128" required /></label>
@@ -372,6 +361,18 @@
               <button class="mixer-action" type="submit">Update password</button>
             </form>
           </details>
+          </div>
+          <section class="account-section account-cloud-section" aria-labelledby="accountCloudTitle">
+          <form id="cloudUploadForm" class="account-form">
+            <div class="account-section-header"><div><h3 id="accountCloudTitle">My cloud sounds</h3><p class="account-section-copy">Upload a sound to your account.</p></div><button id="cloudRefresh" class="mixer-action quiet-action compact-action" type="button">Refresh</button></div>
+            <div class="account-upload-fields"><label class="form-field">Title<input id="cloudTitle" maxlength="120" required /></label>
+            <label class="form-field">Visibility<select id="cloudVisibility"><option value="private">Private</option><option value="public">Public</option></select></label></div>
+            <button class="mixer-action primary-action" type="submit">Choose audio and upload</button>
+            <p class="account-field-hint">Up to 24 MiB · 60 seconds. Uploads are checked before they are ready to play.</p>
+          </form>
+          <p id="cloudSoundEmpty" class="account-cloud-empty">Your cloud library will appear here. Refresh to load your sounds.</p>
+          <ul id="cloudSoundList"></ul>
+          </section>
           <div class="account-section-actions account-signout"><button id="accountLogout" class="mixer-action danger-action" type="button">Log out</button><button id="accountLogoutAll" class="mixer-action quiet-action" type="button">Log out of all devices</button></div>
         </div>
         <p id="accountLocalNote" class="account-local-note"><span aria-hidden="true">●</span> Your local soundboard works without an account.</p>

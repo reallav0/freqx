@@ -1,212 +1,123 @@
-# freqx
+# Freqx
 
-freqx is an Electron soundboard for Discord voice chat. It mixes your real microphone with imported sound effects and sends the final mix to VB-CABLE.
+**Your voice. Your sounds. Your moment.**
 
-Website: <https://freqx.app>
+Turn a perfectly timed sound into part of the conversation. Freqx is a Windows soundboard that mixes your microphone with your favorite clips, so you can bring reactions, sound effects, and personality to voice chats and games. Use it with apps and games that let you choose a microphone input.
 
-## Features
+### [▶ Watch the Freqx introduction](assets/freqx-hero.mp4)
 
-- Nothing OS inspired interface with dot lettering, monochrome pads, and red accents
-- Import local audio files
-- Organize sounds into boards with search and sorting
-- Mark favorite and pinned sounds for faster access
-- Edit sound name, board, color, volume, trim, fade, and playback mode
-- Switch app and pad themes, or use compact mode for dense soundboard sessions
-- Trigger sounds from the app or with keybinds
-- Use single-key or modifier-combo keybinds where supported
-- Stop all currently playing sounds
-- Choose playback behavior per sound: overlap, restart, play once, or toggle loop
-- Mix microphone, soundboard, and main output volume
-- Reduce microphone background noise with local DeepFilterNet3 voice isolation
-- Route the Discord mix to VB-CABLE
-- Persist selected microphone, virtual output, and local hearing output
-- Use the routing setup wizard to refresh, pick, and test devices
-- Choose where you personally hear meme sounds
-- Run in the system tray
-- Recover from fatal errors with a hidden restart
-- Optional launch on Windows startup
-- Optional bundled VB-CABLE installer
+[Download for Windows](https://github.com/reallav0/freqx/releases/latest) · [Visit freqx.app](https://freqx.app) · [Report a bug or suggest a feature](https://github.com/reallav0/freqx/issues)
 
-## Audio Routing
+## Make it your soundboard
 
-Voice isolation is enabled by default. Its switch is directly below **Microphone
-input** in the mixer. DeepFilterNet3 runs locally on the microphone before it joins the
-mix; soundboard clips, test tones, and output processing bypass isolation. No
-microphone audio is uploaded. Choose **Off**, **Standard** or **Strong** without
-restarting or recapturing the microphone. Chromium echo cancellation stays on;
-Chromium noise suppression and automatic gain control stay off. If the model
-cannot start or fails, the app keeps the echo-cancelled microphone working and
-shows an unavailable status. The mode and enabled preference are saved.
+- **Find your next favorite sound.** Browse and preview the public library in Discover, then add sounds to your boards. Import your own audio files, too.
+- **Hit the moment.** Play from a pad or use keybinds while you're in a game or call. Pin favorites, search your collection, and stop every sound with one action.
+- **Shape every clip.** Adjust volume, trim, fades, and color. Choose overlap, restart, play once, or toggle loop to suit the sound.
+- **Keep your voice clear.** Local DeepFilterNet3 voice isolation reduces microphone background noise before your voice joins the mix. Soundboard clips bypass isolation, and microphone audio is not uploaded for processing.
+- **Control what everyone hears.** Balance your microphone, soundboard, and main output, and choose a separate output for hearing your own clips.
+- **Make it feel like yours.** Organize boards, switch app and pad themes, and use compact mode. The interface pairs dot lettering and monochrome pads with red accents.
 
-The isolation engine has its own 48 kHz audio context. The shared mixer and output
-contexts keep their original sample rates and routing.
-See [the voice isolation integration notes](audio/VOICE-ISOLATION.md) for the
-pipeline, reusable service, recovery behavior, bundled assets and verification.
+Your local boards and playback work without an account. Freqx also runs in the system tray, remembers your audio devices, and offers optional launch on Windows startup.
 
-Use this setup:
+## Start playing in your next call or game
+
+1. Download and install `FreqX-Setup-<version>.exe` from the [latest release](https://github.com/reallav0/freqx/releases/latest).
+2. Install the official [VB-CABLE virtual audio driver](https://vb-audio.com/Cable/) if it is not already installed. It carries Freqx's mix to your voice app or game.
+3. In Freqx's routing setup, select your real microphone and set the virtual output to **CABLE Input**. Choose headphones or speakers for your local listening output. Use the setup wizard to refresh and test your devices.
+4. In your voice app or game's audio settings, select **CABLE Output** as the microphone input. Keep its playback output on your headphones or speakers.
+5. Import a clip or find one in Discover, add it to a board, and press play.
 
 ```text
-Real microphone -> freqx -> CABLE Input -> Discord input as CABLE Output
+Microphone + soundboard → Freqx → CABLE Input → CABLE Output → voice app or game
 ```
 
-Discord settings:
+VB-CABLE's names describe the two ends of the same cable: Freqx sends audio into **CABLE Input**, and your voice app receives it from **CABLE Output**. Keep the voice app's speaker output off VB-CABLE to avoid feeding the call back into your microphone mix.
 
-- Input Device: `CABLE Output`
-- Output Device: headphones or speakers
+Voice isolation is enabled by default. Its control sits below **Microphone input** in the mixer, with **Off**, **Standard**, and **Strong** options. If isolation becomes unavailable, microphone audio continues through the fallback path.
 
-Do not set Discord output to VB-CABLE.
+## Open source, made to be explored
 
-## Development
+This repository contains the Electron desktop app, its audio engine, and the interface for boards, Discover, and accounts. Explore the code, build it yourself, or help improve the experience. The API and website live in a [separate backend project](https://github.com/reallav0/freqx-api); local soundboard development does not require running that server.
 
-Desktop runtime defaults and internal tuning live in
-[`runtime/desktop-config.json`](runtime/desktop-config.json), including voice-isolation
-strength, audio processing, networking, updates, and recovery. See
-[developer configuration](docs/implementation/desktop-configuration.md) for editing
-and validation. The app exposes no editor for this file.
+### Run from source
 
-After a fatal renderer/main error or unexpected main-process termination, a
-separate hidden monitor restarts freqx in the tray. Library files and saved
-settings remain in the normal profile; interrupted sounds are not replayed.
-Automatic recovery is limited to three restarts in five minutes. If that limit
-is reached, launch the app manually after checking `crash-logs/freqx-crash.log`
-inside the app's data folder. Quit and Windows shutdown/logoff stop the monitor.
-Recoverable Electron service exits are logged without restarting the app.
-
-Recovery runs after the renderer-crash callback returns, avoiding Electron's
-[documented synchronous-navigation crash](https://releases.electronjs.org/pr/51917).
-The monitor also logs abrupt main-process loss when JavaScript cannot write a
-stack trace. It cannot recover if Windows or another program kills both the
-app and its monitor together.
-
-Install dependencies:
+Use Windows and Node.js 22, the version used by CI. From this checkout:
 
 ```powershell
-npm.cmd install
-```
-
-Run the app:
-
-```powershell
+npm.cmd ci
 npm.cmd run dev
 ```
 
-The pinned DeepFilterNet3 WASM and model are checked automatically during install,
-start and packaging. They are committed local assets; no model download, Python,
-PyTorch or runtime compiler is required. Run `npm.cmd run prepare:audio` after
-installing with scripts disabled.
-Run `npm.cmd run test:mic-isolation` to verify mic processing and soundboard/output
-separation using synthetic audio without opening your microphone.
-Run `npm.cmd run test:voice-security` to verify the service in a sandboxed,
-isolated Electron renderer with a Chromium fake microphone and network blocked.
-Run `npm.cmd run test:recovery` to check crash handling and hidden restart using
-isolated test profiles. These checks deliberately terminate test processes.
+Installation prepares the committed DeepFilterNet3 WASM/model assets and rebuilds native audio dependencies. No model download, Python, or runtime compiler is required for voice isolation. If you install with lifecycle scripts disabled, run `npm.cmd run prepare:audio` before starting the app.
 
-Electron Builder rebuilds the app's native audio dependencies during installation.
-Global keybinds use Electron's built-in shortcuts by default. Developers can enable
-the optional `uiohook-napi` keyboard hook with `app.nativeKeyHookEnabled` in the
-configuration; source launches also accept `FREQX_ENABLE_NATIVE_KEY_HOOK=1`.
+### Build a Windows release
 
-## Protocol Imports
+```powershell
+npm.cmd run pack   # Unpacked app for local verification
+npm.cmd run dist   # Windows installer and portable executable
+```
 
-Installed Windows builds register the `freqx://` protocol. The website can open
-links like:
+Builds go to `dist/`: `FreqX-Setup-<version>.exe` and `FreqX-Portable-<version>.exe`. These commands build locally without publishing. Installed builds offer background update downloads and ask you to confirm a restart to install them; source and portable builds update manually. See [releases and updates](docs/implementation/releases.md).
+
+### Contribute
+
+Bug reports, feature ideas, and pull requests are welcome. For bugs, include your Windows version, Freqx version, audio devices, and steps to reproduce. For code changes, explain the behavior you changed and how you verified it.
+
+Start with the standard checks and run additional checks relevant to your change:
+
+```powershell
+npm.cmd run lint
+npm.cmd run test:unit
+```
+
+Useful places to start:
+
+| Area | Files and documentation |
+| --- | --- |
+| Desktop, tray, and IPC | [`main.js`](main.js), [`preload.js`](preload.js) |
+| Soundboard, mixer, and routing | [`renderer.js`](renderer.js), [`audio/`](audio/) |
+| Interface and Discover | [`index.html`](index.html), [`styles.css`](styles.css), [`discover.js`](discover.js) |
+| Microphone processing | [Voice isolation](audio/VOICE-ISOLATION.md), [echo cancellation](audio/ECHO-CANCELLATION.md) |
+| Runtime settings | [Desktop configuration](docs/implementation/desktop-configuration.md), [`runtime/desktop-config.json`](runtime/desktop-config.json) |
+| API integration | [Platform architecture](docs/implementation/platform.md), [desktop setup](instruction.md) |
+| Releases and driver packaging | [Release guide](docs/implementation/releases.md), [driver verification](security/driver-verification.md) |
+
+<details>
+<summary>Audio checks, integrations, and packaging notes</summary>
+
+**Audio and recovery checks.** Run the checks relevant to your changes:
+
+```powershell
+npm.cmd run test:mic-isolation
+npm.cmd run test:voice-security
+npm.cmd run test:recovery
+```
+
+The microphone checks use synthetic or fake microphone audio. Recovery checks intentionally terminate isolated test processes to verify restart behavior.
+
+**Local API development.** Start the separate backend after setting up its database and migrations, then point a source build at it:
+
+```powershell
+$env:FREQX_API_BASE_URL = 'http://127.0.0.1:3000'
+npm.cmd run dev
+```
+
+Packaged builds use the trusted `https://api.freqx.app` configuration. Keep server credentials in the backend project.
+
+**Keybinds.** Electron's built-in global shortcuts are the default. Developers can enable the optional `uiohook-napi` hook through `app.nativeKeyHookEnabled` in the desktop configuration; source launches also accept `FREQX_ENABLE_NATIVE_KEY_HOOK=1`.
+
+**Website imports.** Installed Windows builds register `freqx://`. Links can import audio into the local library or pass the request to the running instance:
 
 ```text
 freqx://import-sound?url=https%3A%2F%2Fexample.com%2Fsound.mp3&filename=sound.mp3&title=Sound
 ```
 
-The desktop app imports the linked audio into the local sound library after it
-starts, or routes the request to the already-running instance. Audio URLs must
-use HTTPS, resolve to a public network address, return a supported audio type,
-and be 100 MB or smaller.
+Audio URLs must use HTTPS, resolve to a public network address, return a supported audio type, and be no larger than 100 MB.
 
-## Build Installer
+**Driver packaging.** Optional VB-CABLE packages belong in `drivers/`. Include the full official package and its companion driver files; automatic driver installation requires reviewed verification pins. The current policy blocks automatic driver installation until those pins are reviewed. Redistribution requires the appropriate VB-Audio license or permission. Follow the [driver verification guide](security/driver-verification.md).
 
-Build the Windows installer:
+**Crash recovery.** A hidden monitor can restart the app in the tray after fatal errors, preserving saved settings and library files without replaying interrupted sounds. Recovery is limited to three restarts in five minutes. If the limit is reached, inspect `crash-logs/freqx-crash.log` in the app's data folder before launching manually. Quit and Windows shutdown stop the monitor.
 
-```powershell
-npm.cmd run dist
-```
+</details>
 
-Output files are created in:
-
-```text
-dist/
-```
-
-Use this file for distribution:
-
-```text
-dist/FreqX-Setup-<version>.exe
-```
-
-## GitHub Updates
-
-Installed Windows builds use electron-updater with the trusted GitHub repository
-in packaging configuration. Updates download in the background, verify their
-checksum and require an explicit restart/install confirmation. Development and
-portable builds update manually. Network failure does not block app startup.
-The [release documentation](docs/implementation/releases.md) explains automated
-patch bumps, GitHub permissions, artifacts and remaining signing/live-test limits.
-
-## Bundling VB-CABLE
-
-Place the full official VB-CABLE zip in:
-
-```text
-drivers/
-```
-
-The privileged installer verifies the package against a reviewed hash/signature
-policy and fails closed on missing or uncertain verification. The initial empty
-policy deliberately blocks automatic driver installation until official package
-pins are reviewed; see [driver verification](security/driver-verification.md).
-You can also extract the zip into `drivers/` before building. Do not copy only
-the setup executable; VB-CABLE needs the companion
-driver files from the same package, such as the `.inf`, `.sys`, and catalog
-files.
-
-Supported package/setup filenames:
-
-```text
-*.zip
-VBCABLE_Setup_x64.exe
-VBCABLE_Setup.exe
-```
-
-Only redistribute VB-CABLE if the VB-Audio license or explicit permission allows it.
-
-## Desktop and backend development
-
-This repository contains only the Electron desktop application, its audio engine,
-Discover, account UI, API client, secure OS-backed credential storage and Windows
-release/update workflow. Local boards and anonymous playback remain available.
-
-The Express/PostgreSQL/R2 backend, server authentication, website and Heroku
-deployment are a separate project: C:\Users\Nguyen\Desktop\freqxback, intended
-GitHub repository reallav0/freqx-api. Backend credentials belong there, never here.
-See [desktop setup instructions](instruction.md) and [current architecture](docs/implementation/platform.md).
-
-Start the API from freqxback with npm run dev after its database/migrations are ready.
-Then from this desktop checkout:
-
-```powershell
-$env:FREQX_API_BASE_URL = 'http://127.0.0.1:3000'
-npm run dev
-```
-
-Packaged builds use the trusted https://api.freqx.app configuration. Desktop
-login screens and IPC clients stay here; authentication/authorization run on the
-separate server. Each project has independent installs, tests, CI and deployment.
-Desktop releases stay at reallav0/freqx; backend pushes do not bump the desktop.
-
-## Project Files
-
-- `main.js` - Electron main process, tray, startup, installer-facing logic
-- `preload.js` - safe IPC bridge
-- `renderer.js` - soundboard, mixer, keybinds, device routing
-- `index.html` - app UI
-- `styles.css` - app styling
-- `installer/vbcable.nsh` - NSIS hook for bundled VB-CABLE installer
-- `installer/install-vbcable-driver.ps1` - silent VB-CABLE setup helper
-- `drivers/` - optional local unzipped driver package files
+The package declares the **ISC** license in [`package.json`](package.json). Bundled audio component notices are documented with the [DeepFilterNet3 assets](audio/vendor/deepfilter/README.md) and [AEC3 assets](audio/vendor/aec3/README.md).
