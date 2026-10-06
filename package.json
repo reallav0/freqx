@@ -8,7 +8,7 @@
     "type": "git",
     "url": "https://github.com/reallav0/freqx.git"
   },
-  "license": "ISC",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "lint": "eslint . --max-warnings 0",
     "test:unit": "node --test tests/desktop-config.cjs tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs",
@@ -112,6 +112,9 @@
       "logo.png",
       "logo.ico",
       "package.json",
+      "LICENSE",
+      "COMMERCIAL_LICENSE.md",
+      "TRADEMARKS.md",
       "node_modules/**/*"
     ]
   },
@@ -120,7 +123,6 @@
     "@electron/get": "5.1.0"
   },
   "dependencies": {
-    "codex-wake": "^0.2.0",
     "electron-updater": "6.8.9",
     "naudiodon": "^2.3.6",
     "uiohook-napi": "^1.5.5"

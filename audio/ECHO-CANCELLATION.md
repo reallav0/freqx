@@ -78,7 +78,9 @@ Standard and Strong. No physical microphone recording is automated by the tests.
 
 ## Alternatives to paid Krisp
 
-The default WebRTC AEC3 + DeepFilterNet path is open source and has no SDK fees.
+The default WebRTC AEC3 + DeepFilterNet path has no SDK fees. Third-party component
+terms and licensing caveats are documented with the [AEC3](vendor/aec3/README.md)
+and [DeepFilterNet3](vendor/deepfilter/README.md) assets.
 DeepFilterNet suppresses non-speech background noise; it does not promise to
 separate arbitrary nearby people from your voice. RNNoise is a lighter open
 source noise suppressor, but replacing DeepFilterNet with it would not solve

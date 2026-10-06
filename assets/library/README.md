@@ -2,7 +2,9 @@
 
 These six short effects are original synthesized sounds made for Freqx. They
 contain no recorded audio, third-party samples, or microphone input. They are
-provided under the project's ISC license for use, copying, and modification.
+provided under the repository's [PolyForm Noncommercial License 1.0.0](../../LICENSE)
+for permitted non-commercial use, copying, and modification. This change does not
+revoke rights previously granted for these sounds under ISC.
 
 Regenerate the deterministic mono 48 kHz, 16-bit PCM WAV files and catalog from
 the repository root with `node scripts/generate-library-sounds.cjs`. Generation
