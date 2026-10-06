@@ -4,7 +4,9 @@
 
 Turn a perfectly timed sound into part of the conversation. Freqx is a Windows soundboard that mixes your microphone with your favorite clips, so you can bring reactions, sound effects, and personality to voice chats and games. Use it with apps and games that let you choose a microphone input.
 
-### [▶ Watch the Freqx introduction](assets/freqx-hero.mp4)
+### Freqx introduction
+
+https://github.com/user-attachments/assets/40e06b0f-d9c8-447d-a0c6-7e8856d06956
 
 [Download for Windows](https://github.com/reallav0/freqx/releases/latest) · [Visit freqx.app](https://freqx.app) · [Report a bug or suggest a feature](https://github.com/reallav0/freqx/issues)
 
@@ -35,7 +37,7 @@ VB-CABLE's names describe the two ends of the same cable: Freqx sends audio into
 
 Voice isolation is enabled by default. Its control sits below **Microphone input** in the mixer, with **Off**, **Standard**, and **Strong** options. If isolation becomes unavailable, microphone audio continues through the fallback path.
 
-## Open source, made to be explored
+## Source-available, made to be explored
 
 This repository contains the Electron desktop app, its audio engine, and the interface for boards, Discover, and accounts. Explore the code, build it yourself, or help improve the experience. The API and website live in a [separate backend project](https://github.com/reallav0/freqx-api); local soundboard development does not require running that server.
 
@@ -62,6 +64,8 @@ Builds go to `dist/`: `FreqX-Setup-<version>.exe` and `FreqX-Portable-<version>.
 ### Contribute
 
 Bug reports, feature ideas, and pull requests are welcome. For bugs, include your Windows version, Freqx version, audio devices, and steps to reproduce. For code changes, explain the behavior you changed and how you verified it.
+
+Contributions are made under the repository's contribution terms, including [LICENSE](LICENSE). Ensure you have the right to submit your work.
 
 Start with the standard checks and run additional checks relevant to your change:
 
@@ -120,4 +124,8 @@ Audio URLs must use HTTPS, resolve to a public network address, return a support
 
 </details>
 
-The package declares the **ISC** license in [`package.json`](package.json). Bundled audio component notices are documented with the [DeepFilterNet3 assets](audio/vendor/deepfilter/README.md) and [AEC3 assets](audio/vendor/aec3/README.md).
+## License
+
+Freqx is source-available and licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). Personal and other permitted non-commercial use, including modification and experimentation, is governed by that license. Commercial use outside its permitted purposes requires a [separate commercial license](COMMERCIAL_LICENSE.md). The [LICENSE](LICENSE) is authoritative; this change does not revoke rights previously granted under earlier licenses.
+
+The Freqx name, logo, and branding are covered separately by [TRADEMARKS.md](TRADEMARKS.md). Third-party components included with or used by Freqx remain subject to their respective licenses. Bundled audio notices and licensing caveats are documented with the [DeepFilterNet3 assets](audio/vendor/deepfilter/README.md) and [AEC3 assets](audio/vendor/aec3/README.md).
