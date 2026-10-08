@@ -317,7 +317,8 @@ test('overlap still allows simultaneous sounds; decode errors release play-once 
   assert.equal(once.context.pendingSoundStarts.size, 0);
 });
 
-function isolationFixture(t, { failAssets = false, deferModel = false, needsRawCapture = false } = {}) {
+function isolationFixture(t, { failAssets = false, deferModel = false, needsRawCapture = false,
+  deferOutputReady = false, outputTimeoutMs = desktopConfig.audio.timing.resumeTimeoutMs } = {}) {
   const aec = deferred();
   const loopback = deferred();
   const moduleLoad = deferred();
@@ -326,8 +327,17 @@ function isolationFixture(t, { failAssets = false, deferModel = false, needsRawC
   const worklets = [];
   const assets = [];
   const released = [];
+  const contexts = [];
   const rawCapture = deferred();
   let captureRequests = 0;
+  let outputReady = !deferOutputReady;
+  let outputFormatChecks = 0;
+  const fixtureConfig = { ...desktopConfig, audio: { ...desktopConfig.audio,
+    timing: { ...desktopConfig.audio.timing, resumeTimeoutMs: outputTimeoutMs } } };
+  const outputTrack = { readyState: 'live',
+    getSettings() { outputFormatChecks++; return { channelCount: outputReady ? 1 : 2, sampleRate: 48000 }; },
+    stop() { this.readyState = 'ended'; }
+  };
   const referenceTrack = { readyState: 'live', addEventListener() {}, removeEventListener() {} };
   const track = { readyState: 'live', addEventListener() {}, removeEventListener() {} };
   const rawEvents = new Map();
@@ -350,12 +360,13 @@ function isolationFixture(t, { failAssets = false, deferModel = false, needsRawC
     constructor() {
       this.sampleRate = 48000; this.state = 'running';
       this.audioWorklet = { addModule: url => url.includes('aec-worklet') ? aec.promise : moduleLoad.promise };
+      contexts.push(this);
     }
     addEventListener() {} removeEventListener() {}
     resume() { this.state = 'running'; return Promise.resolve(); }
     suspend() { this.state = 'suspended'; return Promise.resolve(); }
     close() { this.state = 'closed'; return Promise.resolve(); }
-    createMediaStreamDestination() { return { ...makeNode('destination'), stream: { getTracks: () => [{ stop() {} }] } }; }
+    createMediaStreamDestination() { return { ...makeNode('destination'), stream: { getTracks: () => [outputTrack], getAudioTracks: () => [outputTrack] } }; }
     createMediaStreamSource(input) { return makeNode(input === stream ? 'mic' : input === rawStream ? 'raw-mic' : 'reference'); }
     createBiquadFilter() { return { ...makeNode('high-pass'), frequency: { value: 0 }, Q: { value: 0 } }; }
     createDynamicsCompressor() { return { ...makeNode('compressor'), ...Object.fromEntries(['threshold', 'knee', 'ratio', 'attack', 'release'].map(name => [name, { value: 0 }])) }; }
@@ -376,10 +387,10 @@ function isolationFixture(t, { failAssets = false, deferModel = false, needsRawC
   const events = new Map();
   const window = {
     addEventListener: (name, callback) => events.set(name, callback),
-    FreqxDesktopConfig: { current: desktopConfig, ready: Promise.resolve(desktopConfig) },
+    FreqxDesktopConfig: { current: fixtureConfig, ready: Promise.resolve(fixtureConfig) },
     LoopbackReference: { acquire: () => loopback.promise, release: value => released.push(value) },
   };
-  const context = vm.createContext({ desktopConfig,
+  const context = vm.createContext({ desktopConfig: fixtureConfig,
     window, document: { currentScript: { src: 'file:///audio/mic-isolation.js' } }, URL, Uint8Array,
     AudioContext: Context, AudioWorkletNode: Worklet,
     WebAssembly: { validate: () => true, compile: async () => ({}) },
@@ -390,13 +401,63 @@ function isolationFixture(t, { failAssets = false, deferModel = false, needsRawC
     },
     MediaStream: class { constructor(tracks) { this.tracks = tracks; } },
     navigator: { mediaDevices: { getUserMedia: () => { captureRequests++; return rawCapture.promise; } } },
-    setTimeout, clearTimeout, setInterval, clearInterval, DOMException, console: { warn() {}, info() {} },
+    setTimeout, clearTimeout, setInterval, clearInterval, DOMException, performance, console: { warn() {}, info() {} },
   });
   vm.runInContext(isolationSource, context);
   t.after(() => events.get('pagehide')?.());
-  return { aec, loopback, edges, worklets, assets, released, referenceTrack, rawCapture, rawTrack, rawStream, track, rawEvents,
+  return { aec, loopback, edges, worklets, assets, released, contexts, outputTrack, referenceTrack, rawCapture, rawTrack, rawStream, track, rawEvents,
+    get outputFormatChecks() { return outputFormatChecks; }, confirmOutputFormat() { outputReady = true; },
     get captureRequests() { return captureRequests; }, create: options => window.MicVoiceIsolation.create(stream, { referenceDeviceId: '', ...options }) };
 }
+
+test('isolation publishes output only after its actual track format becomes 48 kHz mono', async t => {
+  const fixture = isolationFixture(t, { deferOutputReady: true });
+  fixture.loopback.resolve(null);
+  let completed = false;
+  const pending = fixture.create().then(session => { completed = true; return session; });
+  await tick();
+  assert.ok(fixture.outputFormatChecks > 0);
+  assert.equal(completed, false);
+  assert.ok(!fixture.edges.some(([from]) => from === 'mic'));
+  fixture.confirmOutputFormat();
+  const session = await pending;
+  assert.equal(session.stream.getAudioTracks()[0].getSettings().channelCount, 1);
+  assert.ok(fixture.edges.some(([from, to]) => from === 'mic' && to === 'high-pass'));
+  await session.close();
+  assert.equal(fixture.outputTrack.readyState, 'ended');
+  assert.equal(fixture.track.readyState, 'live');
+});
+
+test('cancellation during output format readiness cleans up without connecting caller capture', async t => {
+  const fixture = isolationFixture(t, { deferOutputReady: true });
+  fixture.loopback.resolve(null);
+  const controller = new AbortController();
+  const pending = fixture.create({ signal: controller.signal });
+  await tick();
+  assert.ok(fixture.outputFormatChecks > 0);
+  controller.abort();
+  await assert.rejects(pending, /canceled/);
+  await tick();
+  assert.equal(fixture.outputTrack.readyState, 'ended');
+  assert.equal(fixture.track.readyState, 'live');
+  assert.equal(fixture.contexts[0].state, 'closed');
+  const checksAtAbort = fixture.outputFormatChecks;
+  fixture.confirmOutputFormat();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(fixture.outputFormatChecks, checksAtAbort);
+  assert.ok(!fixture.edges.some(([from]) => from === 'mic'));
+});
+
+test('output format timeout stops processed output and leaves caller capture live', async t => {
+  const fixture = isolationFixture(t, { deferOutputReady: true, outputTimeoutMs: 20 });
+  fixture.loopback.resolve(null);
+  await assert.rejects(fixture.create(), /48 kHz mono output/);
+  await tick();
+  assert.equal(fixture.outputTrack.readyState, 'ended');
+  assert.equal(fixture.track.readyState, 'live');
+  assert.equal(fixture.contexts[0].state, 'closed');
+  assert.ok(!fixture.edges.some(([from]) => from === 'mic'));
+});
 
 test('isolation waits for delayed AEC setup before connecting mic and reference', async t => {
   const fixture = isolationFixture(t);

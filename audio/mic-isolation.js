@@ -154,6 +154,8 @@
     let ready = false;
     let startupTimer;
     let resumeTimer;
+    let outputReadyTimer;
+    let rejectOutputReady;
     let resumePending;
     let healthTimer;
     let pingId = 0;
@@ -199,6 +201,9 @@
       context.removeEventListener('statechange', stateChanged);
       clearTimeout(startupTimer);
       clearTimeout(resumeTimer);
+      clearTimeout(outputReadyTimer);
+      rejectOutputReady?.(new DOMException('Voice isolation startup canceled.', 'AbortError'));
+      rejectOutputReady = null;
       clearInterval(healthTimer);
       rejectStartup?.(new Error("Voice isolation stopped before it was ready."));
       rejectStartup = null;
@@ -270,6 +275,32 @@
       if (closed || !ready) return;
       if (context.state === 'closed') fail(new Error('The voice isolation audio context closed.'));
       else if (context.state !== 'running') void resume();
+    }
+
+    function confirmMonoOutput() {
+      if (closed || signal?.aborted) return Promise.reject(new DOMException('Voice isolation startup canceled.', 'AbortError'));
+      const processedTrack = destination.stream.getAudioTracks()[0];
+      if (typeof processedTrack?.getSettings !== 'function') return Promise.reject(new Error('Voice isolation output format is unavailable.'));
+      // Blink applies the channel options to a default stereo destination, and
+      // publishes its new track format only when the first audio reaches it.
+      // Keep the stream private until its real format is 48 kHz mono.
+      return new Promise((resolve, reject) => {
+        rejectOutputReady = reject;
+        const deadline = performance.now() + config.timing.resumeTimeoutMs;
+        const checkFormat = () => {
+          outputReadyTimer = null;
+          if (closed || signal?.aborted) { reject(new DOMException('Voice isolation startup canceled.', 'AbortError')); return; }
+          const settings = processedTrack.getSettings();
+          if (settings.channelCount === 1 && settings.sampleRate === 48000) {
+            rejectOutputReady = null;
+            resolve();
+          } else if (performance.now() >= deadline || processedTrack.readyState === 'ended') {
+            rejectOutputReady = null;
+            reject(new Error('Voice isolation could not produce a 48 kHz mono output.'));
+          } else outputReadyTimer = setTimeout(checkFormat, 10);
+        };
+        checkFormat();
+      });
     }
 
     try {
@@ -348,8 +379,14 @@
           highPass.channelCount = 1;
           highPass.channelCountMode = 'explicit';
           highPass.connect(node);
-          destination = context.createMediaStreamDestination();
+          // Configure mono explicitly; confirmMonoOutput verifies the actual
+          // track format before any caller can consume this processed stream.
+          destination = typeof MediaStreamAudioDestinationNode === 'function'
+            ? new MediaStreamAudioDestinationNode(context, { channelCount: 1, channelCountMode: 'explicit', channelInterpretation: 'discrete' })
+            : context.createMediaStreamDestination();
           destination.channelCount = 1;
+          destination.channelCountMode = 'explicit';
+          destination.channelInterpretation = 'discrete';
           // The worklet gate is followed by zero-lookahead gentle compression.
           node.connect(destination);
           if (loopbackTrack) {
@@ -399,6 +436,7 @@
       });
       await startup;
       await resume();
+      await confirmMonoOutput();
       if (closed || track.readyState !== 'live') throw new Error("Voice isolation stopped.");
       if (aecNode && refSource) {
         try {
