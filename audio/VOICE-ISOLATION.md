@@ -68,6 +68,9 @@ transient as inactive neural state warms. Do not add work to the render callback
 that allocates JS buffers.
 
 Models and all JS PCM buffers/views are initialized before capture connects.
+Startup keeps the processed stream private until Chromium reports its actual
+track format as 48 kHz mono; cancellation or a format timeout releases it while
+preserving the caller's microphone.
 No JS buffers, slices, collections or closures are created in normal rendering.
 Native Rust/tract inference still uses its internal allocator; this integration
 is not an allocation-free rewrite of tract. Unexpected memory growth falls back.
