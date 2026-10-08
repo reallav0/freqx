@@ -15,15 +15,14 @@ audio processing, downloads, account client, updater, and crash recovery.
 | `updater` | Trusted GitHub feed, startup delay, response and installer limits |
 | `recovery` | Restart budget/backoff, watchdog timing, crash detail limits |
 
-For example, voice-isolation strength is controlled by
-`audio.voiceModes.standard.attenuationDb`,
-`audio.voiceModes.standard.postFilterBeta`, and the corresponding `strong` values.
-Both enabled modes currently use the same normal voice profile: 20 dB maximum
-attenuation with the post-filter disabled (`postFilterBeta: 0`). Microphone EQ gain
-adjustments are zero, the high-pass and narrow notch are at 20 Hz, and the low-pass
-is at 24 kHz. The microphone compressor has a 0 dB threshold, zero knee and 1:1
-ratio. Shared mixing, limiting and gains retain their existing defaults. Changing
-the JSON is an explicit developer tuning change.
+Voice modes are `light` (restored RNNoise) and `high-quality` (DFN3 low latency
+SIMD). `audio.defaults.voiceIsolationStrength` is the default wet/dry blend
+(0.85); users change it in settings. `audio.voiceModes["high-quality"]` controls
+model attenuation (35 dB) and post-filter beta (0). Mic HPF defaults to 80 Hz
+before denoising. Gate/compression run in the worklet; the compressor settings
+use a -18 dB threshold, 12 dB knee and 2:1 ratio with no lookahead. Shared mixing,
+limiting and gains preserve their defaults. JSON edits are explicit developer
+tuning changes.
 
 Restart a development app after editing. Run the checks and rebuild the app to
 distribute a configuration change. JSON is not reloaded in a running audio graph.

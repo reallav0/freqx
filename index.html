@@ -178,17 +178,25 @@
                   <label for="voiceIsolationMode">Mode</label>
                   <select id="voiceIsolationMode" class="device-select" aria-describedby="voiceIsolationState">
                     <option value="off">Off</option>
-                    <option value="standard" selected>Standard</option>
-                    <option value="strong">Strong</option>
+                    <option value="light" selected>Light</option>
+                    <option value="high-quality">High quality</option>
                   </select>
                 </div>
+                <p id="voiceIsolationHelp" class="routing-tip" hidden>High quality uses more CPU.</p>
+                <label class="mixer-control voice-isolation-strength" for="voiceIsolationStrength">
+                  <span>Strength</span>
+                  <input id="voiceIsolationStrength" type="range" min="0" max="1" step="0.01" value="0.85" />
+                  <output id="voiceIsolationStrengthValue">85%</output>
+                </label>
                 <p id="voiceIsolationState" class="routing-tip" role="status">Mic only · Waiting for microphone</p>
+                <p id="voiceIsolationDebug" class="routing-tip voice-isolation-debug"></p>
                 <details class="echo-reference-control"><summary>Echo cancellation</summary>
                 <label class="field-label" for="echoReferenceDevice">Call playback device</label>
                 <select id="echoReferenceDevice" class="device-select" aria-describedby="echoReferenceHelp echoReferenceState">
+                  <option value="off" selected>Echo cancellation off</option>
                   <option value="">Windows default playback</option>
                 </select>
-                <p id="echoReferenceHelp" class="routing-tip">Select the headphones or speakers playing your calls. Match your monitor output to this device.</p>
+                <p id="echoReferenceHelp" class="routing-tip">Optional: select the speakers playing your calls to reduce playback echo. This adds latency. Match your monitor output to this device.</p>
                 <meter id="echoReferenceMeter" min="-60" max="0" value="-60" aria-label="Playback reference level in dBFS"></meter>
                 <p id="echoReferenceState" class="routing-tip" role="status">Playback reference starts with voice isolation</p>
                 </details>

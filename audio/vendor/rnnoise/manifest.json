@@ -1,0 +1,11 @@
+{
+  "package": "@shiguredo/rnnoise-wasm",
+  "version": "2025.1.5",
+  "sourceCommit": "70f1d256acd4b34a572f999a05c87bf00b67730d",
+  "files": {
+    "rnnoise.wasm": {
+      "sha256": "b3b67c9eae8f0791aad468c708659e0850bb37b0fb9c8a8666f2d7b0b6869bc4",
+      "bytes": 3600944
+    }
+  }
+}

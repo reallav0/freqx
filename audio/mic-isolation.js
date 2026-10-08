@@ -1,41 +1,33 @@
-/* Local mic processing. The caller owns capture and echo-cancellation fallback. */
+/* Local mic processing. The caller owns the unprocessed capture stream. */
 (() => {
   'use strict';
   const assetBase = new URL(".", document.currentScript.src);
   const sessions = new Set();
-  let assetsPromise;
+  const assetsPromises = new Map();
   let isolationRuntime;
   let aecAssetsPromise;
-  const echoOwners = new WeakMap();
-  const constraintUpdates = new WeakMap();
-  function updateEcho(track, enabled) {
-    if (typeof track.applyConstraints !== 'function' || track.readyState !== 'live') return Promise.resolve();
-    const update = (constraintUpdates.get(track) || Promise.resolve()).catch(() => {}).then(() => {
-      if (track.readyState === 'live') return track.applyConstraints({ echoCancellation: { exact: enabled } });
-    });
-    constraintUpdates.set(track, update);
-    return update;
-  }
+  let teardownPending = Promise.resolve();
   const simdProbe = new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11]);
 
-  function captureConstraints(deviceId, { echoCancellation = true } = {}) {
+  function captureConstraints(deviceId) {
     return {
-      echoCancellation, noiseSuppression: false, autoGainControl: false,
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false,
       channelCount: { ideal: 1 }, sampleRate: { ideal: 48000 },
       ...(deviceId ? { deviceId: { exact: deviceId } } : {})
     };
   }
 
-  function supported() {
-    return typeof WebAssembly === 'object' && typeof AudioWorkletNode === 'function' && WebAssembly.validate(simdProbe);
+  function supported(mode = 'high-quality') {
+    return typeof WebAssembly === 'object' && typeof AudioWorkletNode === 'function' && (mode === 'light' || WebAssembly.validate(simdProbe));
   }
 
   function normalizedMode(mode) {
-    if (!['standard', 'strong'].includes(mode)) throw new TypeError('Voice isolation mode must be standard or strong.');
+    if (!['light', 'high-quality'].includes(mode)) throw new TypeError('Voice isolation mode must be light or high-quality.');
     return mode;
   }
 
   function acquireLoopback(endpointId, signal) {
+    if (endpointId === 'off') return Promise.resolve(null);
     if (!window.LoopbackReference || typeof window.LoopbackReference.acquire !== 'function') return Promise.resolve(null);
     return Promise.resolve(window.LoopbackReference.acquire({ timeoutMs: window.FreqxDesktopConfig.current.audio.timing.captureTimeoutMs, endpointId, signal })).catch(() => null);
   }
@@ -45,23 +37,20 @@
     try { window.LoopbackReference?.release?.(track); } catch {}
   }
 
-  async function loadAssets() {
-    if (!assetsPromise) {
-      assetsPromise = (async () => {
-        const read = async (name) => {
-          const response = await fetch(new URL(`vendor/deepfilter/${name}`, assetBase));
-          if (!response.ok) throw new Error(`Cannot load packaged DeepFilterNet asset: ${name}.`);
-          return response.arrayBuffer();
-        };
-        const [wasm, modelBytes] = await Promise.all([read('dfn3.wasm'), read('dfn3_weights.bin')]);
-        if (!modelBytes.byteLength) throw new Error('The packaged DeepFilterNet model is empty.');
-        return { wasmModule: await WebAssembly.compile(wasm), modelBytes };
-      })().catch((error) => {
-        assetsPromise = null;
-        throw error;
-      });
-    }
-    return assetsPromise;
+  async function loadModule(name) {
+    if (!assetsPromises.has(name)) assetsPromises.set(name, (async () => {
+      const response = await fetch(new URL(`vendor/${name}`, assetBase));
+      if (!response.ok) throw new Error(`Cannot load packaged voice isolation asset: ${name}.`);
+      return WebAssembly.compile(await response.arrayBuffer());
+    })().catch(error => { assetsPromises.delete(name); throw error; }));
+    return assetsPromises.get(name);
+  }
+
+  async function loadAssets(mode) {
+    const light = loadModule('rnnoise/rnnoise.wasm');
+    if (mode === 'light') return { lightWasmModule: await light };
+    const [wasmModule, lightWasmModule] = await Promise.all([loadModule('deepfilter/df_bg.wasm'), light]);
+    return { wasmModule, lightWasmModule };
   }
 
   function acquireRuntime() {
@@ -75,14 +64,12 @@
 
   function releaseRuntime(runtime) {
     runtime.users = Math.max(0, runtime.users - 1);
-    if (runtime.users || runtime.context.state === 'closed') return;
-    // Chromium retains closed AudioWorklet global scopes until document exit.
-    // Keep one idle context instead of accumulating one per switch. No model,
-    // mic track or processor is retained by it after session teardown.
-    void runtime.context.suspend().then(() => {
-      // An enable may arrive while Chromium is acknowledging the suspension.
-      if (runtime.users && runtime.context.state === 'suspended') return runtime.context.resume();
-    }).catch(() => {});
+    if (runtime.users || runtime.context.state === 'closed') return Promise.resolve();
+    // Closing releases the audio thread's WASM backing stores promptly. Keeping
+    // an idle global scope can retain large freed heaps until audio-thread GC.
+    // Compiled modules remain cached off the audio thread for the next startup.
+    if (isolationRuntime === runtime) isolationRuntime = null;
+    return runtime.context.close().catch(() => {});
   }
 
   function loadWorklet(runtime) {
@@ -109,15 +96,23 @@
     return aecAssetsPromise;
   }
 
-  async function create(stream, { mode, onError = () => {}, onDiagnostics = () => {}, referenceDeviceId = '', signal, compressor = false } = {}) {
+  async function create(stream, { mode, strength, onError = () => {}, onDiagnostics = () => {}, onFallback = () => {}, referenceDeviceId = 'off', signal, compressor = true } = {}) {
     const config = (await window.FreqxDesktopConfig.ready).audio;
     mode = normalizedMode(mode || config.defaults.voiceIsolationMode);
+    strength = strength ?? config.defaults.voiceIsolationStrength;
+    if (!Number.isFinite(strength) || strength < 0 || strength > 1) throw new TypeError('Voice isolation strength must be between 0 and 1.');
+    let effectiveMode = mode;
+    const highQualityLoaded = mode === 'high-quality';
     if (signal?.aborted) throw new Error("Voice isolation startup canceled.");
     const track = stream?.getAudioTracks().find((value) => value.readyState === 'live');
     if (!track) {
       throw new Error("Voice isolation requires a live microphone.");
     }
-    if (!supported()) throw new Error('WebAssembly SIMD or AudioWorklet is unavailable; using microphone echo cancellation.');
+    if (!supported(mode)) throw new Error('WebAssembly SIMD or AudioWorklet is unavailable; using the raw microphone.');
+    // A new model constructor can occupy the audio thread for hundreds of ms.
+    // Let previous processors acknowledge destruction before starting another.
+    await teardownPending;
+    if (signal?.aborted || track.readyState !== 'live') throw new DOMException('Voice isolation startup canceled.', 'AbortError');
 
     // Resample capture in its own 48 kHz context. Never alter the shared mixer.
     const runtime = acquireRuntime();
@@ -127,57 +122,18 @@
     let aecNode;
     let refSource;
     let referenceTrack;
-    let aecCaptureStream;
-    let rejectAecCapture;
     let aecActive = false;
     let aecUsable = true;
     let aecTeardown = Promise.resolve();
     let rejectAecStartup;
     let pendingAecPing = null;
-    const echoOwner = {};
-    let diagnostics = { engine: 'Chromium AEC', reference: 'unavailable', referenceLabel: '', referenceDb: -100, latencyMs: 0 };
+    let diagnostics = { engine: 'No echo cancellation', mode, reference: 'unavailable', referenceLabel: '', referenceDb: -100, latencyMs: 0, processingMs: 0, estimatedLatencyMs: 0 };
+    let algorithmLatencyMs = 0;
     const publish = changes => {
       diagnostics = Object.freeze({ ...diagnostics, ...changes });
+      diagnostics = Object.freeze({ ...diagnostics, estimatedLatencyMs: algorithmLatencyMs + (context?.baseLatency || 0) * 1000 + diagnostics.latencyMs });
       try { onDiagnostics(diagnostics); } catch {}
     };
-    const restoreEcho = () => {
-      if (echoOwners.get(track) !== echoOwner) return Promise.resolve();
-      echoOwners.delete(track);
-      return updateEcho(track, true).catch(error => console.warn('[VoiceIsolation] Cannot restore microphone echo cancellation:', error.message));
-    };
-    const releaseAecCapture = () => {
-      if (!aecCaptureStream) return;
-      for (const value of aecCaptureStream.getTracks()) {
-        value.removeEventListener('ended', aecProcessorError);
-        value.stop();
-      }
-      aecCaptureStream = null;
-    };
-    async function acquireRawCapture() {
-      // Chromium/device implementations can reject changing AEC on a live source.
-      // In that case keep the caller's AEC stream as a standby and own a raw one.
-      const deviceId = track.getSettings?.().deviceId;
-      if (!deviceId || !navigator.mediaDevices?.getUserMedia) throw new Error('Cannot acquire an unprocessed microphone for AEC3.');
-      let abandoned = false;
-      let timer;
-      const pending = navigator.mediaDevices.getUserMedia({ audio: captureConstraints(deviceId, { echoCancellation: false }), video: false }).then(capture => {
-        if (abandoned || closed) { capture.getTracks().forEach(value => value.stop()); return null; }
-        return capture;
-      });
-      try {
-        const capture = await Promise.race([pending, new Promise((resolve, reject) => {
-          rejectAecCapture = reject;
-          timer = setTimeout(() => reject(new Error('Unprocessed microphone startup timed out.')), config.timing.captureTimeoutMs);
-        })]);
-        const input = capture?.getAudioTracks().find(value => value.readyState === 'live');
-        if (!input || input.getSettings().echoCancellation !== false || input.label !== track.label) {
-          capture?.getTracks().forEach(value => value.stop());
-          throw new Error('Unprocessed microphone does not match the selected input.');
-        }
-        aecCaptureStream = capture;
-        input.addEventListener('ended', aecProcessorError, { once: true });
-      } finally { abandoned = true; clearTimeout(timer); rejectAecCapture = null; }
-    }
     const destroyAec = () => {
       const closingAec = aecNode;
       if (!closingAec) return;
@@ -193,24 +149,26 @@
       aecNode = null;
     };
     let destination;
-    let limiter;
+    let highPass;
     let closed = false;
     let ready = false;
     let startupTimer;
     let resumeTimer;
+    let outputReadyTimer;
+    let rejectOutputReady;
     let resumePending;
     let healthTimer;
     let pingId = 0;
     let pendingPing = null;
+    let closePromise;
     let rejectStartup;
     const abortStartup = () => fail(new DOMException("Voice isolation startup canceled.", 'AbortError'));
-    const processorError = () => fail(new Error("DeepFilterNet AudioWorklet stopped unexpectedly."));
+    const processorError = () => fail(new Error("Voice isolation AudioWorklet stopped unexpectedly."));
     const inputEnded = () => fail(new Error('The microphone stream ended.'));
     const bypassAec = () => {
       if (!aecActive || closed) return;
       aecActive = false;
-      void restoreEcho();
-      publish({ engine: 'Chromium AEC', reference: 'unavailable', referenceDb: -100, latencyMs: 0 });
+      publish({ engine: 'No echo cancellation', reference: 'unavailable', referenceDb: -100, latencyMs: 0 });
       destroyAec();
       try { refSource?.disconnect(); } catch {}
       if (referenceTrack) { referenceTrack.removeEventListener('ended', aecProcessorError); releaseLoopback(referenceTrack); referenceTrack = null; }
@@ -219,11 +177,9 @@
       if (source && node) {
         try {
           source.disconnect();
-          if (aecCaptureStream) source = context.createMediaStreamSource(stream);
-          source.connect(node);
+          source.connect(highPass);
         } catch {}
       }
-      releaseAecCapture();
     };
     const aecProcessorError = () => {
       aecUsable = false;
@@ -232,11 +188,11 @@
     };
 
     function close() {
-      if (closed) return;
+      if (closed) return closePromise;
       closed = true;
-      const echoRestored = restoreEcho();
-      rejectAecCapture?.(new Error('Unprocessed microphone startup canceled.'));
-      releaseAecCapture();
+      let resolveClose;
+      closePromise = new Promise(resolve => { resolveClose = resolve; });
+      teardownPending = Promise.all([teardownPending, closePromise]).then(() => {});
       rejectAecStartup?.(new Error('Playback echo startup canceled.'));
       rejectAecStartup = null;
       sessions.delete(close);
@@ -245,13 +201,16 @@
       context.removeEventListener('statechange', stateChanged);
       clearTimeout(startupTimer);
       clearTimeout(resumeTimer);
+      clearTimeout(outputReadyTimer);
+      rejectOutputReady?.(new DOMException('Voice isolation startup canceled.', 'AbortError'));
+      rejectOutputReady = null;
       clearInterval(healthTimer);
       rejectStartup?.(new Error("Voice isolation stopped before it was ready."));
       rejectStartup = null;
       source?.disconnect();
       refSource?.disconnect();
       destroyAec();
-      limiter?.disconnect();
+      highPass?.disconnect();
       if (referenceTrack) { referenceTrack.removeEventListener('ended', aecProcessorError); releaseLoopback(referenceTrack); referenceTrack = null; }
       // This is our processed stream. The caller still owns the raw microphone.
       destination?.stream.getTracks().forEach((track) => track.stop());
@@ -277,7 +236,7 @@
           void runtime.context.close().catch(() => {});
         }
         // Keep the shared worklet thread running until both engines free memory.
-        void aecTeardown.then(() => releaseRuntime(runtime));
+        void aecTeardown.then(() => releaseRuntime(runtime)).then(resolveClose);
       };
       if (closingNode) {
         closingNode.removeEventListener("processorerror", processorError);
@@ -285,8 +244,8 @@
         teardownTimer = setTimeout(() => finish(false), config.timing.teardownTimeoutMs);
         try { closingNode.port.postMessage({ type: 'destroy' }); } catch { finish(false); }
       } else finish();
-      source = aecNode = refSource = node = destination = limiter = context = null;
-      return echoRestored;
+      source = aecNode = refSource = node = destination = highPass = context = null;
+      return closePromise;
     }
 
     function fail(error) {
@@ -304,7 +263,7 @@
       if (context.state === 'closed') { fail(new Error('The voice isolation audio context closed.')); return; }
       if (context.state === 'running') return;
       if (!resumePending) {
-        resumeTimer = setTimeout(() => fail(new Error('Voice isolation could not resume; using microphone echo cancellation.')), config.timing.resumeTimeoutMs);
+        resumeTimer = setTimeout(() => fail(new Error('Voice isolation could not resume; using the raw microphone.')), config.timing.resumeTimeoutMs);
         resumePending = context.resume().then(() => {
           if (!closed && context.state !== 'running') throw new Error('Voice isolation audio context is unavailable.');
         }).catch(fail).finally(() => { clearTimeout(resumeTimer); resumePending = null; });
@@ -316,6 +275,32 @@
       if (closed || !ready) return;
       if (context.state === 'closed') fail(new Error('The voice isolation audio context closed.'));
       else if (context.state !== 'running') void resume();
+    }
+
+    function confirmMonoOutput() {
+      if (closed || signal?.aborted) return Promise.reject(new DOMException('Voice isolation startup canceled.', 'AbortError'));
+      const processedTrack = destination.stream.getAudioTracks()[0];
+      if (typeof processedTrack?.getSettings !== 'function') return Promise.reject(new Error('Voice isolation output format is unavailable.'));
+      // Blink applies the channel options to a default stereo destination, and
+      // publishes its new track format only when the first audio reaches it.
+      // Keep the stream private until its real format is 48 kHz mono.
+      return new Promise((resolve, reject) => {
+        rejectOutputReady = reject;
+        const deadline = performance.now() + config.timing.resumeTimeoutMs;
+        const checkFormat = () => {
+          outputReadyTimer = null;
+          if (closed || signal?.aborted) { reject(new DOMException('Voice isolation startup canceled.', 'AbortError')); return; }
+          const settings = processedTrack.getSettings();
+          if (settings.channelCount === 1 && settings.sampleRate === 48000) {
+            rejectOutputReady = null;
+            resolve();
+          } else if (performance.now() >= deadline || processedTrack.readyState === 'ended') {
+            rejectOutputReady = null;
+            reject(new Error('Voice isolation could not produce a 48 kHz mono output.'));
+          } else outputReadyTimer = setTimeout(checkFormat, 10);
+        };
+        checkFormat();
+      });
     }
 
     try {
@@ -336,11 +321,11 @@
           resolve();
         };
         signal?.addEventListener("abort", abortStartup, { once: true });
-        startupTimer = setTimeout(() => fail(new Error("DeepFilterNet startup timed out; using microphone echo cancellation.")), config.timing.startupTimeoutMs);
+        startupTimer = setTimeout(() => fail(new Error("Voice isolation startup timed out; using the raw microphone.")), config.timing.startupTimeoutMs);
         // Compilation occurs off the audio thread; the compiled module is cloned into it.
         void (async () => {
           const [assets, , loopbackTrack] = await Promise.all([
-            loadAssets(),
+            loadAssets(mode),
             loadWorklet(runtime),
             acquireLoopback(referenceDeviceId, signal).then(loopbackTrack => {
               // Own the capture as soon as it arrives, even if another startup
@@ -362,26 +347,48 @@
             outputChannelCount: [1],
             channelCount: 1,
             channelCountMode: "explicit",
-            processorOptions: { ...assets, mode, tuning: { voiceModes: config.voiceModes } }
+            processorOptions: { ...assets, mode, strength, compressor, tuning: { voiceModes: config.voiceModes, compressor: config.micCompressor } }
           });
           node.addEventListener("processorerror", processorError);
           node.port.onmessage = ({ data }) => {
             if (closed) return;
             if (data?.type === "ready") {
+              effectiveMode = data.mode || effectiveMode;
               modelReady = true;
               completeStartup();
             } else if (data?.type === "error") {
               fail(new Error(data.message || "Voice isolation could not start."));
-            } else if (data?.type === 'pong' && data.id === pendingPing) pendingPing = null;
+            } else if (data?.type === 'fallback') {
+              effectiveMode = 'light';
+              publish({ mode: effectiveMode });
+              onFallback(data.reason || 'High quality exceeded the audio processing budget.');
+            } else if (data?.type === 'mode') effectiveMode = data.mode;
+            if (data && ['ready', 'stats', 'pong'].includes(data.type)) {
+              if (data.type === 'pong' && data.id === pendingPing) pendingPing = null;
+              const algorithmLatency = data.estimatedLatencyMs ?? (data.bufferLatencyMs + data.modelLatencyMs);
+              if (Number.isFinite(algorithmLatency)) algorithmLatencyMs = algorithmLatency;
+              publish({ mode: effectiveMode, processingMs: data.processingMs || 0,
+                peakProcessingMs: data.peakProcessingMs || 0, processedFrames: data.processedFrames || 0,
+                underruns: data.underruns || 0 });
+            }
           };
-          destination = context.createMediaStreamDestination();
+          highPass = context.createBiquadFilter();
+          highPass.type = 'highpass';
+          highPass.frequency.value = config.equalizer.highPass.frequency;
+          highPass.Q.value = config.equalizer.highPass.Q;
+          highPass.channelCount = 1;
+          highPass.channelCountMode = 'explicit';
+          highPass.connect(node);
+          // Configure mono explicitly; confirmMonoOutput verifies the actual
+          // track format before any caller can consume this processed stream.
+          destination = typeof MediaStreamAudioDestinationNode === 'function'
+            ? new MediaStreamAudioDestinationNode(context, { channelCount: 1, channelCountMode: 'explicit', channelInterpretation: 'discrete' })
+            : context.createMediaStreamDestination();
           destination.channelCount = 1;
-          if (compressor) {
-            // Optional mic-only peak control; the app already has a mic compressor.
-            limiter = context.createDynamicsCompressor();
-            for (const [name, value] of Object.entries(config.limiter)) limiter[name].value = value;
-            node.connect(limiter).connect(destination);
-          } else node.connect(destination);
+          destination.channelCountMode = 'explicit';
+          destination.channelInterpretation = 'discrete';
+          // The worklet gate is followed by zero-lookahead gentle compression.
+          node.connect(destination);
           if (loopbackTrack) {
             try {
               const [, wasmModule] = await Promise.all([loadAecWorklet(runtime), loadAecAssets()]);
@@ -407,7 +414,7 @@
               function errorFromAec(data) { return new Error(data.message || 'WebRTC AEC3 failed.'); }
               referenceTrack.addEventListener('ended', aecProcessorError, { once: true });
               refSource = context.createMediaStreamSource(new MediaStream([referenceTrack]));
-              aecNode.connect(node);
+              aecNode.connect(highPass);
               await resume();
               await aecReady;
               if (closed) return;
@@ -429,32 +436,20 @@
       });
       await startup;
       await resume();
+      await confirmMonoOutput();
       if (closed || track.readyState !== 'live') throw new Error("Voice isolation stopped.");
       if (aecNode && refSource) {
         try {
           if (!aecUsable || referenceTrack.readyState !== 'live') throw new Error('Playback reference ended during startup.');
-          echoOwners.set(track, echoOwner);
-          try {
-            await updateEcho(track, false);
-            if (track.getSettings?.().echoCancellation === true) throw new Error('Microphone echo cancellation could not be disabled for AEC3.');
-          } catch {
-            await restoreEcho();
-            if (closed) throw new Error('Voice isolation stopped.');
-            await acquireRawCapture();
-          }
-          if (!aecUsable || referenceTrack.readyState !== 'live') throw new Error('Playback reference ended during microphone startup.');
-          if (closed) { await restoreEcho(); throw new Error('Voice isolation stopped.'); }
         } catch (error) {
-          await restoreEcho();
           if (closed) throw error;
           destroyAec(); refSource.disconnect(); refSource = null;
-          releaseAecCapture();
           referenceTrack?.removeEventListener('ended', aecProcessorError);
           releaseLoopback(referenceTrack); referenceTrack = null;
-          console.warn('[VoiceIsolation] Using Chromium AEC:', error.message);
+          console.warn('[VoiceIsolation] Playback echo reference unavailable:', error.message);
         }
       }
-      source = context.createMediaStreamSource(aecCaptureStream || stream);
+      source = context.createMediaStreamSource(stream);
       if (aecNode && refSource) {
         source.connect(aecNode, 0, 0);
         refSource.connect(aecNode, 0, 1);
@@ -462,33 +457,42 @@
         const detail = window.LoopbackReference?.details?.(referenceTrack);
         publish({ engine: 'WebRTC AEC3', reference: 'quiet', referenceLabel: detail?.label || 'Playback reference', referenceEndpointId: detail?.endpointId || '', latencyMs: (config.aec.captureDelaySamples + 480) / 48 });
       } else {
-        source.connect(node);
-        publish({ engine: 'Chromium AEC', reference: 'unavailable' });
+        source.connect(highPass);
+        publish({ engine: 'No echo cancellation', reference: 'unavailable' });
       }
       ready = true;
       signal?.removeEventListener('abort', abortStartup);
       // Bound a hung worklet failure without logging or posting every audio frame.
       healthTimer = setInterval(() => {
         if (closed || context.state !== 'running') return;
-        if (pendingPing !== null) { fail(new Error('DeepFilterNet stopped responding; using microphone echo cancellation.')); return; }
+        if (pendingPing !== null) { fail(new Error('Voice isolation stopped responding; using the raw microphone.')); return; }
         pendingPing = ++pingId; node.port.postMessage({ type: 'ping', id: pendingPing });
         if (aecActive) {
           if (pendingAecPing !== null) { bypassAec(); return; }
           pendingAecPing = pingId; aecNode.port.postMessage({ type: 'ping', id: pendingAecPing });
         }
       }, config.timing.healthIntervalMs);
-      console.info(`[VoiceIsolation] DeepFilterNet3 ready (${mode}, 48 kHz, local assets).`);
+      console.info(`[VoiceIsolation] Ready (${mode}, 48 kHz, local assets).`);
       return Object.freeze({
         stream: destination.stream, close, resume,
-        get mode() { return mode; },
+        get mode() { return effectiveMode; },
+        get requestedMode() { return mode; },
+        get strength() { return strength; },
         get contextState() { return context?.state || 'closed'; },
         get diagnostics() { return diagnostics; },
-        get inputSettings() { return (aecCaptureStream || stream).getAudioTracks()[0]?.getSettings?.() || {}; },
+        get inputSettings() { return stream.getAudioTracks()[0]?.getSettings?.() || {}; },
         setMode(nextMode) {
           nextMode = normalizedMode(nextMode);
           if (closed) throw new Error('Voice isolation session is closed.');
+          if (nextMode === 'high-quality' && !highQualityLoaded) throw new Error('High quality requires loading its local model.');
           if (nextMode === mode) return;
-          node.port.postMessage({ type: 'mode', mode: nextMode }); mode = nextMode;
+          node.port.postMessage({ type: 'mode', mode: nextMode }); mode = effectiveMode = nextMode;
+        },
+        setStrength(nextStrength) {
+          if (closed) throw new Error('Voice isolation session is closed.');
+          if (!Number.isFinite(nextStrength) || nextStrength < 0 || nextStrength > 1) throw new TypeError('Voice isolation strength must be between 0 and 1.');
+          strength = nextStrength;
+          node.port.postMessage({ type: 'strength', strength });
         }
       });
     } catch (error) {

@@ -11,7 +11,7 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "lint": "eslint . --max-warnings 0",
-    "test:unit": "node --test tests/desktop-config.cjs tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs",
+    "test:unit": "node --test tests/desktop-config.cjs tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs tests/voice-worklet.cjs",
     "test:driver": "node tests/driver-security.cjs",
     "test:auth-desktop": "node tests/auth-electron.cjs",
     "prepare:audio": "node scripts/prepare-audio.cjs",
@@ -30,7 +30,10 @@
     "test:echo": "node --test tests/aec-filter.cjs tests/loopback-reference.cjs",
     "test:reference-desktop": "node tests/playback-reference-desktop.cjs",
     "test:public-library": "node --test tests/public-library.cjs && node tests/discover-library.cjs",
-    "test:recovery": "node tests/main-crash-recovery.cjs && node tests/crash-watchdog.cjs && node tests/recovery-integration.cjs"
+    "test:recovery": "node tests/main-crash-recovery.cjs && node tests/crash-watchdog.cjs && node tests/recovery-integration.cjs",
+    "compare:voice": "node scripts/compare-voice-isolation.cjs",
+    "benchmark:voice": "node scripts/benchmark-voice-isolation.cjs",
+    "test:voice-worklet": "node --test tests/voice-worklet.cjs"
   },
   "build": {
     "appId": "app.freqx.desktop",
@@ -102,7 +105,6 @@
       "audio/native/*.exe",
       "audio/vendor/aec3/*",
       "audio/vendor/deepfilter/*.wasm",
-      "audio/vendor/deepfilter/*.bin",
       "audio/vendor/deepfilter/*.json",
       "audio/vendor/deepfilter/*.md",
       "audio/vendor/deepfilter/licenses/**/*",
@@ -115,7 +117,8 @@
       "LICENSE",
       "COMMERCIAL_LICENSE.md",
       "TRADEMARKS.md",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "audio/vendor/rnnoise/*"
     ]
   },
   "overrides": {
@@ -128,6 +131,7 @@
     "uiohook-napi": "^1.5.5"
   },
   "devDependencies": {
+    "@shiguredo/rnnoise-wasm": "2025.1.5",
     "electron": "44.5.1",
     "electron-builder": "26.15.3",
     "eslint": "10.11.0",

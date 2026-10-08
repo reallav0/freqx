@@ -1,24 +1,22 @@
 {
   "upstream": {
-    "url": "https://github.com/kdrkdrkdr/DeepFilterNet3.c.wasm",
-    "commit": "1695a9b3282e20515ab08eb97c83520f20d23138"
+    "url": "https://github.com/lofcz/DeepFilterNet",
+    "commit": "773cf0ca65da1f82bc63ee5d8fd15d9314190231",
+    "origin": "https://github.com/Rikorose/DeepFilterNet"
   },
+  "model": "DeepFilterNet3_ll",
   "files": {
-    "dfn3.wasm": {
-      "sha256": "e80e9597b2665e34efa5674ffb452a26b658f1ade1f5cf6ec14bfad684c18bc6",
-      "bytes": 110553
-    },
-    "dfn3_weights.bin": {
-      "sha256": "1f97872409522b2c04632620ea4fd63b0465d01a84f65c2fbfe83b48a3b5a7c7",
-      "bytes": 8538564
+    "df_bg.wasm": {
+      "bytes": 58429844,
+      "sha256": "3d5e13a46a7f29d608ca2bdf68dcf2ac0b10ccf7a39303e7d3c5628d143fbbc4"
     }
   },
   "build": {
-    "compiler": "WASI SDK 25 / clang 19.1.5",
-    "target": "wasm32-wasi",
+    "compiler": "rustc 1.99.0",
+    "target": "wasm32-unknown-unknown",
     "simd": true,
-    "memoryBytes": 67108864,
-    "stackBytes": 1048576,
-    "sourceModified": false
+    "tract": "0.23.4",
+    "source": "rust/src/lib.rs",
+    "modelLatencySamples": 480
   }
 }

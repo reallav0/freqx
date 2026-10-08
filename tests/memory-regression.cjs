@@ -1,6 +1,7 @@
 /* Real renderer memory/lifecycle stress fixture; never uses a user profile or physical microphone. */
 const fs = require('node:fs');
 const path = require('node:path');
+const assert = require('node:assert/strict');
 const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'output', 'memory-regression');
 if (!process.versions.electron) {
@@ -99,20 +100,24 @@ async function run() {
     const value = { label, runtime, dom, heapMiB: Math.round(metrics.find(value => value.name === 'JSHeapUsedSize').value / 1048576 * 10) / 10, memory };
     snapshots.push(value); console.log(JSON.stringify(value)); return value;
   }
-  await sample('initial', true);
+  const initial = await sample('initial', true);
   const cycles = Number(process.env.FREQX_MEMORY_CYCLES || 20);
   for (let batch = 0; batch < 3; batch++) {
     await evaluate(`(async () => { for(let i=0;i<${cycles};i++) { openSettingsButton.click(); uiThemeSelect.value=i%2?'midnight':'light'; uiThemeSelect.dispatchEvent(new Event('change')); closeSettingsButton.click(); toggleFavoritesViewButton.click(); toggleFavoritesViewButton.click(); await new Promise(resolve=>setTimeout(resolve,20)); } })()`);
     await sample(`ui-${(batch + 1) * cycles}`, true);
   }
-  await evaluate('setVoiceIsolationMode("standard")'); await pause(400);
+  await evaluate('setVoiceIsolationMode("high-quality")'); await pause(400);
   await sample('isolation-start', true);
   for (let batch = 0; batch < 3; batch++) {
-    await evaluate(`(async () => { for(let i=0;i<${cycles};i++) { await setVoiceIsolationMode('off'); await setVoiceIsolationMode('standard'); } })()`);
-    await sample(`isolation-${(batch + 1) * cycles}`, true);
+    await evaluate(`(async () => { for(let i=0;i<${cycles};i++) { await setVoiceIsolationMode('off'); await setVoiceIsolationMode('high-quality'); } })()`);
+    const current = await sample(`isolation-${(batch + 1) * cycles}`, true);
+    assert.ok(current.runtime.contextsRunning <= initial.runtime.contextsRunning + 1, 'Repeated modes must not accumulate live audio contexts');
+    assert.equal(current.runtime.captures, initial.runtime.captures, 'Mode switches must reuse microphone capture');
+    assert.equal(current.runtime.crashes, 0, 'No renderer failures during mode switching');
   }
   await evaluate('setVoiceIsolationMode("off")');
-  await sample('isolation-off', true);
+  const stopped = await sample('isolation-off', true);
+  assert.ok(stopped.runtime.contextsRunning <= initial.runtime.contextsRunning, 'Off releases the isolation audio thread');
   if (process.argv.includes('--heap')) {
     const dump = fs.createWriteStream(path.join(output, 'renderer.heapsnapshot'));
     win.webContents.debugger.on('message', (_, method, params) => { if (method === 'HeapProfiler.addHeapSnapshotChunk') dump.write(params.chunk); });

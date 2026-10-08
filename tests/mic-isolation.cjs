@@ -236,9 +236,9 @@ async function runMain() {
       assert('baseline mixer graph captured before integration', baseline.edges.length === 10, baseline);
     } else {
       assert('persisted off preference loads', await evaluate('!voiceIsolationToggle.checked && !micIsolationSession && voiceIsolationMode.value === "off"'));
-      assert('microphone uses WebRTC echo cancellation without Chromium noise suppression or gain control', await evaluate(`__micTest.captures.every(({constraints}) => {
+      assert('microphone disables all Chromium processing', await evaluate(`__micTest.captures.every(({constraints}) => {
         const audio = constraints.audio;
-        return constraints.video === false && audio.echoCancellation === true && audio.noiseSuppression === false && audio.autoGainControl === false
+        return constraints.video === false && audio.echoCancellation === false && audio.noiseSuppression === false && audio.autoGainControl === false
           && (audio.channelCount === 1 || audio.channelCount.ideal === 1)
           && (audio.sampleRate === 48000 || audio.sampleRate.ideal === 48000);
       })`));
@@ -257,7 +257,7 @@ async function runMain() {
       await evaluate('voiceIsolationToggle.click()');
       await until('!!micIsolationSession', 'voice isolation session');
       await pause(200);
-      assert('toggle enables local DeepFilterNet3 on a dedicated 48 kHz context', await evaluate('__micTest.worklets.length === 1 && __micTest.worklets[0].context.sampleRate === 48000 && __micTest.worklets[0].context !== audioContext && __micTest.worklets[0].context !== mixOutContext && __micTest.worklets[0].context !== localOutContext'));
+      assert('toggle enables local RNNoise on a dedicated 48 kHz context', await evaluate('__micTest.worklets.length === 1 && __micTest.worklets[0].context.sampleRate === 48000 && __micTest.worklets[0].context !== audioContext && __micTest.worklets[0].context !== mixOutContext && __micTest.worklets[0].context !== localOutContext'));
       assert('only mic source consumes processed stream', await evaluate('micSource.mediaStream === micIsolationSession.stream && micSource.mediaStream !== micStream && __micTest.edges.some(edge => edge[0] === __micTest.id(micSource) && edge[1] === __micTest.id(micGainNode))'));
       assert('toggle does not reacquire or stop physical input', await evaluate('micStream === __originalMic && __micTest.captures.length === __originalCaptureCount && micStream.getTracks().every(track => track.readyState === "live")'));
       assert('toggle does not call output routing APIs', await evaluate('__micTest.sinks.length') === sinksBefore);
@@ -265,22 +265,24 @@ async function runMain() {
       const onSignal = await measureSound();
       assert('enabling isolation preserves soundboard signal level at all three routes', onSignal.every((value,index) => Math.abs(value/beforeSignal[index]-1) < 0.025), { before: beforeSignal, after: onSignal });
       assert('enabled preference is saved', await evaluate('JSON.parse(localStorage.getItem("soundmuncher:mixer-settings")).voiceIsolation === true && voiceIsolationToggle.checked'));
-      await evaluate('window.__modeSession=micIsolationSession;window.__modeWorklet=__micTest.worklets.at(-1);window.__modeWorkletCount=__micTest.worklets.length;voiceIsolationMode.value="strong";voiceIsolationMode.dispatchEvent(new Event("change",{bubbles:true}))');
-      await until('micIsolationSession?.mode === "strong"', 'live Strong mode');
-      await until('__modeWorklet.messages.some(message=>message.type === "mode" && message.mode === "strong")', 'Strong processor acknowledgment');
-      assert('Strong mode updates the active processor without reopening microphone or rebuilding the graph', await evaluate('micIsolationSession === __modeSession && __micTest.worklets.length === __modeWorkletCount && micStream === __originalMic && __micTest.captures.length === __originalCaptureCount && micSource.mediaStream === __modeSession.stream && voiceIsolationToggle.checked'));
-      assert('Strong preference is persisted', await evaluate('JSON.parse(localStorage.getItem("soundmuncher:mixer-settings")).voiceIsolationMode === "strong"'));
-      await assertUnchanged('changing isolation strength leaves soundboard and outputs intact', baseline);
-      await evaluate('setVoiceIsolationMode("standard")');
-      await until('__modeWorklet.messages.some(message=>message.type === "mode" && message.mode === "standard")', 'Standard processor acknowledgment');
-      assert('Standard mode reuses the same processed MediaStream', await evaluate('micIsolationSession === __modeSession && micIsolationSession.mode === "standard" && micSource.mediaStream === __modeSession.stream && __micTest.worklets.length === __modeWorkletCount && __micTest.captures.length === __originalCaptureCount && voiceIsolationMode.value === "standard"'));
+      await evaluate('window.__modeCapture=micStream;voiceIsolationMode.value="high-quality";voiceIsolationMode.dispatchEvent(new Event("change",{bubbles:true}))');
+      await until('micIsolationSession?.requestedMode === "high-quality"', 'High quality model startup');
+      await evaluate('window.__modeSession=micIsolationSession;window.__modeWorklet=__micTest.worklets.at(-1);window.__modeWorkletCount=__micTest.worklets.length');
+      assert('High quality loads locally without reopening microphone or changing soundboard graph', await evaluate('micStream === __modeCapture && __micTest.captures.length === __originalCaptureCount && micSource.mediaStream === __modeSession.stream && voiceIsolationToggle.checked'));
+      assert('High quality preference is persisted', await evaluate('JSON.parse(localStorage.getItem("soundmuncher:mixer-settings")).voiceIsolationMode === "high-quality"'));
+      await evaluate('voiceIsolationStrength.value="0.67";voiceIsolationStrength.dispatchEvent(new Event("input",{bubbles:true}))');
+      assert('strength slider updates the live session and saved preference', await evaluate('micIsolationSession.strength === 0.67 && JSON.parse(localStorage.getItem("soundmuncher:mixer-settings")).voiceIsolationStrength === 0.67'));
+      await assertUnchanged('changing isolation mode and strength leaves soundboard and outputs intact', baseline);
+      await evaluate('setVoiceIsolationMode("light")');
+      await until('__modeWorklet.messages.some(message=>message.type === "mode" && message.mode === "light")', 'Light processor acknowledgment');
+      assert('Light reuses a loaded High quality session without reopening capture', await evaluate('micIsolationSession === __modeSession && micIsolationSession.mode === "light" && micSource.mediaStream === __modeSession.stream && __micTest.worklets.length === __modeWorkletCount && __micTest.captures.length === __originalCaptureCount && voiceIsolationMode.value === "light"'));
       await evaluate('__modeWorklet.context.suspend()');
       await until('__modeWorklet.context.state === "running"', 'suspended isolation context recovery');
       assert('context recovery preserves active microphone and processed stream', await evaluate('micIsolationSession === __modeSession && micSource.mediaStream === __modeSession.stream && __micTest.captures.length === __originalCaptureCount && __modeSession.stream.getTracks().every(track=>track.readyState === "live")'));
       await evaluate('micIsolationSession.resume()');
       await assertUnchanged('isolation context recovery leaves mixer and outputs intact', baseline);
-      await evaluate('window.__oldSession = micIsolationSession; window.__oldWorklet = __micTest.worklets[0]; voiceIsolationMode.value="off";voiceIsolationMode.dispatchEvent(new Event("change",{bubbles:true}))');
-      await until('__oldWorklet.context.state === "suspended"', 'disabled processor cleanup');
+      await evaluate('window.__oldSession = micIsolationSession; window.__oldWorklet = __micTest.worklets.at(-1); voiceIsolationMode.value="off";voiceIsolationMode.dispatchEvent(new Event("change",{bubbles:true}))');
+      await until('__oldWorklet.context.state === "closed"', 'disabled processor cleanup');
       assert('disabling restores raw microphone and releases processor output tracks', await evaluate('!micIsolationSession && micSource.mediaStream === micStream && __oldSession.stream.getTracks().every(track => track.readyState === "ended") && micStream === __originalMic && micStream.getTracks().every(track => track.readyState === "live")'));
       await assertUnchanged('disabling isolation preserves soundboard/output graph and settings', baseline);
       const offSignal = await measureSound();
@@ -288,11 +290,12 @@ async function runMain() {
       assert('Off mode unchecks the toggle and saves preference without changing capture count', await evaluate('JSON.parse(localStorage.getItem("soundmuncher:mixer-settings")).voiceIsolation === false && __micTest.captures.length === __originalCaptureCount && !voiceIsolationToggle.checked && voiceIsolationMode.value === "off"'));
       // Supply a synthetic reference and delay the actual AEC module until the
       // neural worklet is ready. No display capture or physical device is used.
-      await evaluate(`window.__originalLoopbackReference = window.LoopbackReference;
+      await evaluate(`(async () => { window.__originalLoopbackReference = window.LoopbackReference;
+        window.__aecBaseSession = await VoiceIsolation.create(micStream);
         window.__aecReference = micStream.getAudioTracks()[0].clone();
         window.__aecReleases = 0;
         window.LoopbackReference = { acquire: async () => __aecReference, release: track => { __aecReleases++; track.stop(); } };
-        window.__aecContext = __oldWorklet.context;
+        window.__aecContext = __micTest.worklets.at(-1).context;
         window.__aecAddModule = __aecContext.audioWorklet.addModule;
         window.__releaseAec = null;
         window.__aecGate = new Promise(resolve => { __releaseAec = resolve; });
@@ -301,7 +304,7 @@ async function runMain() {
           return __aecAddModule.call(this, url);
         };
         window.__aecSession = null;
-        void (window.__aecPending = VoiceIsolation.create(micStream).then(session => { __aecSession = session; }));`);
+        void (window.__aecPending = VoiceIsolation.create(micStream, { referenceDeviceId: '' }).then(session => { __aecSession = session; })); })()`);
       // A running isolation context represents overlapping session startup;
       // Chromium does not deliver ready messages while its context is suspended.
       await evaluate('__aecContext.resume()');
@@ -313,17 +316,17 @@ async function runMain() {
         const inputs = __micTest.edges.filter(edge => edge[1] === __micTest.id(aec.node));
         return inputs.length === 2 && inputs.some(edge => edge[3] === 0) && inputs.some(edge => edge[3] === 1);
       })()`));
-      await evaluate(`__aecSession.close(); __aecContext.audioWorklet.addModule = __aecAddModule;
-        void (window.LoopbackReference = __originalLoopbackReference);`);
-      await until('__aecContext.state === "suspended"', 'AEC session teardown');
+      await evaluate(`(async () => { await __aecSession.close(); await __aecBaseSession.close(); __aecContext.audioWorklet.addModule = __aecAddModule;
+        void (window.LoopbackReference = __originalLoopbackReference); })()`);
+      await until('__aecContext.state === "closed"', 'AEC session teardown');
       assert('AEC teardown releases its reference while preserving caller-owned microphone', await evaluate('__aecReleases === 1 && __aecReference.readyState === "ended" && micStream.getAudioTracks()[0].readyState === "live"'));
       await assertUnchanged('delayed AEC startup and teardown preserve soundboard/output graph', baseline);
       await evaluate('window.__originalIsolationApi=MicVoiceIsolation;window.MicVoiceIsolation={create:async()=>{throw new Error("Fixture model unavailable")}};setVoiceIsolationEnabled(true)');
       assert('startup failure preserves raw mic and reports isolation unavailable', await evaluate('!micIsolationSession && micSource.mediaStream === micStream && micStream === __originalMic && voiceIsolationState.textContent.includes("unavailable") && __micTest.captures.length === __originalCaptureCount'));
       await assertUnchanged('isolation startup failure leaves soundboard and outputs intact', baseline);
       await evaluate('window.MicVoiceIsolation=__originalIsolationApi;setVoiceIsolationEnabled(false)');
-      await evaluate('(async()=>{const validate=WebAssembly.validate;try{WebAssembly.validate=()=>false;await setVoiceIsolationEnabled(true)}finally{WebAssembly.validate=validate}})()');
-      assert('unsupported WASM SIMD fails open to the existing AEC microphone', await evaluate('!micIsolationSession && micSource.mediaStream === __originalMic && micStream.getTracks().every(track=>track.readyState === "live") && voiceIsolationState.textContent.includes("unavailable") && __micTest.captures.length === __originalCaptureCount'));
+      await evaluate('(async()=>{const validate=WebAssembly.validate;try{WebAssembly.validate=()=>false;await setVoiceIsolationMode("high-quality")}finally{WebAssembly.validate=validate}})()');
+      assert('unsupported SIMD falls back to Light while retaining requested High quality', await evaluate('micIsolationSession?.mode === "light" && selectedVoiceIsolationMode === "high-quality" && micStream.getTracks().every(track=>track.readyState === "live") && voiceIsolationState.textContent.includes("Using Light") && __micTest.captures.length === __originalCaptureCount'));
       await assertUnchanged('unsupported WASM SIMD leaves soundboard and outputs intact', baseline);
       await evaluate('setVoiceIsolationEnabled(true)');
       await evaluate('window.__closedContextSession=micIsolationSession;window.__closedContextWorklet=__micTest.worklets.at(-1);__closedContextWorklet.context.close()');
@@ -339,18 +342,18 @@ async function runMain() {
       await until('!!window.__staleSession', 'delayed processor initialization');
       await evaluate('setVoiceIsolationEnabled(false)');
       await evaluate('__pendingToggle');
-      await until('__staleWorklet.context.state === "suspended"', 'superseded processor cleanup');
+      await until('__staleWorklet.context.state === "closed"', 'superseded processor cleanup');
       assert('rapid on/off cannot reconnect a stale processor or replace raw capture', await evaluate('!micIsolationSession && micSource.mediaStream === micStream && micStream === __originalMic && __staleSession.stream.getTracks().every(track=>track.readyState === "ended") && __micTest.captures.length === __originalCaptureCount && !voiceIsolationToggle.checked'));
       await assertUnchanged('rapid toggles preserve soundboard and output graph', baseline);
       await evaluate('window.MicVoiceIsolation=__originalIsolationApi;setVoiceIsolationEnabled(true)');
       // Exercise the actual event listener, including cleanup and raw-mic recovery.
       await evaluate('window.__failedSession=micIsolationSession;window.__failedWorklet=__micTest.worklets.at(-1);__failedWorklet.node.dispatchEvent(new ErrorEvent("processorerror",{message:"Fixture processor failure"}))');
-      await until('__failedWorklet.context.state === "suspended"', 'failed processor cleanup');
+      await until('__failedWorklet.context.state === "closed"', 'failed processor cleanup');
       assert('processor error releases isolation and reconnects original raw microphone', await evaluate('!micIsolationSession && micSource.mediaStream === __originalMic && micStream.getTracks().every(track=>track.readyState === "live") && __failedSession.stream.getTracks().every(track=>track.readyState === "ended") && voiceIsolationState.textContent.includes("unavailable")'));
       await assertUnchanged('processor failure leaves soundboard and outputs intact', baseline);
       await evaluate('setVoiceIsolationEnabled(true)');
       await evaluate('window.__mutedSession=micIsolationSession;window.__mutedWorklet=__micTest.worklets.at(-1);setMicCaptureEnabled(false)');
-      await until('__mutedWorklet.context.state === "suspended"', 'mute processor cleanup');
+      await until('__mutedWorklet.context.state === "closed"', 'mute processor cleanup');
       assert('mic off stops raw and processed tracks and detaches mic source', await evaluate('!micStream && !micSource && !micIsolationSession && __originalMic.getTracks().every(track => track.readyState === "ended") && __mutedSession.stream.getTracks().every(track => track.readyState === "ended")'));
       await assertUnchanged('mic off leaves soundboard and output routes active', baseline);
       await evaluate('setMicCaptureEnabled(true)');
@@ -366,7 +369,7 @@ async function runMain() {
       await evaluate('__micTest.captureError=null;setMicCaptureEnabled(true)');
       assert('microphone can recover after permission is granted without restarting', await evaluate('isMicCaptureEnabled && !!micIsolationSession && micSource.mediaStream === micIsolationSession.stream'));
       await evaluate('window.__endedMic=micStream;window.__endedSession=micIsolationSession;window.__endedWorklet=__micTest.worklets.at(-1);const endedTrack=micStream.getAudioTracks()[0];endedTrack.stop();endedTrack.dispatchEvent(new Event("ended"))');
-      await until('__endedWorklet.context.state === "suspended"', 'disconnected microphone cleanup');
+      await until('__endedWorklet.context.state === "closed"', 'disconnected microphone cleanup');
       assert('ended microphone stops isolation and clears the capture state', await evaluate('!isMicCaptureEnabled && !micStream && !micSource && !micIsolationSession && __endedSession.stream.getTracks().every(track=>track.readyState === "ended") && toggleMicCaptureButton.textContent === "Mic: Off"'));
       await assertUnchanged('microphone disconnection leaves soundboard and outputs intact', baseline);
       await evaluate('setMicCaptureEnabled(false);__micTest.delayCaptureMs=180;window.__captureCountBeforeDelay=__micTest.captures.length;void(window.__lateCapture=setMicCaptureEnabled(true))');
@@ -386,7 +389,7 @@ async function runMain() {
       assert('live mic shows On while isolation is still starting', await evaluate('isMicCaptureEnabled && toggleMicCaptureButton.textContent === "Mic: On" && !!micSource && !micIsolationSession'));
       await evaluate('toggleMicCaptureButton.click()');
       await evaluate('__startingMic');
-      await until('__startingWorklet.context.state === "suspended"', 'muted pending model cleanup');
+      await until('__startingWorklet.context.state === "closed"', 'muted pending model cleanup');
       assert('Mic button immediately mutes during isolation startup', await evaluate('!isMicCaptureEnabled && !micStream && !micSource && !micIsolationSession && __startingSession.stream.getTracks().every(track=>track.readyState === "ended")'));
       await assertUnchanged('muting during model startup leaves soundboard/output graph untouched', baseline);
       await evaluate('void(window.MicVoiceIsolation=__originalIsolationApi)');
@@ -396,15 +399,17 @@ async function runMain() {
       assert('real DeepFilterNet3 worklet produces finite PCM and suppresses seeded microphone noise', suppression.inputRms > 0.01 && suppression.outputRms >= 0 && suppression.attenuationDb < -10 && suppression.processedFrames > 150 && suppression.nonFiniteSamples === 0 && suppression.errors.length === 0, suppression);
       assert('controller close is idempotent and never stops caller-owned input tracks', suppression.rawTrackStillLiveAfterClose && suppression.processedTrackEndedAfterClose);
       await createWindow({ voiceIsolation: true });
-      assert('legacy enabled preference upgrades to Standard isolation', await evaluate('voiceIsolationToggle.checked && !!micIsolationSession && micIsolationSession.mode === "standard" && micSource.mediaStream === micIsolationSession.stream'));
+      assert('legacy enabled preference restores Light isolation', await evaluate('voiceIsolationToggle.checked && !!micIsolationSession && micIsolationSession.mode === "light" && micSource.mediaStream === micIsolationSession.stream'));
       await createWindow({ voiceIsolation: true, voiceIsolationMode: 'strong' });
-      assert('persisted Strong preference restores isolation on startup', await evaluate('voiceIsolationToggle.checked && !!micIsolationSession && micIsolationSession.mode === "strong" && voiceIsolationMode.value === "strong" && micSource.mediaStream === micIsolationSession.stream'));
+      assert('legacy Strong preference migrates to High quality on startup', await evaluate('voiceIsolationToggle.checked && !!micIsolationSession && micIsolationSession.requestedMode === "high-quality" && voiceIsolationMode.value === "high-quality" && micSource.mediaStream === micIsolationSession.stream'));
       await createWindow({});
-      assert('first launch enables Standard isolation by default', await evaluate('voiceIsolationToggle.checked && !!micIsolationSession && micIsolationSession.mode === "standard" && voiceIsolationMode.value === "standard"'));
+      assert('first launch enables Light isolation by default', await evaluate('voiceIsolationToggle.checked && !!micIsolationSession && micIsolationSession.mode === "light" && voiceIsolationMode.value === "light"'));
       const assets = await evaluate('__micTest.assets.filter(url=>url.includes("/audio/"))');
-      assert('DeepFilterNet3 model and WASM load entirely from local packaged assets', assets.some(url=>/\.wasm$/.test(url)) && assets.some(url=>/\.bin$/.test(url)) && assets.every(url=>url.startsWith('file:')) && (!process.argv.includes('--packaged') || assets.every(url=>url.includes('/resources/app.asar/audio/'))), assets);
+      assert('default Light loads only local RNNoise without downloading the High quality model', assets.some(url=>/rnnoise\.wasm$/.test(url)) && !assets.some(url=>/df_bg\.wasm$/.test(url)) && assets.every(url=>url.startsWith('file:')) && (!process.argv.includes('--packaged') || assets.every(url=>url.includes('/resources/app.asar/audio/'))), assets);
       const engine = await evaluate('__micTest.worklets.at(-1).messages.find(message=>message.type === "ready")');
-      assert('processor reports a 48 kHz realtime frame pipeline with bounded algorithmic buffering', engine?.sampleRate === 48000 && engine?.frameSize === 480 && engine?.bufferLatencyMs <= 10 && engine?.modelLatencyMs <= 30, engine);
+      assert('processor reports a 48 kHz realtime frame pipeline with bounded algorithmic buffering', engine?.sampleRate === 48000 && engine?.frameSize === 480 && Math.abs(engine?.bufferLatencyMs - 448 / 48) < 0.001 && engine?.modelLatencyMs === 10, engine);
+      await pause(1200);
+      assert('debug readout reports processing cost and estimated added latency', await evaluate('voiceIsolationDebug.textContent.includes("ms/frame") && voiceIsolationDebug.textContent.includes("latency") && Number.isFinite(micIsolationSession.diagnostics.processingMs) && micIsolationSession.diagnostics.processingMs > 0 && micIsolationSession.diagnostics.estimatedLatencyMs >= 19 && micIsolationSession.diagnostics.estimatedLatencyMs < 30'));
       assert('no renderer crashes or AudioWorklet processor errors', await evaluate('__micTest.crashes.length === 0 && __micTest.worklets.every(worklet => worklet.errors.length === 0)'));
       await evaluate('document.getElementById("voiceIsolationToggle").scrollIntoView({block:"center"})');
       await evaluate('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
@@ -441,7 +446,7 @@ async function measureNoise() {
   source.connect(destination); source.connect(raw); source.start();
   await context.resume();
   const errors = [];
-  const session = await MicVoiceIsolation.create(destination.stream, { onError: error => errors.push(String(error)) });
+  const session = await MicVoiceIsolation.create(destination.stream, { mode: "high-quality", strength: 1, compressor: false, onError: error => errors.push(String(error)) });
   const processed = context.createMediaStreamSource(session.stream);
   const clean = context.createAnalyser(); clean.fftSize = 2048;
   const silent = context.createGain(); silent.gain.value = 0;

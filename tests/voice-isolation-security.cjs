@@ -73,7 +73,7 @@ async function run() {
       // Load the real index.html, CSP and service directly from the checkout or
       // app.asar. Block only the unrelated app renderer (which requires IPC).
       const cancel = /^https?:/i.test(details.url) || details.url.endsWith('/renderer.js')
-        || (denyModel && /\/dfn3_weights\.bin(?:[?#]|$)/.test(details.url));
+        || (denyModel && /\/df_bg\.wasm(?:[?#]|$)/.test(details.url));
       callback({ cancel });
     });
     win.webContents.on('console-message', event => {
@@ -118,19 +118,24 @@ async function run() {
       window.__rawMic = await navigator.mediaDevices.getUserMedia({ audio: constraints, video: false });
       return { constraints, settings: __rawMic.getAudioTracks()[0].getSettings(), label: __rawMic.getAudioTracks()[0].label };
     })()`);
-    check('native getUserMedia requests echo cancellation without Chromium noise suppression or AGC', capture.constraints.echoCancellation === true && capture.constraints.noiseSuppression === false && capture.constraints.autoGainControl === false, capture);
-    check('fake microphone negotiates 48 kHz mono with echo cancellation', capture.settings.sampleRate === 48000 && capture.settings.channelCount === 1 && capture.settings.echoCancellation === true && capture.settings.noiseSuppression === false && capture.settings.autoGainControl === false, capture.settings);
+    check('native getUserMedia requests all Chromium microphone processing disabled', capture.constraints.echoCancellation === false && capture.constraints.noiseSuppression === false && capture.constraints.autoGainControl === false, capture);
+    check('native microphone keeps processing disabled even when its format differs', capture.settings.sampleRate > 0 && capture.settings.channelCount >= 1 && capture.settings.echoCancellation === false && capture.settings.noiseSuppression === false && capture.settings.autoGainControl === false, capture.settings);
     const started = await evaluate(`(async () => {
       const start = performance.now();
-      window.__cleanMic = await VoiceIsolation.create(__rawMic, { mode: 'standard', onError: error => __voiceSecurity.errors.push(String(error)) });
-      return { startupMs: Math.round(performance.now() - start), mode: __cleanMic.mode, state: __cleanMic.contextState, tracks: __cleanMic.stream.getAudioTracks().length, sampleRate: __voiceSecurity.contexts[0]?.sampleRate };
+      window.__cleanMic = await VoiceIsolation.create(__rawMic, { mode: 'high-quality', onError: error => __voiceSecurity.errors.push(String(error)) });
+      return { startupMs: Math.round(performance.now() - start), mode: __cleanMic.mode, state: __cleanMic.contextState, tracks: __cleanMic.stream.getAudioTracks().length, sampleRate: __voiceSecurity.contexts[0]?.sampleRate, outputSettings: __cleanMic.stream.getAudioTracks()[0].getSettings() };
     })()`);
-    check('bundled DeepFilterNet starts in a secure renderer with a reusable mono stream', started.mode === 'standard' && started.state === 'running' && started.tracks === 1 && started.sampleRate === 48000, started);
-    check('Strong mode changes live without replacing the input, output stream or audio context', await evaluate(`(() => {
+    check('bundled DeepFilterNet starts in a secure renderer with a reusable mono stream', started.mode === 'high-quality' && started.state === 'running' && started.tracks === 1 && started.sampleRate === 48000, started);
+    check('48 kHz processing context resamples capture and downmixes to mono', started.outputSettings.sampleRate === 48000 && started.outputSettings.channelCount === 1, started.outputSettings);
+    check('Light mode changes live without replacing the input, output stream or audio context', await evaluate(`(() => {
       const before = __cleanMic.stream;
       const count = __voiceSecurity.contexts.length;
-      __cleanMic.setMode('strong');
-      return __cleanMic.mode === 'strong' && __cleanMic.stream === before && __voiceSecurity.contexts.length === count && __rawMic.getTracks().every(track => track.readyState === 'live');
+      __cleanMic.setMode('light');
+      return __cleanMic.mode === 'light' && __cleanMic.stream === before && __voiceSecurity.contexts.length === count && __rawMic.getTracks().every(track => track.readyState === 'live');
+    })()`));
+    check('strength changes live with preexisting capture and stream', await evaluate(`(() => {
+      const stream = __cleanMic.stream; __cleanMic.setStrength(0.72);
+      return __cleanMic.strength === 0.72 && __cleanMic.stream === stream && __rawMic.getTracks().every(track => track.readyState === 'live');
     })()`));
     check('suspended processing context resumes without restarting capture', await evaluate(`(async () => {
       await __voiceSecurity.contexts[0].suspend();
@@ -142,7 +147,7 @@ async function run() {
     check('disabling releases processed tracks while preserving the caller-owned microphone', await evaluate(`(async () => {
       await __cleanMic.close(); await __cleanMic.close();
       await new Promise(resolve => setTimeout(resolve, 200));
-      return __cleanMic.stream.getTracks().every(track => track.readyState === 'ended') && __rawMic.getTracks().every(track => track.readyState === 'live') && __voiceSecurity.contexts.every(context => context.state === 'suspended');
+      return __cleanMic.stream.getTracks().every(track => track.readyState === 'ended') && __rawMic.getTracks().every(track => track.readyState === 'live') && __voiceSecurity.contexts.every(context => context.state === 'closed');
     })()`));
     const aecStarted = await evaluate(`(async () => {
       window.__originalReferenceApi = LoopbackReference;
@@ -153,58 +158,58 @@ async function run() {
       await __referenceContext.resume();
       window.__aecReference = __referenceDestination.stream.getAudioTracks()[0].clone();
       window.LoopbackReference = { acquire: async () => __aecReference, release: track => track.stop(), details: () => ({ label: 'Synthetic playback' }) };
-      window.__cleanMic = await VoiceIsolation.create(__rawMic);
+      window.__cleanMic = await VoiceIsolation.create(__rawMic, { referenceDeviceId: '' });
       return { engine: __cleanMic.diagnostics.engine, browserAec: __cleanMic.inputSettings.echoCancellation, reference: __cleanMic.diagnostics.referenceLabel };
     })()`);
     check('real AEC3 receives Chromium capture with browser echo cancellation disabled', aecStarted.engine === 'WebRTC AEC3' && aecStarted.browserAec === false && aecStarted.reference === 'Synthetic playback', aecStarted);
     await evaluate('new Promise(resolve => setTimeout(resolve, 250))');
     check('AEC3 and its module imports run inside production CSP without remote access', await evaluate('__voiceSecurity.csp.length === 0 && __voiceSecurity.errors.length === 0') && requests.some(request => request.url.endsWith('/audio/aec3-engine.mjs')) && !requests.some(request => /^https?:/i.test(request.url)));
-    check('reference disconnection restores Chromium AEC while keeping DeepFilterNet live', await evaluate(`(async () => {
+    check('reference disconnection keeps Chromium processing disabled while keeping DeepFilterNet live', await evaluate(`(async () => {
       __aecReference.stop(); __aecReference.dispatchEvent(new Event('ended'));
       await new Promise(resolve => setTimeout(resolve, 100));
-      const valid = __rawMic.getAudioTracks()[0].getSettings().echoCancellation === true && __cleanMic.diagnostics.engine === 'Chromium AEC' && __cleanMic.stream.getAudioTracks()[0].readyState === 'live';
+      const valid = __rawMic.getAudioTracks()[0].getSettings().echoCancellation === false && __cleanMic.diagnostics.engine === 'No echo cancellation' && __cleanMic.stream.getAudioTracks()[0].readyState === 'live';
       await __cleanMic.close();
       return valid;
     })()`));
-    check('AEC3 processor failure restores Chromium AEC without ending microphone capture', await evaluate(`(async () => {
+    check('AEC3 processor failure keeps Chromium processing disabled without ending microphone capture', await evaluate(`(async () => {
       window.__aecReference = __referenceDestination.stream.getAudioTracks()[0].clone();
-      window.__cleanMic = await VoiceIsolation.create(__rawMic);
+      window.__cleanMic = await VoiceIsolation.create(__rawMic, { referenceDeviceId: '' });
       __voiceSecurity.nodes.filter(entry => entry.name === 'freqx-aec').at(-1).node.dispatchEvent(new Event('processorerror'));
       await new Promise(resolve => setTimeout(resolve, 100));
-      const valid = __rawMic.getAudioTracks()[0].getSettings().echoCancellation === true && __cleanMic.diagnostics.engine === 'Chromium AEC' && __rawMic.getTracks().every(track => track.readyState === 'live');
+      const valid = __rawMic.getAudioTracks()[0].getSettings().echoCancellation === false && __cleanMic.diagnostics.engine === 'No echo cancellation' && __rawMic.getTracks().every(track => track.readyState === 'live');
       await __cleanMic.close();
       return valid;
     })()`));
-    check('closing an active AEC3 session restores Chromium AEC on the same microphone', await evaluate(`(async () => {
+    check('closing an active AEC3 session keeps Chromium processing disabled on the same microphone', await evaluate(`(async () => {
       window.__aecReference = __referenceDestination.stream.getAudioTracks()[0].clone();
-      window.__cleanMic = await VoiceIsolation.create(__rawMic);
+      window.__cleanMic = await VoiceIsolation.create(__rawMic, { referenceDeviceId: '' });
       await __cleanMic.close();
       window.LoopbackReference = __originalReferenceApi;
       __referenceDestination.stream.getTracks().forEach(track => track.stop()); __referenceSignal.stop(); await __referenceContext.close();
-      return __rawMic.getAudioTracks()[0].getSettings().echoCancellation === true && __aecReference.readyState === 'ended';
+      return __rawMic.getAudioTracks()[0].getSettings().echoCancellation === false && __aecReference.readyState === 'ended';
     })()`));
     check('reenabling starts on the same live microphone without an app restart', await evaluate(`(async () => {
-      window.__cleanMic = await VoiceIsolation.create(__rawMic, { mode:'strong' });
-      const live = __cleanMic.mode === 'strong' && __cleanMic.stream.getAudioTracks()[0].readyState === 'live';
+      window.__cleanMic = await VoiceIsolation.create(__rawMic, { mode:'light' });
+      const live = __cleanMic.mode === 'light' && __cleanMic.stream.getAudioTracks()[0].readyState === 'live';
       await __cleanMic.close(); __rawMic.getTracks().forEach(track => track.stop());
       return live;
     })()`));
-    const modelRequests = requests.filter(request => /\/audio\/vendor\/deepfilter\/dfn3(?:\.wasm|_weights\.bin)(?:[?#]|$)/.test(request.url));
+    const modelRequests = requests.filter(request => /\/audio\/vendor\/(?:deepfilter\/df_bg|rnnoise\/rnnoise)\.wasm(?:[?#]|$)/.test(request.url));
     check('WASM and model load once from the application directory, entirely offline', modelRequests.length === 2 && modelRequests.every(request => request.url.startsWith('file:')) && !requests.some(request => /^https?:/i.test(request.url)), modelRequests);
-    if (appRoot.endsWith('app.asar')) check('packaged assets resolve inside app.asar', modelRequests.every(request => request.url.includes('/app.asar/audio/vendor/deepfilter/')));
+    if (appRoot.endsWith('app.asar')) check('packaged assets resolve inside app.asar', modelRequests.every(request => request.url.includes('/app.asar/audio/vendor/')));
     check('local AudioWorklet module was loaded from the application', requests.some(request => request.url.includes('/audio/voice-isolation-worklet.mjs')));
 
     await createWindow({ denyModel: true });
     const unavailable = await evaluate(`(async () => {
       const raw = await navigator.mediaDevices.getUserMedia({ audio: VoiceIsolation.captureConstraints(), video:false });
       let message = '';
-      try { await VoiceIsolation.create(raw); } catch (error) { message = error.message; }
+      try { await VoiceIsolation.create(raw, { mode: 'high-quality' }); } catch (error) { message = error.message; }
       await new Promise(resolve => setTimeout(resolve, 200));
-      const result = { message, rawLive: raw.getTracks().every(track => track.readyState === 'live'), contextsIdle: __voiceSecurity.contexts.every(context => context.state === 'suspended') };
+      const result = { message, rawLive: raw.getTracks().every(track => track.readyState === 'live'), contextsIdle: __voiceSecurity.contexts.every(context => context.state === 'closed') };
       raw.getTracks().forEach(track => track.stop());
       return result;
     })()`);
-    check('missing packaged model rejects cleanly and keeps the AEC microphone available for fallback', unavailable.message.length > 0 && unavailable.rawLive && unavailable.contextsIdle, unavailable);
+    check('missing packaged model rejects cleanly and keeps the raw microphone available for fallback', unavailable.message.length > 0 && unavailable.rawLive && unavailable.contextsIdle, unavailable);
     await createWindow({ denyPermission: true });
     const denied = await evaluate(`(async () => {
       try { await navigator.mediaDevices.getUserMedia({audio:VoiceIsolation.captureConstraints(),video:false}); return { denied:false }; }
