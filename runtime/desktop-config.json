@@ -201,7 +201,7 @@
       "teardownTimeoutMs": 250,
       "resumeTimeoutMs": 2500,
       "startupTimeoutMs": 12000,
-      "healthIntervalMs": 5000
+      "healthIntervalMs": 1000
     },
     "aec": {
       "captureDelaySamples": 1440,

@@ -199,12 +199,12 @@
       source?.disconnect();
       refSource?.disconnect();
       destroyAec();
-      limiter?.disconnect();
       highPass?.disconnect();
       if (referenceTrack) { referenceTrack.removeEventListener('ended', aecProcessorError); releaseLoopback(referenceTrack); referenceTrack = null; }
       // This is our processed stream. The caller still owns the raw microphone.
       destination?.stream.getTracks().forEach((track) => track.stop());
       const closingNode = node;
+      const closingLimiter = limiter;
       // Release the neural engine before stopping its worklet thread. Closing
       // the MessagePort/context immediately can discard the destroy message.
       // Input disconnect and processed-track stop are immediate. Keep the
@@ -220,6 +220,7 @@
           closingNode.port.onmessage = null;
           closingNode.port.close();
         }
+        closingLimiter?.disconnect();
         if (!acknowledged && runtime.context.state !== 'closed') {
           // Never reuse a thread whose processor cannot finish teardown.
           if (isolationRuntime === runtime) isolationRuntime = null;
