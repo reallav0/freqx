@@ -1,0 +1,26 @@
+[package]
+name = "freqx-dfn3"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "PolyForm-Noncommercial-1.0.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+deep_filter = { git = "https://github.com/lofcz/DeepFilterNet", rev = "773cf0ca65da1f82bc63ee5d8fd15d9314190231", default-features = false, features = ["tract", "default-model", "default-model-ll"] }
+ndarray = "0.17"
+getrandom = "0.3"
+# Keep the inference API at the fork's tested revision; later 0.23 releases
+# changed Tensor/TValue despite sharing the minor version.
+tract-core = "=0.23.4"
+tract-hir = "=0.23.4"
+tract-onnx = "=0.23.4"
+tract-pulse = "=0.23.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+panic = "abort"
+strip = true

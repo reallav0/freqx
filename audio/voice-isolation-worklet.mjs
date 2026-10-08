@@ -1,149 +1,188 @@
-// DeepFilterNet3 accepts normalized mono float audio at 48 kHz in 480-sample hops.
-// Only the microphone is connected here; this node never sees the soundboard mix.
-// Compilation/fetching happen outside the real-time thread. See vendor/deepfilter.
-import '../runtime/config-schema.js';
-const FRAME_SIZE = 480;
-const MODEL_BYTES = 8538564;
+﻿// A microphone-only processor. Soundboard and master nodes never connect here.
+import { FRAME_SIZE, createLightEngine, createHighQualityEngine } from './denoiser-engines.mjs';
+import { MicCompressor } from './mic-dynamics.mjs';
+const now = typeof performance === 'object' ? () => performance.now() : () => Date.now();
+const QUANTUM_BUDGET_MS = 128 / 48;
+const HOLD_SAMPLES = 48000 * .12;
+const ATTACK = 1 - Math.exp(-1 / (48000 * .003));
+const RELEASE = 1 - Math.exp(-1 / (48000 * .07));
+// 480 - gcd(480, 128): the smallest queue that covers every quantum phase.
+const FIFO_DELAY = 448;
 
 class VoiceIsolationProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
-    this.engine = null;
-    this.weightsPointer = 0;
     this.destroyed = false;
-    this.initialized = false;
     this.inputPosition = 0;
     this.processedFrames = 0;
+    this.inputFrame = new Float32Array(FRAME_SIZE);
+    this.dryDelay = new Float32Array(FRAME_SIZE);
     this.outputQueue = new Float32Array(FRAME_SIZE * 2);
     this.outputRead = 0;
-    this.outputWrite = FRAME_SIZE;
-    // Exactly 10 ms of buffering bridges every 128/480 quantum boundary.
-    this.outputCount = FRAME_SIZE;
+    this.outputWrite = FIFO_DELAY;
+    this.outputCount = FIFO_DELAY;
+    this.gateGain = 0;
+    this.gateHold = 0;
+    this.overBudget = 0;
+    this.underruns = 0;
+    this.processingMs = 0;
+    this.peakProcessingMs = 0;
+    this.quantumMs = 0;
+    this.stats = { type: 'stats', mode: '', processingMs: 0, peakProcessingMs: 0,
+      quantumMs: 0, estimatedLatencyMs: (FIFO_DELAY + FRAME_SIZE) / 48, processedFrames: 0, underruns: 0, id: 0 };
+    this.fallbackMessage = { type: 'fallback', mode: 'light', reason: 'High quality exceeded the audio processing budget; switched to Light.' };
+    this.destroyedMessage = { type: 'destroyed' };
+    this.invalidAudio = new Error('The denoiser produced invalid audio.');
     this.port.onmessage = ({ data }) => {
       if (this.destroyed) return;
       try {
-        if (data?.type === "destroy") this.destroy();
-        else if (data?.type === "mode") this.setMode(data.mode, true);
-        else if (data?.type === "ping") this.port.postMessage({
-          type: "pong", id: data.id, processedFrames: this.processedFrames,
-          mode: this.mode, sampleRate: 48000
-        });
+        if (data?.type === 'destroy') this.destroy();
+        else if (data?.type === 'mode') {
+          this.setMode(data.mode);
+          this.port.postMessage({ type: 'mode', mode: this.mode });
+        } else if (data?.type === 'strength') this.strength = this.normalizeStrength(data.strength);
+        else if (data?.type === 'ping') this.publishStats(data.id);
       } catch (error) { this.fail(error); }
     };
-
     try {
-      if (sampleRate !== 48000) throw new Error("DeepFilterNet3 requires a microphone context at 48 kHz.");
-      const { wasmModule, modelBytes, mode, tuning } = options.processorOptions || {};
-      if (!tuning?.voiceModes) throw new Error("Missing voice isolation tuning.");
-      this.modes = globalThis.FreqxConfigSchema.validateAudioTuning(tuning).voiceModes;
-      if (!(wasmModule instanceof WebAssembly.Module)) throw new Error("DeepFilterNet3 WASM was not compiled before worklet initialization.");
-      const weights = modelBytes instanceof ArrayBuffer ? new Uint8Array(modelBytes) : modelBytes;
-      if (!(weights instanceof Uint8Array) || weights.byteLength !== MODEL_BYTES) throw new Error("DeepFilterNet3 model has an unexpected size.");
-      const instance = new WebAssembly.Instance(wasmModule, {
-        wasi_snapshot_preview1: {
-          // libc diagnostics stay local; a trap is surfaced once through the port.
-          fd_write: (_fd, vectors, count, written) => {
-            if (!this.engine) return 8;
-            const memory = new DataView(this.engine.memory.buffer);
-            let bytes = 0;
-            for (let i = 0; i < count; i += 1) bytes += memory.getUint32(vectors + i * 8 + 4, true);
-            memory.setUint32(written, bytes, true);
-            return 0;
-          },
-          fd_close: () => 8,
-          fd_seek: () => 8,
-          proc_exit: () => { throw new Error("DeepFilterNet3 native processing aborted."); }
-        }
-      });
-      this.engine = instance.exports;
-      this.engine.__wasm_call_ctors?.();
-      if (this.engine.dfn3_wasm_get_input_size() !== FRAME_SIZE || this.engine.dfn3_wasm_get_output_size() !== FRAME_SIZE) throw new Error("Unexpected DeepFilterNet3 frame size.");
-      this.weightsPointer = this.engine.malloc(weights.byteLength);
-      if (!this.weightsPointer) throw new Error("Unable to allocate DeepFilterNet3 model memory.");
-      new Uint8Array(this.engine.memory.buffer, this.weightsPointer, weights.byteLength).set(weights);
-      // Tensor pointers refer into this allocation: retain it until destroy().
-      if (this.engine.dfn3_wasm_create(this.weightsPointer, weights.byteLength) !== 0) throw new Error("Unable to initialize DeepFilterNet3.");
-      this.initialized = true;
-      this.engine.dfn3_wasm_set_input_agc(0);
-      this.engine.dfn3_wasm_set_output_agc(0);
-      this.engine.dfn3_wasm_set_hpf(0);
-      this.heap = this.engine.memory.buffer;
-      this.inputFrame = new Float32Array(this.heap, this.engine.dfn3_wasm_get_input_ptr(), FRAME_SIZE);
-      this.outputFrame = new Float32Array(this.heap, this.engine.dfn3_wasm_get_output_ptr(), FRAME_SIZE);
-      this.setMode(mode, false);
-      this.port.postMessage({
-        type: "ready", frameSize: FRAME_SIZE, sampleRate: 48000, mode: this.mode,
-        ...this.modes[this.mode], bufferLatencyMs: 10, modelLatencyMs: 30
-      });
+      if (sampleRate !== 48000) throw new Error('Voice isolation requires a 48 kHz microphone context.');
+      const { wasmModule, lightWasmModule, mode = 'light', strength = .85, tuning } = options.processorOptions;
+      this.realtime = options.processorOptions.realtime !== false;
+      this.compressor = options.processorOptions.compressor === false ? null : new MicCompressor(tuning?.compressor);
+      this.strength = this.normalizeStrength(strength);
+      this.wet = this.strength;
+      this.light = createLightEngine(lightWasmModule);
+      let initialFallback = false;
+      if (wasmModule) {
+        try { this.highQuality = createHighQualityEngine(wasmModule, tuning?.voiceModes?.['high-quality']); }
+        catch { initialFallback = mode === 'high-quality'; }
+      }
+      this.setMode(initialFallback ? 'light' : mode);
+      this.port.postMessage({ type: 'ready', mode: this.mode, frameSize: FRAME_SIZE,
+        sampleRate: 48000, bufferLatencyMs: FIFO_DELAY / 48, modelLatencyMs: this.active.latencySamples / 48 });
+      if (initialFallback) {
+        this.fallbackMessage.reason = 'High quality could not initialize; switched to Light.';
+        this.port.postMessage(this.fallbackMessage);
+      }
     } catch (error) { this.fail(error); }
   }
-
-  setMode(mode, acknowledge) {
-    const settings = this.modes[mode];
-    if (!settings) throw new Error("Unknown DeepFilterNet3 mode.");
-    this.engine.dfn3_wasm_set_atten_lim(settings.attenuationDb);
-    this.engine.dfn3_wasm_set_post_filter_beta(settings.postFilterBeta);
+  normalizeStrength(value) { return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : .85; }
+  setMode(mode) {
+    if (mode !== 'light' && mode !== 'high-quality') throw new Error('Unknown voice isolation mode.');
+    if (mode === 'high-quality' && !this.highQuality) throw new Error('High quality requires the local DFN3 model.');
     this.mode = mode;
-    if (acknowledge) this.port.postMessage({ type: "mode", mode, ...settings });
+    this.active = mode === 'high-quality' ? this.highQuality : this.light;
+    this.overBudget = 0;
   }
-
+  publishStats(id) {
+    const stats = this.stats;
+    stats.type = id === undefined ? 'stats' : 'pong';
+    stats.id = id;
+    stats.mode = this.mode;
+    stats.processingMs = this.processingMs;
+    stats.peakProcessingMs = this.peakProcessingMs;
+    stats.quantumMs = this.quantumMs;
+    stats.estimatedLatencyMs = (FIFO_DELAY + this.active.latencySamples) / 48;
+    stats.processedFrames = this.processedFrames;
+    stats.underruns = this.underruns;
+    this.port.postMessage(stats);
+  }
+  fallback() {
+    if (this.mode !== 'high-quality') return;
+    this.setMode('light');
+    this.port.postMessage(this.fallbackMessage);
+    // The large model is freed by destroy's message handler, outside rendering.
+  }
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    // A trapped native instance must never prevent the fallback from taking over.
-    try { if (this.initialized) this.engine.dfn3_wasm_destroy(); } catch {}
-    try { if (this.weightsPointer) this.engine.free(this.weightsPointer); } catch {}
-    this.weightsPointer = 0;
-    this.initialized = false;
+    try { this.light?.destroy(); } catch {}
+    try { this.highQuality?.destroy(); } catch {}
+    this.active = this.light = this.highQuality = null;
     this.outputQueue.fill(0);
-    this.engine = null;
-    this.heap = this.inputFrame = this.outputFrame = null;
     this.port.onmessage = null;
   }
-
   fail(error) {
     if (this.destroyed) return;
-    this.port.postMessage({ type: "error", message: error?.message || "DeepFilterNet3 processing failed." });
+    this.port.postMessage({ type: 'error', message: error?.message || 'Voice isolation failed.' });
     this.destroy();
   }
-
+  processFrame() {
+    const start = now();
+    const engine = this.active;
+    for (let i = 0; i < FRAME_SIZE; i++) engine.input[i] = this.inputFrame[i] * engine.scale;
+    let vad;
+    try { vad = engine.process(); }
+    catch (error) {
+      if (this.mode !== 'high-quality') throw error;
+      this.fallback();
+      for (let i = 0; i < FRAME_SIZE; i++) this.light.input[i] = this.inputFrame[i] * this.light.scale;
+      vad = this.light.process();
+    }
+    let energy = 0;
+    const active = this.active;
+    for (let i = 0; i < FRAME_SIZE; i++) {
+      const sample = active.output[i] / active.scale;
+      if (!Number.isFinite(sample)) throw this.invalidAudio;
+      energy += sample * sample;
+    }
+    const rms = Math.sqrt(energy / FRAME_SIZE);
+    const speech = rms > (this.gateHold > 0 ? .002 : .004)
+      && (this.mode !== 'light' || vad > .15 || rms > .02);
+    if (speech) this.gateHold = HOLD_SAMPLES;
+    for (let i = 0; i < FRAME_SIZE; i++) {
+      this.wet += (this.strength - this.wet) * .002;
+      const dry = this.dryDelay[i];
+      this.dryDelay[i] = this.inputFrame[i];
+      const blend = dry * (1 - this.wet) + active.output[i] / active.scale * this.wet;
+      const target = this.gateHold > 0 ? 1 : 0;
+      if (this.gateHold > 0) this.gateHold--;
+      this.gateGain += (target - this.gateGain) * (target > this.gateGain ? ATTACK : RELEASE);
+      const gated = blend * this.gateGain;
+      const compressed = this.compressor ? this.compressor.process(gated) : gated;
+      this.outputQueue[this.outputWrite] = Math.max(-1, Math.min(1, compressed));
+      this.outputWrite = (this.outputWrite + 1) % this.outputQueue.length;
+    }
+    this.outputCount += FRAME_SIZE;
+    this.processedFrames++;
+    this.inputPosition = 0;
+    const elapsed = now() - start;
+    this.processingMs += (elapsed - this.processingMs) * .05;
+    this.peakProcessingMs = Math.max(elapsed, this.peakProcessingMs * .999);
+    if (this.realtime && this.processedFrames > 32 && this.mode === 'high-quality') {
+      this.overBudget = elapsed > QUANTUM_BUDGET_MS ? this.overBudget + 1 : Math.max(0, this.overBudget - .25);
+      if (this.overBudget >= 4) this.fallback();
+    }
+  }
   process(inputs, outputs) {
     const output = outputs[0]?.[0];
     if (!output) return !this.destroyed;
     if (this.destroyed) {
       output.fill(0);
-      // ACK only in the final render quantum. Closing the context/port earlier
-      // leaves Chromium's native Pending activities retaining this processor.
-      this.port.postMessage({ type: 'destroyed' });
+      this.port.postMessage(this.destroyedMessage);
       this.port.close();
       return false;
     }
     const input = inputs[0]?.[0];
+    const start = now();
     try {
-      // The packaged module has fixed 64 MiB memory; no allocation/growth occurs here.
-      if (this.heap !== this.engine.memory.buffer) throw new Error("DeepFilterNet3 memory unexpectedly changed.");
-      for (let i = 0; i < output.length; i += 1) {
-        output[i] = this.outputCount > 0 ? this.outputQueue[this.outputRead] : 0;
-        if (this.outputCount > 0) {
-          this.outputRead = (this.outputRead + 1) % this.outputQueue.length;
-          this.outputCount -= 1;
-        }
+      for (let i = 0; i < output.length; i++) {
         const value = input?.[i] || 0;
         this.inputFrame[this.inputPosition++] = Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
-        if (this.inputPosition === FRAME_SIZE) {
-          this.engine.dfn3_wasm_process();
-          if (this.outputCount + FRAME_SIZE > this.outputQueue.length) throw new Error("DeepFilterNet3 output buffer overflow.");
-          for (let j = 0; j < FRAME_SIZE; j += 1) {
-            const sample = this.outputFrame[j];
-            if (!Number.isFinite(sample)) throw new Error("DeepFilterNet3 produced invalid audio.");
-            this.outputQueue[this.outputWrite] = Math.max(-1, Math.min(1, sample));
-            this.outputWrite = (this.outputWrite + 1) % this.outputQueue.length;
-          }
-          this.outputCount += FRAME_SIZE;
-          this.inputPosition = 0;
-          this.processedFrames += 1;
+        if (this.inputPosition === FRAME_SIZE) this.processFrame();
+      }
+      for (let i = 0; i < output.length; i++) {
+        if (this.outputCount > 0) {
+          output[i] = this.outputQueue[this.outputRead];
+          this.outputRead = (this.outputRead + 1) % this.outputQueue.length;
+          this.outputCount--;
+        } else {
+          output[i] = 0;
+          this.underruns++;
+          this.fallback();
         }
       }
+      this.quantumMs += (now() - start - this.quantumMs) * .05;
       return true;
     } catch (error) {
       output.fill(0);
@@ -152,5 +191,4 @@ class VoiceIsolationProcessor extends AudioWorkletProcessor {
     }
   }
 }
-
-registerProcessor("freqx-voice-isolation", VoiceIsolationProcessor);
+registerProcessor('freqx-voice-isolation', VoiceIsolationProcessor);
