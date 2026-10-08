@@ -1,164 +1,151 @@
-# Local microphone voice isolation
+﻿# Local microphone voice isolation
 
-The existing microphone input router now uses the C/WASM DeepFilterNet3 engine
-from [kdrkdrkdr/DeepFilterNet3.c.wasm](https://github.com/kdrkdrkdr/DeepFilterNet3.c.wasm),
-pinned in `vendor/deepfilter/manifest.json`. The app design, imported sounds,
-soundboard gain, mixer, virtual output and monitor output retain their routing.
-
-## Pipeline
+Settings provides **Off**, **Light (RNNoise)** and **High quality (DeepFilterNet3)**,
+plus a live wet/dry strength slider, default 85%. Light restores Freqx's exact
+previous RNNoise binary. High quality uses the official DFN3 low latency model
+with SIMD libDF inference. Legacy Standard/Strong settings migrate to High
+quality; an older enabled-only setting becomes Light. Requested mode and
+strength persist in `soundmuncher:mixer-settings` localStorage. Runtime fallback
+does not overwrite the requested preference.
 
 ```text
-Physical microphone
-  → getUserMedia: Chromium/WebRTC echo cancellation during startup/fallback
-      noiseSuppression=false, autoGainControl=false, mono/48 kHz preferred
-  → dedicated 48 kHz AudioContext (resamples negotiated capture if necessary)
-  → WebRTC AEC3 with selected WASAPI playback reference (Chromium AEC disabled)
-  → DeepFilterNet3 SIMD WASM AudioWorklet
-  → optional mic compressor (service option, disabled by default)
-  → MediaStreamAudioDestinationNode.stream
-  → existing mic gain, EQ and mic compressor
-  → existing mixer alongside unprocessed soundboard clips
+getUserMedia (echoCancellation=false, noiseSuppression=false, autoGainControl=false)
+  -> interactive 48 kHz AudioContext (device resampling/downmix to mono)
+  -> optional local AEC3 with explicitly selected playback reference, default Off
+  -> 80 Hz high-pass
+  -> mic-only AudioWorklet: 480-sample model frames / 128-sample render blocks
+       -> aligned raw/denoised wet/dry blend
+       -> gate: 120 ms hold, 3 ms attack, 70 ms smooth release
+       -> gentle 2:1 compressor, 12 dB knee, no lookahead
+  -> processed mic stream -> existing mic gain/EQ -> existing master mixer
+
+soundboard source -> sound gain -> sound-to-mix gain -> existing master mixer
+master mixer -> existing mix output AudioContext.setSinkId(CABLE Input)
+soundboard monitor -> separate local output AudioContext.setSinkId(headphones)
 ```
 
-No processed microphone is connected to the isolation context's speakers.
-`micIsolationSession.stream` is the reusable cleaned MediaStream consumed by the
-current mixer. DeepFilterNet's built-in AGC and high-pass filter are disabled.
-The microphone EQ uses zero gain adjustments, a 20 Hz high-pass and narrow
-20 Hz notch, and a 24 kHz low-pass. Its compressor uses a 1:1 ratio for transparent
-level handling. The old adaptive expander and
-hard gate are bypassed so they do not cut quiet speech, including during fallback.
-The shared master compressor is unchanged.
+Soundboard clips and the final mix never connect to the denoiser. Only a physical
+mic stream feeds its input. The original capture remains caller-owned during
+model startup and failure; no microphone frames or model inference are uploaded.
+The app's unrelated sound library/account network functions remain separate.
 
-| Mode | Processing |
-| --- | --- |
-| Off | Chromium echo cancellation; isolation context is released |
-| Standard | DeepFilterNet3, maximum attenuation 20 dB, post-filter disabled (beta 0) |
-| Strong | DeepFilterNet3, maximum attenuation 20 dB, post-filter disabled (beta 0) |
+Off skips the denoiser and gate, using the existing mic EQ/compressor. Light and
+High quality use the same surrounding mic chain. Optional AEC3 uses the original
+unprocessed capture; Chromium processing stays off through startup, failure,
+mode/device changes and teardown. A missing reference bypasses local AEC3.
 
-Both enabled modes use the same gentle profile to preserve natural speech.
-Disabling the post-filter reduces speech coloration and can leave more background
-noise. The attenuation setting is a limit, not a guaranteed measured reduction.
-Developer tuning lives in `audio.voiceModes` in
-[`runtime/desktop-config.json`](../runtime/desktop-config.json).
-The checkbox retains the last active mode. Both preferences persist. Standard
-and Strong send parameters to the same worklet; Off reconnects the existing
-protected capture stream. Enabling AEC3 may acquire an additional raw track on
-drivers that cannot switch capture processing; Standard ↔ Strong keeps that
-track and its model alive. The app does not need to restart for mode changes.
+## Timing and safety
 
-## Service
+Both models consume mono 48 kHz frames of 480 floats (10 ms). The ring buffer
+starts with `480 - gcd(480,128) = 448` silent samples and collects each complete
+input quantum before draining output. This covers all quantum phases without
+normal underruns and adds 9.33 ms. Both models add 480 samples (10 ms), so the dry
+branch is delayed by one model frame before blending. This prevents comb filtering
+and misaligned syllables at intermediate strength values.
 
-`audio/mic-isolation.js` exports `window.VoiceIsolation` and the compatible
-`window.MicVoiceIsolation` alias. It does not require renderer Node integration.
-Load `runtime/config-schema.js` and `runtime/desktop-config.js` before the audio
-scripts, as the production `index.html` does. `create()` waits for validated
-configuration and passes selected tuning into the worklets.
+DSP buffering is **19.33 ms**. The compressor adds no buffering. Diagnostics
+include the processing context's reported base latency and optional AEC3 delay;
+the observed normal estimate on this Windows machine is **29.33 ms**. This is a
+software estimate of added processing latency, not a measured mic-to-Discord
+round trip. Inter-context MediaStream transport, capture, VB-CABLE, playback
+hardware and calling-app buffers can increase real end-to-end latency. Optional
+AEC3 adds at least 40 ms and exceeds the normal low latency target.
 
-```js
-const raw = await navigator.mediaDevices.getUserMedia({
-  audio: VoiceIsolation.captureConstraints(deviceId), video: false
-});
-let isolation;
-try {
-  isolation = await VoiceIsolation.create(raw, {
-    mode: 'standard',
-    compressor: false,
-    onError(error) { useMicrophoneStream(raw); }
-  });
-  useMicrophoneStream(isolation.stream);
-} catch (error) {
-  useMicrophoneStream(raw); // Retains the capture track's WebRTC echo cancellation.
-}
-// Live update; output MediaStream identity stays stable.
-isolation?.setMode('strong');
-// To disable: reconnect raw first, then isolation.close().
-// To release capture: close isolation, then stop all raw tracks.
-```
+The settings debug line updates once a second with worklet milliseconds/frame,
+estimated added latency and underruns. `micIsolationSession.diagnostics` exposes
+processing/peak times, frame count, effective mode and latency in DevTools.
+AudioWorklet environments without `performance.now()` use the coarser local
+`Date.now()` clock. Full-frame timings include blend, gate and compression.
 
-`useMicrophoneStream` represents the caller's own downstream consumer. The app
-implements it as `connectMicStreamToMixer`. `create` also accepts an AbortSignal
-for canceled startup. Sessions expose `resume()`, `mode` and `contextState`.
-The caller owns the original stream; `close()` only stops processed tracks.
+After 32 warmup frames, sustained work above the 128-sample render budget
+(2.67 ms), FIFO starvation or an HQ inference failure switches immediately to
+preallocated RNNoise. A nonblocking settings notice explains the fallback while
+keeping the selected High quality preference. Startup failure, missing SIMD or
+HQ asset failure also selects Light; failure of both engines restores raw mic
+capture without affecting soundboard routing. Select Light then High quality to
+retry. Do not add work to the render callback that allocates JS buffers.
 
-## Latency and recovery
+Models and all JS PCM buffers/views are initialized before capture connects.
+No JS buffers, slices, collections or closures are created in normal rendering.
+Native Rust/tract inference still uses its internal allocator; this integration
+is not an allocation-free rewrite of tract. Unexpected memory growth falls back.
+Final model teardown acknowledges a last render quantum before closing the
+processing context; serialized startup prevents stale sessions or abandoned
+WASM heaps during rapid toggles.
 
-See [ECHO-CANCELLATION.md](ECHO-CANCELLATION.md) for playback selection, AEC3
-fallback, latency, packaging and echo/double-talk validation. Both engines run
-locally without SDK fees. The neural worklet bridges 128-sample Web Audio quanta into 480-sample (10 ms) frames
-without per-frame heap allocation. Its FIFO adds 10 ms; DeepFilterNet's STFT and
-lookahead add approximately 30 ms. Capture, WebRTC AEC, context transport, optional
-compression and selected output hardware add further latency. This is not an
-end-to-end latency measurement or a guarantee on every computer.
-
-Assets are fetched and WASM compiled off the audio rendering thread, then cloned
-into the worklet. The model allocation remains alive for the engine's lifetime.
-Startup has a deadline. Unsupported SIMD/AudioWorklet, corrupt/missing assets,
-native traps, processor errors and unexpected context closure return control to
-the app's raw AEC input. A low-frequency ping detects an unresponsive worklet.
-Unexpected context suspension attempts a bounded resume before fallback.
-
-Microphone changes cancel pending model startup and release the previous capture
-and processor. Track-ended events stop the microphone branch and report the
-disconnect. Permission failures leave the app and soundboard usable. Window
-unload releases sessions and capture. Existing whole-app crash recovery remains
-responsible for fatal Electron process crashes and reloads saved preferences.
-
-## Packaging and security
-
-All runtime files live under `audio/vendor/deepfilter/`: `dfn3.wasm`,
-`dfn3_weights.bin`, the pinned manifest and notices/licenses. `prepare:audio`
-checks their exact sizes, SHA-256 hashes and WASM API/imports without downloads.
-Electron Builder explicitly includes these files in `app.asar`; SDK/build files
-and upstream C source are excluded. Relative URLs based on the service script
-work in development and in `file:///.../resources/app.asar/audio/`.
-
-The existing `contextIsolation: true`, `nodeIntegration: false`, sandbox and CSP
-remain in effect. `wasm-unsafe-eval` already permits WASM compilation, without
-permitting JavaScript eval. The engine has no network, filesystem, cloud inference,
-Python or PyTorch runtime. See the vendor README for source/build provenance.
-
-## Checks
+## Local verification and listening
 
 ```powershell
 npm.cmd run prepare:audio
+npm.cmd run lint
+npm.cmd run test:unit
 npm.cmd run test:mic-isolation
 npm.cmd run test:voice-security
-npm.cmd run pack -- --config.directories.output=output/voice-isolation-build
-node tests/mic-isolation.cjs --packaged
-node tests/voice-isolation-security.cjs --packaged
+npm.cmd run test:echo
+npm.cmd run test:reference-desktop
+npm.cmd run benchmark:voice
+npm.cmd run compare:voice -- C:\path\noisy-speech.wav
+npm.cmd run compare:voice -- C:\path\noisy-speech.wav 1
+npm.cmd run pack
+node tests/packaged-startup.cjs --exe dist/win-unpacked/freqx.exe
+node tests/mic-isolation.cjs --app-root dist/win-unpacked/resources/app.asar
+node tests/voice-isolation-security.cjs --app-root dist/win-unpacked/resources/app.asar
 ```
 
-The integration suite uses the real renderer, worklet and measured PCM, with
-fixture devices/IPC and silent sinks. The security suite uses Chromium's native
-fake-device capture in the real Electron sandbox, with remote requests blocked.
-Neither suite accesses the user's physical microphone or profile. Physical
-acoustic echo cancellation and subjective speech quality require a listening
-check with the user's actual microphone, speakers and calling application.
+The comparison writes `input.wav`, `off.wav`, `light.wav`, `high-quality.wav` and
+`comparison.json` to a newly created Windows temp directory. It runs the exact
+worklet model, strength, gate and zero-lookahead compressor in a Node harness,
+with an 80 Hz biquad before it. Off uses the same compressor for level comparison.
+The hardware/mixer is omitted and automatic overload fallback is disabled to
+produce a true High quality output. WAVs are PCM16/24/32 or float32; channels are
+downmixed. Prefer 48 kHz input: other sample rates use a simple linear resampler
+for this listening tool, while live capture uses Chromium's resampler. Neural
+and FIFO delay is removed for aligned A/B listening. No audio file is committed.
 
-## Files changed for this integration
+Unit checks cover 128/480 framing, aligned blend endpoints, gate hold/release,
+no new typed buffers while rendering, forced overload/underrun fallback and
+actual local engines. Browser tests run real worklets with silent output sinks,
+including native 44.1 kHz stereo capture -> 48 kHz mono, persistence, failures,
+CSP/offline loading, routing and soundboard signal invariance. This JS repository
+has no existing TypeScript/typecheck configuration; JS syntax, strict runtime
+schema validation and lint are the applicable checks.
 
-| File(s) | Change and purpose |
-| --- | --- |
-| `audio/mic-isolation.js` | Reusable VoiceIsolation API, capture constraints, local asset cache, SIMD detection, live modes, optional compressor, resume/health checks and cleanup. |
-| `audio/voice-isolation-worklet.mjs` | Replaces RNNoise with the actual DeepFilterNet3 engine, normalized PCM, 128/480 FIFO, safe model ownership and live mode messages. |
-| `renderer.js` | Routes only the mic through the service, persists modes, uses AEC capture, bypasses old gates, handles device/permission/track-end races and raw-mic fallback. |
-| `index.html`, `styles.css` | Adds the small Off/Standard/Strong selector alongside the existing isolation switch, retaining the existing app design. |
-| `package.json`, `package-lock.json` | Removes the old RNNoise development dependency, adds the security test command and explicitly packages DeepFilterNet runtime files. Lockfile version matches the existing 1.7.0 app version. |
-| `scripts/prepare-audio.cjs` | Replaces RNNoise extraction with offline model/WASM hash and API verification. |
-| `scripts/benchmark-voice-isolation.cjs` | Measures actual local WASM processing times with deterministic synthetic input and verifies finite output. |
-| `tests/mic-isolation.cjs` | Extends the real renderer/PCM regression suite for modes, AEC, SIMD fallback, lifecycle and packaged assets. |
-| `tests/voice-isolation-security.cjs` | Adds a native fake-mic test with sandbox/context isolation enabled and all network access blocked. |
-| `README.md`, `audio/VOICE-ISOLATION.md` | Updates setup, pipeline, service usage, packaging and verification documentation. |
-| `audio/vendor/deepfilter/dfn3.wasm`, `dfn3_weights.bin` | Adds the actual pinned SIMD inference module and pretrained model, completely local. |
-| `audio/vendor/deepfilter/manifest.json`, `README.md`, `.gitignore` | Records exact checksums, source/compiler provenance and licensing status; excludes local SDK build artifacts from Git. |
-| `audio/vendor/deepfilter/upstream/dfn3.h`, `dfn3_math.h`, `dfn3_weights.h`, `dfn3_wasm.c`, `webrtc_agc.h` | Preserves the unmodified pinned model engine sources used to compile the runtime. |
-| `audio/vendor/deepfilter/upstream/kiss_fft.c`, `kiss_fft.h`, `_kiss_fft_guts.h`, `kiss_fft_log.h`, `kiss_fftr.c`, `kiss_fftr.h` | Preserves the pinned FFT implementation/headers used by the model. |
-| `audio/vendor/deepfilter/upstream/build.sh`, `README.md`, `OPTIMIZATION.md` | Preserves upstream build/API/optimization references; these are not packaged runtime code. |
-| `audio/vendor/deepfilter/licenses/DeepFilterNet-APACHE.txt`, `DeepFilterNet-MIT.txt`, `DeepFilterNet-LICENSE.txt` | Model licensing texts and upstream dual-license notice. |
-| `audio/vendor/deepfilter/licenses/KissFFT-BSD-3-Clause.txt`, `WebRTC-LICENSE.txt` | Notices for FFT and the upstream AGC implementation. |
-| `audio/vendor/deepfilter/licenses/wasi-libc-LICENSE.txt`, `wasi-libc-APACHE.txt`, `wasi-libc-APACHE-LLVM.txt`, `wasi-libc-MIT.txt`, `musl-COPYRIGHT.txt`, `cloudlibc-BSD-2-Clause.txt`, `LLVM-compiler-rt-LICENSE.txt` | Notices and license texts for native libraries linked into the WASM module. |
-| `.gitignore` | Removes the obsolete RNNoise-generated-binary ignore rule. |
-| Removed `audio/vendor/NOTICE.txt`, `LICENSE-RNNoise.txt` | Removes notices for the superseded RNNoise runtime; its generated WASM is also removed. |
+## VB-CABLE end to end
 
-Prior website, icon and version/author changes were retained. No main-process,
-preload, output-routing or Electron security setting changes were necessary.
+1. In Freqx choose your **physical microphone** and **CABLE Input** for virtual
+   output. Enable Mic and Mix. Choose physical headphones for Monitor output.
+2. In Discord or another voice app choose **CABLE Output** as microphone and
+   physical headphones as speakers. Disable that app's denoiser, AGC and echo
+   processing while comparing so it does not mask Freqx's output.
+3. Start at High quality, 85% strength. Speak at a normal distance while running
+   a fan, typing and clicking. Record/listen to CABLE Output; compare Off and Light
+   at the same mic level. Listen for missed syllables and background noise.
+4. Trigger a soundboard clip while silent and while speaking. Its timbre/level
+   must remain the same across isolation modes and strengths.
+5. Watch frame time, effective mode notices and estimated latency. If High quality
+   falls back repeatedly, use Light; lower strength for fewer speech artifacts.
+6. Keep echo cancellation Off with headphones. With speakers, explicitly select
+   the physical call-playback endpoint under Echo cancellation, verify the reference
+   meter moves and accept its extra delay. Never use VB-CABLE as call playback.
+
+## Dependencies and limitations
+
+New runtime: self-built libDF/DFN3 SIMD (MIT OR Apache-2.0), tract 0.23.4
+(MIT OR Apache-2.0), RustFFT (MIT OR Apache-2.0), RealFFT (MIT), ndarray and
+getrandom (MIT OR Apache-2.0), plus locked permissive Rust dependencies.
+Restored build dependency: `@shiguredo/rnnoise-wasm` 2025.1.5 (Apache-2.0 wrapper,
+BSD-3-Clause RNNoise/model). No other npm dependency was added. Research evidence,
+full licenses, provenance and rebuild instructions are under
+[vendor/deepfilter](vendor/deepfilter/README.md) and
+[vendor/rnnoise](vendor/rnnoise/README.md). The previous C port lacked its own
+license and is removed from runtime packaging.
+
+High quality adds a roughly 58 MB WASM asset and uses substantially more memory.
+On this machine, 60 HQ enable/disable cycles stayed around 360–366 MB total renderer
+RSS and returned to about 233 MB when Off. These totals include the Electron UI
+and test fixtures. Inference cost varies with input/model branches; benchmark
+p95 frames can exceed 2.67 ms, making fallback necessary on weak or busy systems.
+DeepFilterNet reduces non-speech noise and cannot reliably separate nearby talkers.
+Krisp-equivalent perceptual quality has not been established by these regression
+checks; evaluate your own microphone and noise conditions with the comparison
+WAVs and a voice-app recording.

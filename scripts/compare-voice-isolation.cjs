@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { processorFixture } = require('./lib/voice-worklet.cjs');
+const { config } = require('../runtime/desktop-config.cjs');
 function readWav(file) {
   const bytes = fs.readFileSync(file);
   if (bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE') throw new Error('Expected a RIFF/WAVE file.');
@@ -52,7 +53,9 @@ function writeWav(file, samples) {
 }
 function highPass(samples) {
   const result = new Float32Array(samples.length);
-  const omega = 2 * Math.PI * 80 / 48000, cosine = Math.cos(omega), alpha = Math.sin(omega) / (2 * .7), a0 = 1 + alpha;
+  const filter = config.audio.equalizer.highPass;
+  // Web Audio interprets Q in dB for low/high-pass filters (unlike peaking EQ).
+  const omega = 2 * Math.PI * filter.frequency / 48000, cosine = Math.cos(omega), alpha = Math.sin(omega) / (2 * 10 ** (filter.Q / 20)), a0 = 1 + alpha;
   const b0 = (1 + cosine) / (2 * a0), b1 = -(1 + cosine) / a0, b2 = b0, a1 = -2 * cosine / a0, a2 = (1 - alpha) / a0;
   let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
   for (let i = 0; i < samples.length; i++) {
@@ -67,7 +70,7 @@ async function compare(file, strength = .85) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'freqx-voice-'));
   writeWav(path.join(directory, 'input.wav'), original);
   const { MicCompressor } = await import('../audio/mic-dynamics.mjs');
-  const offCompressor = new MicCompressor();
+  const offCompressor = new MicCompressor(config.audio.micCompressor);
   writeWav(path.join(directory, 'off.wav'), mic.map(value => offCompressor.process(value)));
   const summary = { input: path.resolve(file), sampleRate: 48000, strength, outputs: [], note: '80 Hz HPF and exact live worklet (blend/gate/compressor), before the mixer. Off uses the same zero-lookahead compressor for a fair level comparison. Automatic overload fallback disabled offline. Non-48k input uses linear resampling; prefer 48k for listening.' };
   for (const mode of ['light', 'high-quality']) {

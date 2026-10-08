@@ -48,9 +48,11 @@ npm.cmd run benchmark:voice
 ```
 
 The build script compiles the locked source with `-C target-feature=+simd128`
-and copies the result to `df_bg.wasm`. Rebuilding an identical pin verifies its
-hash. An intentional source/toolchain change needs a reviewed manifest hash and
-ABI update; never silently rewrite integrity pins. Ordinary installation/startup
+and compares the result with the existing binary pin. A matching build replaces
+`df_bg.wasm`; a differing build is saved to `output/dfn3-rebuild/` for review.
+Compiler paths and build-time crate seeds can affect binary reproducibility.
+An intentional update needs a reviewed manifest hash and ABI/output check;
+the script never silently rewrites integrity pins. Ordinary installation/startup
 only verifies the committed binaries and prepares the existing Windows helper.
 Rust, Cargo caches and model source checkouts are not included in app packages.
 

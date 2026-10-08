@@ -4,6 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { pathToFileURL } = require('node:url');
 const root = path.resolve(__dirname, '../..');
+const { config } = require('../../runtime/desktop-config.cjs');
 async function processorFixture(options = {}) {
   const native = await import(pathToFileURL(path.join(root, 'audio/denoiser-engines.mjs')).href);
   const { MicCompressor } = await import(pathToFileURL(path.join(root, 'audio/mic-dynamics.mjs')).href);
@@ -23,11 +24,11 @@ async function processorFixture(options = {}) {
   const mode = options.mode || 'light';
   const compile = name => new WebAssembly.Module(fs.readFileSync(path.join(root, name)));
   const processor = new Processor({ processorOptions: {
-    mode, strength: options.strength ?? .85, realtime: options.realtime ?? false,
+    mode, strength: options.strength ?? config.audio.defaults.voiceIsolationStrength, realtime: options.realtime ?? false,
     compressor: options.compressor ?? false,
     lightWasmModule: options.createLightEngine ? {} : compile('audio/vendor/rnnoise/rnnoise.wasm'),
     wasmModule: mode === 'high-quality' ? options.createHighQualityEngine ? {} : compile('audio/vendor/deepfilter/df_bg.wasm') : undefined,
-    tuning: { voiceModes: { 'high-quality': { attenuationDb: 35, postFilterBeta: 0 } } }
+    tuning: { voiceModes: config.audio.voiceModes, compressor: config.audio.micCompressor }
   } });
   const error = messages.find(m => m.type === 'error');
   if (error) throw new Error(error.message);

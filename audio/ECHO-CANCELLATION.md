@@ -15,18 +15,12 @@ Real mic → WebRTC AEC3 → DeepFilterNet3 → mic gain / EQ / compressor
          → mix with soundboard → virtual cable → calling app
 ```
 
-Chromium echo cancellation starts enabled for safe fallback. After the packaged
-AEC3 worklet is ready, the app requests capture without Chromium echo cancellation.
-If the existing track cannot switch processing (as in the Chromium fake-device
-tests), it opens a second capture of the same physical microphone with AEC off,
-and keeps the original capture with Chromium AEC as standby. Only the unprocessed
-capture feeds AEC3. The app verifies that this capture reports AEC off and matches
-the selected microphone label. If that cannot be established, it uses Chromium
-AEC with DeepFilterNet. Losing reference,
-AEC failure, disabling isolation or closing its session restores the protected
-capture and stops the owned raw track. Driver restrictions may therefore require
-two concurrent capture tracks while AEC3 runs; the standby is not mixed into output.
-Noise suppression and automatic gain control in Chromium stay disabled.
+Local echo cancellation is optional and defaults Off. Choose a physical call
+playback endpoint explicitly to enable it. Chromium echoCancellation,
+noiseSuppression and autoGainControl stay false throughout capture, startup,
+failure and teardown. AEC3 uses the original unprocessed mic track. Losing the
+reference or an AEC failure bypasses AEC3 while retaining the local denoiser;
+no second microphone or browser-processing fallback is opened.
 
 AEC3 provides delay estimation, adaptive echo cancellation, double-talk handling
 and residual echo suppression. The previous 512-tap NLMS processor was removed.
@@ -34,8 +28,9 @@ The app uses mono 48 kHz, 10 ms frames and fixed 16 MiB AEC3 memory. Microphone
 capture is delayed by 30 ms to allow the asynchronous native reference to arrive;
 the frame FIFO adds 10 ms and WebRTC's band filters add about 9 ms in synthetic
 tests. The reference queue targets 15 ms and resamples the hardware clock with
-bounded drift correction. DeepFilterNet adds approximately 40 ms. Thus the AEC3
-and neural path adds roughly 90 ms before capture/device/virtual-cable latency;
+bounded drift correction. The low latency DFN3/RNNoise path adds 19.33 ms of buffering, with no compressor
+lookahead. Thus enabling AEC3 adds at least 40 ms beyond the usual processing
+estimate (roughly 70?80 ms total before other transport/device latency);
 this is not a measured round-trip or a guarantee for all machines.
 
 Only selected render-endpoint audio is captured, locally and transiently. The
@@ -74,15 +69,14 @@ For an acoustic check, play remote speech through the selected output, record
 the virtual microphone in the calling app, then repeat while speaking. Listen
 for residual remote words and missing near-end syllables at normal and louder
 speaker volume. Keep the same recording level and compare isolation off,
-Standard and Strong. No physical microphone recording is automated by the tests.
+Light and High quality. No physical microphone recording is automated by the tests.
 
 ## Alternatives to paid Krisp
 
-The default WebRTC AEC3 + DeepFilterNet path has no SDK fees. Third-party component
+The optional WebRTC AEC3 + DeepFilterNet path has no SDK fees. Third-party component
 terms and licensing caveats are documented with the [AEC3](vendor/aec3/README.md)
 and [DeepFilterNet3](vendor/deepfilter/README.md) assets.
 DeepFilterNet suppresses non-speech background noise; it does not promise to
-separate arbitrary nearby people from your voice. RNNoise is a lighter open
-source noise suppressor, but replacing DeepFilterNet with it would not solve
-playback echo. Krisp's RTC/background-voice models need licensed vendor files;
+separate arbitrary nearby people from your voice. Light uses RNNoise as an alternative noise suppressor; either noise model
+still needs a separate playback reference to address acoustic echo. Krisp's RTC/background-voice models need licensed vendor files;
 they are not included or required. No incomplete Krisp provider is exposed.

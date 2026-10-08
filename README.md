@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/40e06b0f-d9c8-447d-a0c6-7e8856d06956
 - **Find your next favorite sound.** Browse and preview the public library in Discover, then add sounds to your boards. Import your own audio files, too.
 - **Hit the moment.** Play from a pad or use keybinds while you're in a game or call. Pin favorites, search your collection, and stop every sound with one action.
 - **Shape every clip.** Adjust volume, trim, fades, and color. Choose overlap, restart, play once, or toggle loop to suit the sound.
-- **Keep your voice clear.** Local DeepFilterNet3 voice isolation reduces microphone background noise before your voice joins the mix. Soundboard clips bypass isolation, and microphone audio is not uploaded for processing.
+- **Keep your voice clear.** Choose Light (RNNoise), High quality (local DeepFilterNet3), or Off, with adjustable strength to reduce microphone background noise before your voice joins the mix. Soundboard clips bypass isolation, and microphone audio is not uploaded for processing.
 - **Control what everyone hears.** Balance your microphone, soundboard, and main output, and choose a separate output for hearing your own clips.
 - **Make it feel like yours.** Organize boards, switch app and pad themes, and use compact mode. The interface pairs dot lettering and monochrome pads with red accents.
 
@@ -128,4 +128,4 @@ Audio URLs must use HTTPS, resolve to a public network address, return a support
 
 Freqx is source-available and licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). Personal and other permitted non-commercial use, including modification and experimentation, is governed by that license. Commercial use outside its permitted purposes requires a [separate commercial license](COMMERCIAL_LICENSE.md). The [LICENSE](LICENSE) is authoritative; this change does not revoke rights previously granted under earlier licenses.
 
-The Freqx name, logo, and branding are covered separately by [TRADEMARKS.md](TRADEMARKS.md). Third-party components included with or used by Freqx remain subject to their respective licenses. Bundled audio notices and licensing caveats are documented with the [DeepFilterNet3 assets](audio/vendor/deepfilter/README.md) and [AEC3 assets](audio/vendor/aec3/README.md).
+The Freqx name, logo, and branding are covered separately by [TRADEMARKS.md](TRADEMARKS.md). Third-party components included with or used by Freqx remain subject to their respective licenses. Bundled audio notices, licenses and build provenance are documented with the [DeepFilterNet3 assets](audio/vendor/deepfilter/README.md), [RNNoise assets](audio/vendor/rnnoise/README.md) and [AEC3 assets](audio/vendor/aec3/README.md). See [voice isolation testing and VB-CABLE setup](audio/VOICE-ISOLATION.md).

@@ -3,6 +3,7 @@ export const FRAME_SIZE = 480;
 
 export function createLightEngine(wasmModule) {
   let engine;
+  let diagnosticsView;
   const memoryError = new Error('RNNoise memory changed during rendering.');
   const instance = new WebAssembly.Instance(wasmModule, {
     env: {
@@ -15,7 +16,8 @@ export function createLightEngine(wasmModule) {
       }
     },
     wasi_snapshot_preview1: { fd_write: (_fd, _vectors, _count, written) => {
-      new DataView(engine.memory.buffer).setUint32(written, 0, true);
+      if (!diagnosticsView || diagnosticsView.buffer !== engine.memory.buffer) return 8;
+      diagnosticsView.setUint32(written, 0, true);
       return 0;
     } }
   });
@@ -28,6 +30,7 @@ export function createLightEngine(wasmModule) {
   const outputPointer = engine.malloc(FRAME_SIZE * 4);
   if (!state || !inputPointer || !outputPointer) throw new Error('RNNoise initialization failed.');
   const heap = engine.memory.buffer;
+  diagnosticsView = new DataView(heap);
   const input = new Float32Array(heap, inputPointer, FRAME_SIZE);
   const output = new Float32Array(heap, outputPointer, FRAME_SIZE);
   return {
@@ -40,6 +43,7 @@ export function createLightEngine(wasmModule) {
       if (!engine) return;
       engine.rnnoise_destroy(state); engine.free(inputPointer); engine.free(outputPointer);
       engine = null;
+      diagnosticsView = null;
       this.input = this.output = null;
     }
   };
