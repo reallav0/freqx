@@ -6,6 +6,7 @@
   const assetsPromises = new Map();
   let isolationRuntime;
   let aecAssetsPromise;
+  let teardownPending = Promise.resolve();
   const simdProbe = new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11]);
 
   function captureConstraints(deviceId) {
@@ -110,6 +111,10 @@
       throw new Error("Voice isolation requires a live microphone.");
     }
     if (!supported(mode)) throw new Error('WebAssembly SIMD or AudioWorklet is unavailable; using the raw microphone.');
+    // A new model constructor can occupy the audio thread for hundreds of ms.
+    // Let previous processors acknowledge destruction before starting another.
+    await teardownPending;
+    if (signal?.aborted || track.readyState !== 'live') throw new DOMException('Voice isolation startup canceled.', 'AbortError');
 
     // Resample capture in its own 48 kHz context. Never alter the shared mixer.
     const runtime = acquireRuntime();
@@ -156,6 +161,7 @@
     let healthTimer;
     let pingId = 0;
     let pendingPing = null;
+    let closePromise;
     let rejectStartup;
     const abortStartup = () => fail(new DOMException("Voice isolation startup canceled.", 'AbortError'));
     const processorError = () => fail(new Error("Voice isolation AudioWorklet stopped unexpectedly."));
@@ -183,8 +189,11 @@
     };
 
     function close() {
-      if (closed) return;
+      if (closed) return closePromise;
       closed = true;
+      let resolveClose;
+      closePromise = new Promise(resolve => { resolveClose = resolve; });
+      teardownPending = Promise.all([teardownPending, closePromise]).then(() => {});
       rejectAecStartup?.(new Error('Playback echo startup canceled.'));
       rejectAecStartup = null;
       sessions.delete(close);
@@ -227,7 +236,7 @@
           void runtime.context.close().catch(() => {});
         }
         // Keep the shared worklet thread running until both engines free memory.
-        void aecTeardown.then(() => releaseRuntime(runtime));
+        void aecTeardown.then(() => { releaseRuntime(runtime); resolveClose(); });
       };
       if (closingNode) {
         closingNode.removeEventListener("processorerror", processorError);
@@ -236,7 +245,7 @@
         try { closingNode.port.postMessage({ type: 'destroy' }); } catch { finish(false); }
       } else finish();
       source = aecNode = refSource = node = destination = limiter = highPass = context = null;
-      return Promise.resolve();
+      return closePromise;
     }
 
     function fail(error) {

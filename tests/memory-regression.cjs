@@ -105,10 +105,10 @@ async function run() {
     await evaluate(`(async () => { for(let i=0;i<${cycles};i++) { openSettingsButton.click(); uiThemeSelect.value=i%2?'midnight':'light'; uiThemeSelect.dispatchEvent(new Event('change')); closeSettingsButton.click(); toggleFavoritesViewButton.click(); toggleFavoritesViewButton.click(); await new Promise(resolve=>setTimeout(resolve,20)); } })()`);
     await sample(`ui-${(batch + 1) * cycles}`, true);
   }
-  await evaluate('setVoiceIsolationMode("standard")'); await pause(400);
+  await evaluate('setVoiceIsolationMode("high-quality")'); await pause(400);
   await sample('isolation-start', true);
   for (let batch = 0; batch < 3; batch++) {
-    await evaluate(`(async () => { for(let i=0;i<${cycles};i++) { await setVoiceIsolationMode('off'); await setVoiceIsolationMode('standard'); } })()`);
+    await evaluate(`(async () => { for(let i=0;i<${cycles};i++) { await setVoiceIsolationMode('off'); await setVoiceIsolationMode('high-quality'); } })()`);
     await sample(`isolation-${(batch + 1) * cycles}`, true);
   }
   await evaluate('setVoiceIsolationMode("off")');
