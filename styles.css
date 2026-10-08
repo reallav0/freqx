@@ -172,10 +172,10 @@ input.pad-volume-slider::-moz-range-thumb { width: 10px; height: 10px; border: 0
 .mixer-control output { grid-column: 2; grid-row: 1; color: var(--text-muted); font: 11px var(--font-mono); }
 .mixer-control input { grid-column: 1 / -1; grid-row: 2; }
 @media (min-width: 761px) {
-  .mixer-grid .mixer-control { grid-template-columns: 85px minmax(0, 1fr) 36px; column-gap: 8px; min-height: 22px; }
-  .mixer-grid .mixer-control > span { font-size: 12px; }
-  .mixer-grid .mixer-control input { grid-column: 2; grid-row: 1; }
-  .mixer-grid .mixer-control output { grid-column: 3; grid-row: 1; text-align: right; }
+  .mixer-grid .mixer-control, .voice-isolation-strength { grid-template-columns: 85px minmax(0, 1fr) 36px; column-gap: 8px; min-height: 22px; }
+  .mixer-grid .mixer-control > span, .voice-isolation-strength > span { font-size: 12px; }
+  .mixer-grid .mixer-control input, .voice-isolation-strength input { grid-column: 2; grid-row: 1; }
+  .mixer-grid .mixer-control output, .voice-isolation-strength output { grid-column: 3; grid-row: 1; text-align: right; }
 }
 .route-panel { display: grid; gap: 8px; margin-top: 10px; }
 .route-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

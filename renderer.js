@@ -2823,16 +2823,18 @@ function percent(value) {
   return `${Math.round(value * 100)}%`;
 }
 
+function updateRangeFill(slider) {
+  const min = Number(slider.min) || 0;
+  const max = Number(slider.max) || 1;
+  const value = Math.min(max, Math.max(min, Number(slider.value)));
+  slider.style.setProperty("--gain-pct", `${((value - min) / (max - min)) * 100}%`);
+}
+
 function updateGainLabels() {
   micGainValue.textContent = percent(Number(micGainSlider.value));
   soundGainValue.textContent = percent(Number(soundGainSlider.value));
   masterGainValue.textContent = percent(Number(masterGainSlider.value));
-  [micGainSlider, soundGainSlider, masterGainSlider].forEach((slider) => {
-    const min = Number(slider.min) || 0;
-    const max = Number(slider.max) || 1;
-    const value = Math.min(max, Math.max(min, Number(slider.value)));
-    slider.style.setProperty("--gain-pct", `${((value - min) / (max - min)) * 100}%`);
-  });
+  [micGainSlider, soundGainSlider, masterGainSlider].forEach(updateRangeFill);
 }
 
 function updateToggleButtonLabels() {
@@ -2991,7 +2993,11 @@ function updateVoiceIsolationUi(status = voiceIsolationStatus) {
   voiceIsolationStatus = status;
   if (voiceIsolationToggle) voiceIsolationToggle.checked = isVoiceIsolationEnabled;
   if (voiceIsolationMode) voiceIsolationMode.value = isVoiceIsolationEnabled ? selectedVoiceIsolationMode : "off";
-  if (voiceIsolationStrength) { voiceIsolationStrength.value = selectedVoiceIsolationStrength; voiceIsolationStrength.disabled = !isVoiceIsolationEnabled; }
+  if (voiceIsolationStrength) {
+    voiceIsolationStrength.value = selectedVoiceIsolationStrength;
+    voiceIsolationStrength.disabled = !isVoiceIsolationEnabled;
+    updateRangeFill(voiceIsolationStrength);
+  }
   if (voiceIsolationStrengthValue) voiceIsolationStrengthValue.textContent = percent(selectedVoiceIsolationStrength);
   if (voiceIsolationHelp) voiceIsolationHelp.hidden = !isVoiceIsolationEnabled || selectedVoiceIsolationMode !== 'high-quality';
   if (!voiceIsolationState) return;
