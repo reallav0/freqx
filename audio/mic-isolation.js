@@ -16,8 +16,8 @@
     };
   }
 
-  function supported() {
-    return typeof WebAssembly === 'object' && typeof AudioWorkletNode === 'function' && WebAssembly.validate(simdProbe);
+  function supported(mode = 'high-quality') {
+    return typeof WebAssembly === 'object' && typeof AudioWorkletNode === 'function' && (mode === 'light' || WebAssembly.validate(simdProbe));
   }
 
   function normalizedMode(mode) {
@@ -26,6 +26,7 @@
   }
 
   function acquireLoopback(endpointId, signal) {
+    if (endpointId === 'off') return Promise.resolve(null);
     if (!window.LoopbackReference || typeof window.LoopbackReference.acquire !== 'function') return Promise.resolve(null);
     return Promise.resolve(window.LoopbackReference.acquire({ timeoutMs: window.FreqxDesktopConfig.current.audio.timing.captureTimeoutMs, endpointId, signal })).catch(() => null);
   }
@@ -96,7 +97,7 @@
     return aecAssetsPromise;
   }
 
-  async function create(stream, { mode, strength, onError = () => {}, onDiagnostics = () => {}, onFallback = () => {}, referenceDeviceId = '', signal, compressor = true } = {}) {
+  async function create(stream, { mode, strength, onError = () => {}, onDiagnostics = () => {}, onFallback = () => {}, referenceDeviceId = 'off', signal, compressor = true } = {}) {
     const config = (await window.FreqxDesktopConfig.ready).audio;
     mode = normalizedMode(mode || config.defaults.voiceIsolationMode);
     strength = strength ?? config.defaults.voiceIsolationStrength;
@@ -108,7 +109,7 @@
     if (!track) {
       throw new Error("Voice isolation requires a live microphone.");
     }
-    if (!supported()) throw new Error('WebAssembly SIMD or AudioWorklet is unavailable; using the raw microphone.');
+    if (!supported(mode)) throw new Error('WebAssembly SIMD or AudioWorklet is unavailable; using the raw microphone.');
 
     // Resample capture in its own 48 kHz context. Never alter the shared mixer.
     const runtime = acquireRuntime();

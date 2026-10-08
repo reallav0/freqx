@@ -395,7 +395,7 @@ function isolationFixture(t, { failAssets = false, deferModel = false, needsRawC
   vm.runInContext(isolationSource, context);
   t.after(() => events.get('pagehide')?.());
   return { aec, loopback, edges, worklets, assets, released, referenceTrack, rawCapture, rawTrack, rawStream, track, rawEvents,
-    get captureRequests() { return captureRequests; }, create: options => window.MicVoiceIsolation.create(stream, options) };
+    get captureRequests() { return captureRequests; }, create: options => window.MicVoiceIsolation.create(stream, { referenceDeviceId: '', ...options }) };
 }
 
 test('isolation waits for delayed AEC setup before connecting mic and reference', async t => {

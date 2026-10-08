@@ -193,9 +193,10 @@
                 <details class="echo-reference-control"><summary>Echo cancellation</summary>
                 <label class="field-label" for="echoReferenceDevice">Call playback device</label>
                 <select id="echoReferenceDevice" class="device-select" aria-describedby="echoReferenceHelp echoReferenceState">
+                  <option value="off" selected>Echo cancellation off</option>
                   <option value="">Windows default playback</option>
                 </select>
-                <p id="echoReferenceHelp" class="routing-tip">Select the headphones or speakers playing your calls. Match your monitor output to this device.</p>
+                <p id="echoReferenceHelp" class="routing-tip">Optional: select the speakers playing your calls to reduce playback echo. This adds latency. Match your monitor output to this device.</p>
                 <meter id="echoReferenceMeter" min="-60" max="0" value="-60" aria-label="Playback reference level in dBFS"></meter>
                 <p id="echoReferenceState" class="routing-tip" role="status">Playback reference starts with voice isolation</p>
                 </details>

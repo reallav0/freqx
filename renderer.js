@@ -305,7 +305,7 @@ const voiceIsolationDebug = document.getElementById('voiceIsolationDebug');
 const echoReferenceSelect = document.getElementById('echoReferenceDevice');
 const echoReferenceState = document.getElementById('echoReferenceState');
 const echoReferenceMeter = document.getElementById('echoReferenceMeter');
-let selectedEchoReferenceId = '';
+let selectedEchoReferenceId = 'off';
 let referenceRefreshGeneration = 0;
 let lastDefaultReferenceId;
 
@@ -3037,12 +3037,13 @@ async function refreshReferenceDevices() {
     const devices = await window.soundmuncher.listReferenceDevices?.() || [];
     if (generation !== referenceRefreshGeneration) return;
     echoReferenceSelect.replaceChildren();
+    echoReferenceSelect.add(new Option('Echo cancellation off', 'off'));
     echoReferenceSelect.add(new Option('Windows default playback', ''));
     for (const device of devices.filter(device => !device.virtual)) echoReferenceSelect.add(new Option(device.label, device.id));
     // Preserve a disconnected selection so the app cannot silently listen to a different output.
-    if (selectedEchoReferenceId && !devices.some(device => device.id === selectedEchoReferenceId && !device.virtual)) echoReferenceSelect.add(new Option('Selected playback device disconnected', selectedEchoReferenceId));
+    if (selectedEchoReferenceId && selectedEchoReferenceId !== 'off' && !devices.some(device => device.id === selectedEchoReferenceId && !device.virtual)) echoReferenceSelect.add(new Option('Selected playback device disconnected', selectedEchoReferenceId));
     echoReferenceSelect.value = selectedEchoReferenceId;
-    echoReferenceSelect.disabled = !devices.some(device => !device.virtual);
+    echoReferenceSelect.disabled = false;
     const defaultId = devices.find(device => device.isDefault && !device.virtual)?.id || '';
     const changed = lastDefaultReferenceId !== undefined && defaultId !== lastDefaultReferenceId && !selectedEchoReferenceId;
     lastDefaultReferenceId = defaultId;
@@ -3139,6 +3140,7 @@ async function configureMicVoiceIsolation() {
     const previousSession = micIsolationSession;
     connectMicStreamToMixer(session.stream);
     micIsolationSession = session;
+    session.setStrength(selectedVoiceIsolationStrength);
     previousSession?.close();
     updateVoiceIsolationUi(runtimeVoiceIsolationMode ? 'fallback' : 'active');
     updateVoiceIsolationDiagnostics(session.diagnostics);
