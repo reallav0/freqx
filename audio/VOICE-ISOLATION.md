@@ -62,8 +62,10 @@ After 32 warmup frames, sustained work above the 128-sample render budget
 preallocated RNNoise. A nonblocking settings notice explains the fallback while
 keeping the selected High quality preference. Startup failure, missing SIMD or
 HQ asset failure also selects Light; failure of both engines restores raw mic
-capture without affecting soundboard routing. Select Light then High quality to
-retry. Do not add work to the render callback that allocates JS buffers.
+capture without affecting soundboard routing. Select Off then High quality to
+retry with a fresh model after a native failure. A mode switch can have a brief
+transient as inactive neural state warms. Do not add work to the render callback
+that allocates JS buffers.
 
 Models and all JS PCM buffers/views are initialized before capture connects.
 No JS buffers, slices, collections or closures are created in normal rendering.
