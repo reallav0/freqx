@@ -324,6 +324,7 @@ function isolationFixture(t, { failAssets = false, deferModel = false, needsRawC
   moduleLoad.resolve();
   const edges = [];
   const worklets = [];
+  const assets = [];
   const released = [];
   const rawCapture = deferred();
   let captureRequests = 0;
@@ -356,10 +357,13 @@ function isolationFixture(t, { failAssets = false, deferModel = false, needsRawC
     close() { this.state = 'closed'; return Promise.resolve(); }
     createMediaStreamDestination() { return { ...makeNode('destination'), stream: { getTracks: () => [{ stop() {} }] } }; }
     createMediaStreamSource(input) { return makeNode(input === stream ? 'mic' : input === rawStream ? 'raw-mic' : 'reference'); }
+    createBiquadFilter() { return { ...makeNode('high-pass'), frequency: { value: 0 }, Q: { value: 0 } }; }
+    createDynamicsCompressor() { return { ...makeNode('compressor'), ...Object.fromEntries(['threshold', 'knee', 'ratio', 'attack', 'release'].map(name => [name, { value: 0 }])) }; }
   }
   class Worklet {
-    constructor(context, name) {
+    constructor(context, name, options) {
       Object.assign(this, makeNode(name));
+      this.options = options;
       worklets.push(this);
       this.port = {
         onmessage: null, close() {}, postMessage: message => {
@@ -379,7 +383,8 @@ function isolationFixture(t, { failAssets = false, deferModel = false, needsRawC
     window, document: { currentScript: { src: 'file:///audio/mic-isolation.js' } }, URL, Uint8Array,
     AudioContext: Context, AudioWorkletNode: Worklet,
     WebAssembly: { validate: () => true, compile: async () => ({}) },
-    fetch: async () => {
+    fetch: async url => {
+      assets.push(url.href);
       if (failAssets) throw new Error('asset missing');
       return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) };
     },
@@ -389,7 +394,7 @@ function isolationFixture(t, { failAssets = false, deferModel = false, needsRawC
   });
   vm.runInContext(isolationSource, context);
   t.after(() => events.get('pagehide')?.());
-  return { aec, loopback, edges, worklets, released, referenceTrack, rawCapture, rawTrack, rawStream, track, rawEvents,
+  return { aec, loopback, edges, worklets, assets, released, referenceTrack, rawCapture, rawTrack, rawStream, track, rawEvents,
     get captureRequests() { return captureRequests; }, create: options => window.MicVoiceIsolation.create(stream, options) };
 }
 
@@ -430,7 +435,8 @@ test('failed AEC setup releases loopback and keeps DeepFilterNet usable', async 
   await tick();
   fixture.aec.reject(new Error('AEC module unavailable'));
   const session = await pending;
-  assert.ok(fixture.edges.some(([from, to]) => from === 'mic' && to === 'freqx-voice-isolation'));
+  assert.ok(fixture.edges.some(([from, to]) => from === 'mic' && to === 'high-pass'));
+  assert.ok(fixture.edges.some(([from, to]) => from === 'high-pass' && to === 'freqx-voice-isolation'));
   assert.deepEqual(fixture.released, [fixture.referenceTrack]);
   session.close();
   assert.equal(fixture.released.length, 1);
@@ -479,48 +485,51 @@ test('model failure during delayed AEC setup rejects startup and releases the ca
   assert.ok(!fixture.edges.some(([from]) => from === 'mic'));
 });
 
-test('AEC3 owns unprocessed capture when the protected microphone cannot switch AEC', async t => {
-  const fixture = isolationFixture(t, { needsRawCapture: true });
-  fixture.loopback.resolve(fixture.referenceTrack); fixture.aec.resolve(); fixture.rawCapture.resolve(fixture.rawStream);
+test('AEC3 uses the original unprocessed microphone without a second capture', async t => {
+  const fixture = isolationFixture(t);
+  fixture.track.getSettings = () => ({ echoCancellation: false, noiseSuppression: false, autoGainControl: false });
+  fixture.loopback.resolve(fixture.referenceTrack); fixture.aec.resolve();
   const session = await fixture.create();
   assert.equal(session.inputSettings.echoCancellation, false);
-  assert.ok(fixture.edges.some(([from, to]) => from === 'raw-mic' && to === 'freqx-aec'));
-  fixture.rawEvents.get('ended')();
-  assert.equal(session.diagnostics.engine, 'Chromium AEC');
-  assert.ok(fixture.edges.some(([from, to]) => from === 'mic' && to === 'freqx-voice-isolation'));
-  assert.equal(fixture.rawTrack.readyState, 'ended');
+  assert.equal(fixture.captureRequests, 0);
+  assert.ok(fixture.edges.some(([from, to]) => from === 'mic' && to === 'freqx-aec'));
+  assert.ok(fixture.edges.some(([from, to]) => from === 'freqx-aec' && to === 'high-pass'));
+  session.close();
   assert.equal(fixture.track.readyState, 'live');
+});
+
+test('Light loads only its local RNNoise model and receives saved strength', async t => {
+  const fixture = isolationFixture(t); fixture.loopback.resolve(null);
+  const session = await fixture.create({ mode: 'light', strength: 0.61 });
+  assert.equal(fixture.assets.length, 1);
+  assert.ok(fixture.assets[0].endsWith('/rnnoise/rnnoise.wasm'));
+  assert.equal(fixture.worklets[0].options.processorOptions.strength, 0.61);
+  assert.equal(session.strength, 0.61);
+  assert.throws(() => session.setMode('high-quality'), /loading/);
   session.close();
 });
-test('cancel during raw capture acquisition releases the late stream and never routes it', async t => {
-  const fixture = isolationFixture(t, { needsRawCapture: true });
-  fixture.loopback.resolve(fixture.referenceTrack); fixture.aec.resolve();
-  const controller = new AbortController(); const pending = fixture.create({ signal: controller.signal });
-  await tick(); assert.equal(fixture.captureRequests, 1);
-  controller.abort(); await assert.rejects(pending, /canceled/);
-  fixture.rawCapture.resolve(fixture.rawStream); await tick();
-  assert.equal(fixture.rawTrack.readyState, 'ended');
-  assert.equal(fixture.track.readyState, 'live');
-  assert.ok(!fixture.edges.some(([from]) => from === 'raw-mic'));
-});
-test('denied unprocessed capture falls back to the protected microphone and releases reference', async t => {
-  const fixture = isolationFixture(t, { needsRawCapture: true });
-  fixture.loopback.resolve(fixture.referenceTrack); fixture.aec.resolve();
-  const pending = fixture.create(); await tick(); fixture.rawCapture.reject(new Error('Permission denied'));
-  const session = await pending;
-  assert.equal(session.diagnostics.engine, 'Chromium AEC');
-  assert.deepEqual(fixture.released, [fixture.referenceTrack]);
-  assert.ok(fixture.edges.some(([from, to]) => from === 'mic' && to === 'freqx-voice-isolation'));
+
+test('runtime overload falls back to Light without overwriting requested High quality', async t => {
+  const fixture = isolationFixture(t); fixture.loopback.resolve(null);
+  let notice;
+  const session = await fixture.create({ mode: 'high-quality', onFallback: reason => { notice = reason; } });
+  fixture.worklets[0].port.onmessage({ data: { type: 'fallback', mode: 'light', reason: 'Processing budget exceeded' } });
+  assert.equal(session.mode, 'light');
+  assert.equal(session.requestedMode, 'high-quality');
+  assert.match(notice, /budget/);
+  session.setMode('high-quality'); // Retaining the preference does not restart a failed engine.
+  assert.equal(session.mode, 'light');
+  assert.ok(fixture.assets.some(url => url.endsWith('/deepfilter/df_bg.wasm')));
   session.close();
 });
-test('reference ending during raw capture acquisition cannot activate AEC3 with a dead reference', async t => {
-  const fixture = isolationFixture(t, { needsRawCapture: true });
-  fixture.loopback.resolve(fixture.referenceTrack); fixture.aec.resolve();
-  const pending = fixture.create(); await tick();
-  fixture.referenceTrack.readyState = 'ended'; fixture.rawCapture.resolve(fixture.rawStream);
+
+test('reference ending during delayed startup leaves the unprocessed capture live', async t => {
+  const fixture = isolationFixture(t); fixture.loopback.resolve(fixture.referenceTrack);
+  const pending = fixture.create(); await tick(); fixture.referenceTrack.readyState = 'ended'; fixture.aec.resolve();
   const session = await pending;
-  assert.equal(session.diagnostics.engine, 'Chromium AEC');
-  assert.equal(fixture.rawTrack.readyState, 'ended');
-  assert.ok(!fixture.edges.some(([from, to]) => from === 'raw-mic' && to === 'freqx-aec'));
+  assert.equal(session.diagnostics.engine, 'No echo cancellation');
+  assert.equal(fixture.captureRequests, 0);
+  assert.ok(fixture.edges.some(([from, to]) => from === 'mic' && to === 'high-pass'));
+  assert.equal(fixture.track.readyState, 'live');
   session.close();
 });

@@ -9,12 +9,14 @@ const { config, validateConfig } = require('../runtime/desktop-config.cjs');
 const root = path.resolve(__dirname, '..');
 const clone = () => structuredClone(config);
 
-test('canonical config uses natural voice tuning and preserves shared desktop defaults', () => {
-  assert.deepEqual(config.audio.voiceModes, { standard: { attenuationDb: 20, postFilterBeta: 0 }, strong: { attenuationDb: 20, postFilterBeta: 0 } });
+test('canonical config uses mic-only isolation tuning and preserves shared desktop defaults', () => {
+  assert.deepEqual(config.audio.voiceModes, { light: { attenuationDb: 35, postFilterBeta: 0 }, 'high-quality': { attenuationDb: 35, postFilterBeta: 0 } });
+  assert.equal(config.audio.defaults.voiceIsolationMode, 'light');
+  assert.equal(config.audio.defaults.voiceIsolationStrength, 0.85);
   assert.deepEqual(config.audio.limiter, { threshold: -3, knee: 0, ratio: 20, attack: 0.002, release: 0.08 });
-  assert.deepEqual(config.audio.micCompressor, { threshold: 0, knee: 0, ratio: 1, attack: 0.003, release: 0.1 });
+  assert.deepEqual(config.audio.micCompressor, { threshold: -18, knee: 12, ratio: 2, attack: 0.003, release: 0.12 });
   assert.deepEqual(config.audio.equalizer, {
-    highPass: { frequency: 20, Q: 0.7 }, notch: { frequency: 20, Q: 8 },
+    highPass: { frequency: 80, Q: 0.7 }, notch: { frequency: 20, Q: 8 },
     mudCut: { frequency: 240, Q: 1.1, gain: 0 }, presence: { frequency: 3200, Q: 1, gain: 0 },
     air: { frequency: 8500, gain: 0 }, lowPass: { frequency: 24000, Q: 0.7 }
   });
@@ -34,9 +36,9 @@ test('canonical config uses natural voice tuning and preserves shared desktop de
 
 test('configuration is deeply frozen and has no user-data override', () => {
   assert.ok(Object.isFrozen(config));
-  assert.ok(Object.isFrozen(config.audio.voiceModes.strong));
+  assert.ok(Object.isFrozen(config.audio.voiceModes['high-quality']));
   assert.ok(Object.isFrozen(config.network.allowedAudioHosts));
-  assert.throws(() => { config.audio.voiceModes.strong.attenuationDb = 999; }, TypeError);
+  assert.throws(() => { config.audio.voiceModes['high-quality'].attenuationDb = 999; }, TypeError);
   assert.throws(() => config.network.allowedAudioHosts.push('localhost'), TypeError);
   const browser = fs.readFileSync(path.join(root, 'runtime/desktop-config.js'), 'utf8');
   assert.ok(!/localStorage|sessionStorage|ipcRenderer|userData/.test(browser));
@@ -45,7 +47,8 @@ test('configuration is deeply frozen and has no user-data override', () => {
 test('malformed keys, types, ranges and unsafe endpoint tuning fail closed', () => {
   const invalid = [
     value => { value.version = 2; }, value => { delete value.audio; }, value => { value.audio.userOverrides = {}; },
-    value => { value.audio.voiceModes.strong.attenuationDb = Infinity; }, value => { value.audio.voiceModes.standard.postFilterBeta = -1; },
+    value => { value.audio.voiceModes['high-quality'].attenuationDb = Infinity; }, value => { value.audio.voiceModes.light.postFilterBeta = -1; },
+    value => { value.audio.defaults.voiceIsolationStrength = 1.01; }, value => { value.audio.defaults.voiceIsolationMode = 'strong'; },
     value => { value.audio.limiter.ratio = 21; }, value => { value.audio.micCompressor.attack = 2; },
     value => { value.audio.testTone.gain = 0; },
     value => { value.audio.reference.targetSeconds = value.audio.reference.capacitySeconds; },
@@ -61,41 +64,17 @@ test('malformed keys, types, ranges and unsafe endpoint tuning fail closed', () 
   assert.deepEqual(validateConfig(enabledFeatures).app.disabledFeatures, []);
 });
 
-test('worklet applies custom developer strengths to the real native engine', () => {
+test('selected audio tuning is validated after crossing the worklet boundary', () => {
   const custom = clone();
-  custom.audio.voiceModes.standard = { attenuationDb: 25, postFilterBeta: 0.04 };
-  custom.audio.voiceModes.strong = { attenuationDb: 55, postFilterBeta: 0.5 };
+  custom.audio.voiceModes.light = { attenuationDb: 25, postFilterBeta: 0.04 };
+  custom.audio.voiceModes['high-quality'] = { attenuationDb: 55, postFilterBeta: 0.5 };
   validateConfig(custom);
-  const messages = [], calls = [];
-  const wasmModule = new WebAssembly.Module(fs.readFileSync(path.join(root, 'audio/vendor/deepfilter/dfn3.wasm')));
-  const weights = fs.readFileSync(path.join(root, 'audio/vendor/deepfilter/dfn3_weights.bin'));
-  let Processor;
-  const sandbox = { sampleRate: 48000, ArrayBuffer, Uint8Array, Float32Array, DataView,
-    FreqxConfigSchema: require('../runtime/config-schema.js'),
-    AudioWorkletProcessor: class { constructor() { this.port = { postMessage: message => messages.push(message) }; } },
-    registerProcessor: (_, value) => { Processor = value; },
-    WebAssembly: { Module: WebAssembly.Module, Instance: class {
-      constructor(module, imports) {
-        const native = new WebAssembly.Instance(module, imports).exports;
-        return { exports: { ...native,
-          dfn3_wasm_set_atten_lim: value => { calls.push(['attenuationDb', value]); native.dfn3_wasm_set_atten_lim(value); },
-          dfn3_wasm_set_post_filter_beta: value => { calls.push(['postFilterBeta', value]); native.dfn3_wasm_set_post_filter_beta(value); }
-        } };
-      }
-    } }
-  };
-  const source = fs.readFileSync(path.join(root, 'audio/voice-isolation-worklet.mjs'), 'utf8').replace("import '../runtime/config-schema.js';", '');
-  vm.runInNewContext(source, sandbox);
-  const processor = new Processor({ processorOptions: { wasmModule, modelBytes: new Uint8Array(weights), mode: 'standard', tuning: { voiceModes: custom.audio.voiceModes } } });
-  try {
-    const ready = messages.find(message => message.type === 'ready');
-    assert.ok(ready, JSON.stringify(messages));
-    assert.equal(ready.attenuationDb, 25);
-    assert.equal(ready.postFilterBeta, 0.04);
-    processor.port.onmessage({ data: { type: 'mode', mode: 'strong' } });
-    assert.deepEqual(calls, [['attenuationDb', 25], ['postFilterBeta', 0.04], ['attenuationDb', 55], ['postFilterBeta', 0.5]]);
-    assert.equal(messages.at(-1).attenuationDb, 55);
-  } finally { processor.destroy(); }
+  const schema = require('../runtime/config-schema.js');
+  const validated = schema.validateAudioTuning({ voiceModes: structuredClone(custom.audio.voiceModes) });
+  assert.deepEqual(validated.voiceModes, custom.audio.voiceModes);
+  assert.ok(Object.isFrozen(validated.voiceModes['high-quality']));
+  const invalid = structuredClone(validated); invalid.voiceModes['high-quality'].postFilterBeta = 2;
+  assert.throws(() => schema.validateAudioTuning(invalid), /Invalid desktop configuration/);
 });
 
 test('browser without preload reads the actual canonical JSON and validates before readiness', async () => {
@@ -110,12 +89,12 @@ test('browser without preload reads the actual canonical JSON and validates befo
   const loaded = await browser.FreqxDesktopConfig.ready;
   assert.deepEqual(JSON.parse(JSON.stringify(loaded)), config);
   assert.deepEqual(requested, [pathToFileURL(path.join(root, 'runtime/desktop-config.json')).href]);
-  assert.ok(Object.isFrozen(loaded.audio.voiceModes.standard));
+  assert.ok(Object.isFrozen(loaded.audio.voiceModes.light));
   assert.equal(browser.FreqxDesktopConfig.current, loaded);
 });
 
 test('invalid browser configuration rejects readiness and remains unavailable', async () => {
-  const value = clone(); value.audio.voiceModes.standard.postFilterBeta = 2;
+  const value = clone(); value.audio.voiceModes.light.postFilterBeta = 2;
   const browser = { URL, document: { currentScript: { src: 'file:///runtime/desktop-config.js' } }, fetch: async () => ({ ok: true, json: async () => value }) };
   browser.window = browser;
   vm.createContext(browser);

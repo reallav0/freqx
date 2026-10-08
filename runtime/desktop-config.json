@@ -92,7 +92,8 @@
   "audio": {
     "defaults": {
       "voiceIsolation": true,
-      "voiceIsolationMode": "standard",
+      "voiceIsolationMode": "light",
+      "voiceIsolationStrength": 0.85,
       "micEnabled": true,
       "mixEnabled": true,
       "playbackEnabled": true,
@@ -101,12 +102,12 @@
       "masterGain": 1
     },
     "voiceModes": {
-      "standard": {
-        "attenuationDb": 20,
+      "light": {
+        "attenuationDb": 35,
         "postFilterBeta": 0
       },
-      "strong": {
-        "attenuationDb": 20,
+      "high-quality": {
+        "attenuationDb": 35,
         "postFilterBeta": 0
       }
     },
@@ -118,11 +119,11 @@
       "release": 0.08
     },
     "micCompressor": {
-      "threshold": 0,
-      "knee": 0,
-      "ratio": 1,
+      "threshold": -18,
+      "knee": 12,
+      "ratio": 2,
       "attack": 0.003,
-      "release": 0.1
+      "release": 0.12
     },
     "mixCompressor": {
       "threshold": -3,
@@ -133,7 +134,7 @@
     },
     "equalizer": {
       "highPass": {
-        "frequency": 20,
+        "frequency": 80,
         "Q": 0.7
       },
       "notch": {

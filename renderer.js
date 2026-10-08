@@ -298,6 +298,10 @@ const updateState = document.getElementById("updateState");
 const voiceIsolationToggle = document.getElementById("voiceIsolationToggle");
 const voiceIsolationMode = document.getElementById("voiceIsolationMode");
 const voiceIsolationState = document.getElementById("voiceIsolationState");
+const voiceIsolationStrength = document.getElementById('voiceIsolationStrength');
+const voiceIsolationStrengthValue = document.getElementById('voiceIsolationStrengthValue');
+const voiceIsolationHelp = document.getElementById('voiceIsolationHelp');
+const voiceIsolationDebug = document.getElementById('voiceIsolationDebug');
 const echoReferenceSelect = document.getElementById('echoReferenceDevice');
 const echoReferenceState = document.getElementById('echoReferenceState');
 const echoReferenceMeter = document.getElementById('echoReferenceMeter');
@@ -316,6 +320,9 @@ let micCaptureGeneration = 0;
 let micToggleRevision = 0;
 let isVoiceIsolationEnabled;
 let selectedVoiceIsolationMode;
+let selectedVoiceIsolationStrength;
+let runtimeVoiceIsolationMode = null;
+let voiceIsolationFallbackReason = '';
 let voiceIsolationStatus = "waiting";
 let micGainNode;
 let micHighPassNode;
@@ -633,9 +640,12 @@ function loadMixerSettings() {
     if (typeof settings?.voiceIsolation === "boolean") {
       isVoiceIsolationEnabled = settings.voiceIsolation;
     }
-    if (["standard", "strong"].includes(settings?.voiceIsolationMode)) {
+    if (["light", "high-quality"].includes(settings?.voiceIsolationMode)) {
       selectedVoiceIsolationMode = settings.voiceIsolationMode;
+    } else if (["standard", "strong"].includes(settings?.voiceIsolationMode)) {
+      selectedVoiceIsolationMode = 'high-quality';
     }
+    if (Number.isFinite(settings?.voiceIsolationStrength)) selectedVoiceIsolationStrength = clampUnitInterval(settings.voiceIsolationStrength);
     if (typeof settings?.echoReferenceDeviceId === 'string') selectedEchoReferenceId = settings.echoReferenceDeviceId;
 
     if (typeof settings?.localPlaybackDeviceId === "string") {
@@ -662,6 +672,7 @@ function saveMixerSettings() {
       soundPlayback: isSoundPlaybackEnabled,
       voiceIsolation: isVoiceIsolationEnabled,
       voiceIsolationMode: selectedVoiceIsolationMode,
+      voiceIsolationStrength: selectedVoiceIsolationStrength,
       echoReferenceDeviceId: selectedEchoReferenceId,
       localPlaybackDeviceId: selectedLocalPlaybackDeviceId,
       inputDeviceId: selectedInputDeviceId,
@@ -2980,17 +2991,29 @@ function updateVoiceIsolationUi(status = voiceIsolationStatus) {
   voiceIsolationStatus = status;
   if (voiceIsolationToggle) voiceIsolationToggle.checked = isVoiceIsolationEnabled;
   if (voiceIsolationMode) voiceIsolationMode.value = isVoiceIsolationEnabled ? selectedVoiceIsolationMode : "off";
+  if (voiceIsolationStrength) { voiceIsolationStrength.value = selectedVoiceIsolationStrength; voiceIsolationStrength.disabled = !isVoiceIsolationEnabled; }
+  if (voiceIsolationStrengthValue) voiceIsolationStrengthValue.textContent = percent(selectedVoiceIsolationStrength);
+  if (voiceIsolationHelp) voiceIsolationHelp.hidden = !isVoiceIsolationEnabled || selectedVoiceIsolationMode !== 'high-quality';
   if (!voiceIsolationState) return;
   const messages = {
     waiting: "Mic only · Waiting for microphone",
     starting: "Mic only · Starting isolation…",
-    active: `Mic only · DeepFilterNet3 / ${selectedVoiceIsolationMode === "strong" ? "Strong" : "Standard"}`,
-    off: "Mic only · Echo cancellation only",
-    unavailable: "Isolation unavailable · Echo cancellation remains on"
+    active: `Mic only · ${micIsolationSession?.mode === 'high-quality' ? 'DeepFilterNet3 / High quality' : 'RNNoise / Light'}`,
+    fallback: `Mic only · Using Light: ${voiceIsolationFallbackReason || 'High quality exceeded the audio processing budget.'}`,
+    off: "Mic only · Isolation off",
+    unavailable: "Isolation unavailable · Using raw microphone"
   };
   voiceIsolationState.textContent = messages[status] || messages.waiting;
   voiceIsolationState.parentElement.dataset.state = status;
-  if (status !== 'active') updateEchoDiagnostics(null);
+  if (!['active', 'fallback'].includes(status)) { updateEchoDiagnostics(null); if (voiceIsolationDebug) voiceIsolationDebug.textContent = ''; }
+}
+
+function updateVoiceIsolationDiagnostics(diagnostics) {
+  updateEchoDiagnostics(diagnostics);
+  if (!voiceIsolationDebug || !diagnostics) return;
+  const processing = Number.isFinite(diagnostics.processingMs) ? diagnostics.processingMs.toFixed(2) : '—';
+  const latency = Number.isFinite(diagnostics.estimatedLatencyMs) ? diagnostics.estimatedLatencyMs.toFixed(1) : '—';
+  voiceIsolationDebug.textContent = `${processing} ms/frame · Est. added latency ${latency} ms${diagnostics.underruns ? ` · ${diagnostics.underruns} underruns` : ''}`;
 }
 
 function updateEchoDiagnostics(diagnostics) {
@@ -2998,8 +3021,8 @@ function updateEchoDiagnostics(diagnostics) {
   const db = Number.isFinite(diagnostics?.referenceDb) ? diagnostics.referenceDb : -100;
   if (echoReferenceMeter) echoReferenceMeter.value = Math.max(-60, Math.min(0, db));
   if (!diagnostics || diagnostics.engine !== 'WebRTC AEC3') {
-    echoReferenceState.textContent = voiceIsolationStatus === 'active'
-      ? 'Chromium echo cancellation · Playback reference unavailable'
+    echoReferenceState.textContent = ['active', 'fallback'].includes(voiceIsolationStatus)
+      ? 'Playback reference unavailable · Echo cancellation off'
       : 'Playback reference starts with voice isolation';
     return;
   }
@@ -3035,17 +3058,23 @@ function connectMicStreamToMixer(stream) {
   micSource?.disconnect();
   micSource = nextSource;
   micSource.connect(micGainNode);
+  const processed = stream !== micStream;
+  // The processing service already applies its 80 Hz high-pass and compressor.
+  micHighPassNode.frequency.value = processed ? 20 : desktopConfig.audio.equalizer.highPass.frequency;
+  micCompressorNode.ratio.value = processed ? 1 : desktopConfig.audio.micCompressor.ratio;
   // The old hard gate/expander are bypassed; update on routing changes only.
   updateMicNoiseReduction();
   updateMicNoiseGate();
 }
 
 async function configureMicVoiceIsolation() {
-  // Standard/Strong update the running model in place; keep its stream and context.
+  const requestedRuntimeMode = runtimeVoiceIsolationMode || selectedVoiceIsolationMode;
+  // Reuse loaded engines; Light -> High quality loads the larger model locally.
   if (isVoiceIsolationEnabled && micIsolationSession && !micIsolationPending) {
     try {
-      micIsolationSession.setMode(selectedVoiceIsolationMode);
-      updateVoiceIsolationUi("active");
+      micIsolationSession.setMode(requestedRuntimeMode);
+      micIsolationSession.setStrength(selectedVoiceIsolationStrength);
+      updateVoiceIsolationUi(runtimeVoiceIsolationMode ? 'fallback' : 'active');
       return;
     } catch {
       micIsolationSession.close();
@@ -3077,18 +3106,29 @@ async function configureMicVoiceIsolation() {
   try {
     if (!window.MicVoiceIsolation) throw new Error("Voice isolation module is missing.");
     session = await window.MicVoiceIsolation.create(rawStream, {
-      mode: selectedVoiceIsolationMode,
+      mode: requestedRuntimeMode,
+      strength: selectedVoiceIsolationStrength,
       referenceDeviceId: selectedEchoReferenceId,
       signal: pending.signal,
       onDiagnostics: diagnostics => {
-        if (generation === micIsolationGeneration && micStream === rawStream) updateEchoDiagnostics(diagnostics);
+        if (generation === micIsolationGeneration && micStream === rawStream) updateVoiceIsolationDiagnostics(diagnostics);
       },
-      onError: () => {
+      onFallback: reason => {
+        if (generation !== micIsolationGeneration || micStream !== rawStream) return;
+        runtimeVoiceIsolationMode = 'light';
+        voiceIsolationFallbackReason = reason;
+        updateVoiceIsolationUi('fallback');
+      },
+      onError: error => {
         if (generation !== micIsolationGeneration || micStream !== rawStream) return;
         micIsolationSession = null;
         session?.close();
         if (rawStream.getAudioTracks().some(track => track.readyState === "live")) connectMicStreamToMixer(rawStream);
-        updateVoiceIsolationUi("unavailable");
+        if (requestedRuntimeMode === 'high-quality') {
+          runtimeVoiceIsolationMode = 'light';
+          voiceIsolationFallbackReason = error.message;
+          void configureMicVoiceIsolation();
+        } else updateVoiceIsolationUi("unavailable");
       }
     });
     // A device change, mute, or newer toggle may have overtaken asynchronous startup.
@@ -3100,8 +3140,8 @@ async function configureMicVoiceIsolation() {
     connectMicStreamToMixer(session.stream);
     micIsolationSession = session;
     previousSession?.close();
-    updateVoiceIsolationUi("active");
-    updateEchoDiagnostics(session.diagnostics);
+    updateVoiceIsolationUi(runtimeVoiceIsolationMode ? 'fallback' : 'active');
+    updateVoiceIsolationDiagnostics(session.diagnostics);
   } catch (error) {
     session?.close();
     if (generation !== micIsolationGeneration || micStream !== rawStream) return;
@@ -3109,8 +3149,12 @@ async function configureMicVoiceIsolation() {
     micIsolationSession?.close();
     micIsolationSession = null;
     if (rawStream.getAudioTracks().some(track => track.readyState === "live")) connectMicStreamToMixer(rawStream);
-    console.warn("[VoiceIsolation] Echo-cancellation fallback:", error.message);
-    updateVoiceIsolationUi("unavailable");
+    console.warn("[VoiceIsolation] Microphone fallback:", error.message);
+    if (requestedRuntimeMode === 'high-quality' && isVoiceIsolationEnabled) {
+      runtimeVoiceIsolationMode = 'light';
+      voiceIsolationFallbackReason = error.message;
+      await configureMicVoiceIsolation();
+    } else updateVoiceIsolationUi("unavailable");
   } finally {
     if (micIsolationPending === pending) micIsolationPending = null;
   }
@@ -3123,7 +3167,9 @@ async function setVoiceIsolationEnabled(enabled) {
 }
 
 async function setVoiceIsolationMode(mode) {
-  if (!["off", "standard", "strong"].includes(mode)) return;
+  if (!["off", "light", "high-quality"].includes(mode)) return;
+  runtimeVoiceIsolationMode = null;
+  voiceIsolationFallbackReason = '';
   if (mode !== "off") selectedVoiceIsolationMode = mode;
   await setVoiceIsolationEnabled(mode !== "off");
 }
@@ -3132,7 +3178,7 @@ async function setupMixer(options = {}) {
   const { requestMic = true } = options;
 
   if (!audioContext) {
-    audioContext = new AudioContext({ latencyHint: "interactive" });
+    audioContext = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
 
     micGainNode = audioContext.createGain();
     micHighPassNode = audioContext.createBiquadFilter();
@@ -3238,13 +3284,13 @@ async function setupMixer(options = {}) {
     micMonitorGainNode.connect(audioContext.destination);
     appPlaybackGainNode.connect(appPlaybackDestination);
 
-    mixOutContext = new AudioContext({ latencyHint: "interactive" });
+    mixOutContext = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
     mixOutGainNode = mixOutContext.createGain();
     mixOutSource = mixOutContext.createMediaStreamSource(mixDestination.stream);
     mixOutSource.connect(mixOutGainNode);
     mixOutGainNode.connect(mixOutContext.destination);
 
-    localOutContext = new AudioContext({ latencyHint: "interactive" });
+    localOutContext = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
     localOutSource = localOutContext.createMediaStreamSource(appPlaybackDestination.stream);
     localOutSource.connect(localOutContext.destination);
 
@@ -3613,6 +3659,12 @@ voiceIsolationToggle?.addEventListener("change", () => {
 voiceIsolationMode?.addEventListener("change", () => {
   void setVoiceIsolationMode(voiceIsolationMode.value);
 });
+voiceIsolationStrength?.addEventListener('input', () => {
+  selectedVoiceIsolationStrength = clampUnitInterval(voiceIsolationStrength.value);
+  micIsolationSession?.setStrength(selectedVoiceIsolationStrength);
+  saveMixerSettings();
+  updateVoiceIsolationUi();
+});
 function restartEchoReference() {
   // Changing the reference requires a fresh estimator and capture session.
   ++micIsolationGeneration;
@@ -3837,6 +3889,7 @@ async function initializeConfiguredApp() {
   const defaults = desktopConfig.audio.defaults;
   isVoiceIsolationEnabled = defaults.voiceIsolation;
   selectedVoiceIsolationMode = defaults.voiceIsolationMode;
+  selectedVoiceIsolationStrength = defaults.voiceIsolationStrength;
   isMicCaptureEnabled = defaults.micEnabled;
   isMixToOutputEnabled = defaults.mixEnabled;
   isSoundPlaybackEnabled = defaults.playbackEnabled;
