@@ -147,7 +147,7 @@ async function run() {
     check('disabling releases processed tracks while preserving the caller-owned microphone', await evaluate(`(async () => {
       await __cleanMic.close(); await __cleanMic.close();
       await new Promise(resolve => setTimeout(resolve, 200));
-      return __cleanMic.stream.getTracks().every(track => track.readyState === 'ended') && __rawMic.getTracks().every(track => track.readyState === 'live') && __voiceSecurity.contexts.every(context => context.state === 'suspended');
+      return __cleanMic.stream.getTracks().every(track => track.readyState === 'ended') && __rawMic.getTracks().every(track => track.readyState === 'live') && __voiceSecurity.contexts.every(context => context.state === 'closed');
     })()`));
     const aecStarted = await evaluate(`(async () => {
       window.__originalReferenceApi = LoopbackReference;
@@ -205,7 +205,7 @@ async function run() {
       let message = '';
       try { await VoiceIsolation.create(raw, { mode: 'high-quality' }); } catch (error) { message = error.message; }
       await new Promise(resolve => setTimeout(resolve, 200));
-      const result = { message, rawLive: raw.getTracks().every(track => track.readyState === 'live'), contextsIdle: __voiceSecurity.contexts.every(context => context.state === 'suspended') };
+      const result = { message, rawLive: raw.getTracks().every(track => track.readyState === 'live'), contextsIdle: __voiceSecurity.contexts.every(context => context.state === 'closed') };
       raw.getTracks().forEach(track => track.stop());
       return result;
     })()`);

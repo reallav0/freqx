@@ -64,14 +64,12 @@
 
   function releaseRuntime(runtime) {
     runtime.users = Math.max(0, runtime.users - 1);
-    if (runtime.users || runtime.context.state === 'closed') return;
-    // Chromium retains closed AudioWorklet global scopes until document exit.
-    // Keep one idle context instead of accumulating one per switch. No model,
-    // mic track or processor is retained by it after session teardown.
-    void runtime.context.suspend().then(() => {
-      // An enable may arrive while Chromium is acknowledging the suspension.
-      if (runtime.users && runtime.context.state === 'suspended') return runtime.context.resume();
-    }).catch(() => {});
+    if (runtime.users || runtime.context.state === 'closed') return Promise.resolve();
+    // Closing releases the audio thread's WASM backing stores promptly. Keeping
+    // an idle global scope can retain large freed heaps until audio-thread GC.
+    // Compiled modules remain cached off the audio thread for the next startup.
+    if (isolationRuntime === runtime) isolationRuntime = null;
+    return runtime.context.close().catch(() => {});
   }
 
   function loadWorklet(runtime) {
@@ -133,7 +131,7 @@
     let algorithmLatencyMs = 0;
     const publish = changes => {
       diagnostics = Object.freeze({ ...diagnostics, ...changes });
-      diagnostics = Object.freeze({ ...diagnostics, estimatedLatencyMs: algorithmLatencyMs + (context?.baseLatency || 0) * 1000 + (compressor ? 6 : 0) + diagnostics.latencyMs });
+      diagnostics = Object.freeze({ ...diagnostics, estimatedLatencyMs: algorithmLatencyMs + (context?.baseLatency || 0) * 1000 + diagnostics.latencyMs });
       try { onDiagnostics(diagnostics); } catch {}
     };
     const destroyAec = () => {
@@ -151,7 +149,6 @@
       aecNode = null;
     };
     let destination;
-    let limiter;
     let highPass;
     let closed = false;
     let ready = false;
@@ -213,7 +210,6 @@
       // This is our processed stream. The caller still owns the raw microphone.
       destination?.stream.getTracks().forEach((track) => track.stop());
       const closingNode = node;
-      const closingLimiter = limiter;
       // Release the neural engine before stopping its worklet thread. Closing
       // the MessagePort/context immediately can discard the destroy message.
       // Input disconnect and processed-track stop are immediate. Keep the
@@ -229,14 +225,13 @@
           closingNode.port.onmessage = null;
           closingNode.port.close();
         }
-        closingLimiter?.disconnect();
         if (!acknowledged && runtime.context.state !== 'closed') {
           // Never reuse a thread whose processor cannot finish teardown.
           if (isolationRuntime === runtime) isolationRuntime = null;
           void runtime.context.close().catch(() => {});
         }
         // Keep the shared worklet thread running until both engines free memory.
-        void aecTeardown.then(() => { releaseRuntime(runtime); resolveClose(); });
+        void aecTeardown.then(() => releaseRuntime(runtime)).then(resolveClose);
       };
       if (closingNode) {
         closingNode.removeEventListener("processorerror", processorError);
@@ -244,7 +239,7 @@
         teardownTimer = setTimeout(() => finish(false), config.timing.teardownTimeoutMs);
         try { closingNode.port.postMessage({ type: 'destroy' }); } catch { finish(false); }
       } else finish();
-      source = aecNode = refSource = node = destination = limiter = highPass = context = null;
+      source = aecNode = refSource = node = destination = highPass = context = null;
       return closePromise;
     }
 
@@ -321,7 +316,7 @@
             outputChannelCount: [1],
             channelCount: 1,
             channelCountMode: "explicit",
-            processorOptions: { ...assets, mode, strength, tuning: { voiceModes: config.voiceModes } }
+            processorOptions: { ...assets, mode, strength, compressor, tuning: { voiceModes: config.voiceModes, compressor: config.micCompressor } }
           });
           node.addEventListener("processorerror", processorError);
           node.port.onmessage = ({ data }) => {
@@ -355,12 +350,8 @@
           highPass.connect(node);
           destination = context.createMediaStreamDestination();
           destination.channelCount = 1;
-          if (compressor) {
-            // The gate is inside the worklet; gentle level control follows it.
-            limiter = context.createDynamicsCompressor();
-            for (const [name, value] of Object.entries(config.micCompressor)) limiter[name].value = value;
-            node.connect(limiter).connect(destination);
-          } else node.connect(destination);
+          // The worklet gate is followed by zero-lookahead gentle compression.
+          node.connect(destination);
           if (loopbackTrack) {
             try {
               const [, wasmModule] = await Promise.all([loadAecWorklet(runtime), loadAecAssets()]);

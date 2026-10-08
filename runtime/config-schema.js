@@ -75,7 +75,7 @@
   }
   function validateAudioTuning(value) {
     // Worklet options are cloned across a boundary; validate selected tuning again.
-    for (const [key, rule] of Object.entries({ voiceModes, reference, aec })) if (Object.hasOwn(value, key)) check(value[key], rule, `audio.${key}`);
+    for (const [key, rule] of Object.entries({ voiceModes, compressor, reference, aec })) if (Object.hasOwn(value, key)) check(value[key], rule, `audio.${key}`);
     if (value.reference && !(value.reference.targetSeconds < value.reference.staleSeconds && value.reference.staleSeconds <= value.reference.capacitySeconds)) invalid('audio.reference');
     if (value.aec && value.aec.queueSamples < 480 * 2) invalid('audio.aec.queueSamples');
     return freeze(value);
