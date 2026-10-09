@@ -36,6 +36,7 @@ let globalKeybindRegistrations = [];
 let mainWindow;
 let authProtocolHandler = null;
 let keyHook = null;
+let keyHookLoadAttempted = false;
 let tray = null;
 let isQuitting = false;
 let isShowingCrashScreen = false;
@@ -120,12 +121,20 @@ if (hasSingleInstanceLock) {
 }
 
 if (hasSingleInstanceLock && enableNativeKeyHook) {
+  loadNativeKeyHook();
+}
+
+function loadNativeKeyHook() {
+  if (keyHookLoadAttempted) return keyHook;
+  keyHookLoadAttempted = true;
   try {
     const { uIOhook, UiohookKey } = require("uiohook-napi");
     keyHook = createUiohookBridge(uIOhook, UiohookKey);
   } catch (error) {
     keyHook = null;
+    console.warn('[Keybinds] Native keypad hook unavailable:', error.message);
   }
+  return keyHook;
 }
 
 function configureDevelopmentStoragePaths() {
@@ -483,6 +492,7 @@ function createUiohookBridge(uiohook, uiohookKey) {
   let onKey = null;
   let listenersBound = false;
   let started = false;
+  let failed = false;
 
   const specialMap = {
     Space: "Space",
@@ -602,7 +612,8 @@ function createUiohookBridge(uiohook, uiohookKey) {
       }
 
       for (const domCode of domCodes) {
-        onKey(domCode);
+        onKey(domCode, { ctrl: Boolean(event.ctrlKey), shift: Boolean(event.shiftKey),
+          alt: Boolean(event.altKey), meta: Boolean(event.metaKey) });
       }
     });
 
@@ -628,6 +639,7 @@ function createUiohookBridge(uiohook, uiohookKey) {
 
   return {
     watch(domCode, listener) {
+      if (failed) return false;
       const resolvedCodes = resolveKeyCodes(domCode);
       if (!resolvedCodes.length) {
         return false;
@@ -641,29 +653,46 @@ function createUiohookBridge(uiohook, uiohookKey) {
       }
 
       onKey = listener;
-      ensureStarted();
+      try {
+        ensureStarted();
+      } catch (error) {
+        failed = true;
+        watchedCodes.clear();
+        pressedCodes.clear();
+        onKey = null;
+        console.warn('[Keybinds] Native keypad hook could not start:', error.message);
+        return false;
+      }
       return true;
     },
 
     clearAll() {
       watchedCodes.clear();
       pressedCodes.clear();
+      onKey = null;
     },
 
     stop() {
+      watchedCodes.clear();
+      pressedCodes.clear();
+      onKey = null;
       if (!started) {
         return;
       }
 
-      uiohook.stop();
+      try { uiohook.stop(); } catch (error) { console.warn('[Keybinds] Native hook teardown failed:', error.message); }
       started = false;
       pressedCodes.clear();
     },
 
     get available() {
-      return true;
+      return !failed;
     }
   };
+}
+
+function needsPhysicalKeypadHook(code) {
+  return process.platform === 'win32' && /^Numpad(?:[0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter)$/.test(code);
 }
 
 function configurePermissions() {
@@ -2292,6 +2321,12 @@ function registerAudioIpc() {
 
   ipcMain.handle("keybinds:register-global", (event, entries) => {
     assertTrustedIpcSender(event);
+    const list = Array.isArray(entries) ? entries.slice(0, 256) : [];
+    const hasKeypadBindings = list.some(entry => needsPhysicalKeypadHook(entry?.code));
+    // Windows changes a physical keypad's virtual key with Num Lock. Electron
+    // accelerators cannot distinguish keypad End from the separate End key.
+    // Load the existing scan-code hook only when a keypad binding needs it.
+    if (hasKeypadBindings && !keyHook) loadNativeKeyHook();
     for (const entry of globalKeybindRegistrations) {
       globalShortcut.unregister(entry.accelerator);
     }
@@ -2299,9 +2334,9 @@ function registerAudioIpc() {
     globalKeybindRegistrations = [];
     if (keyHook) {
       keyHook.clearAll();
+      if (!enableNativeKeyHook && !hasKeypadBindings) keyHook.stop();
     }
 
-    const list = Array.isArray(entries) ? entries.slice(0, 256) : [];
     const failed = [];
     const native = [];
     const globalShortcutResults = [];
@@ -2317,9 +2352,9 @@ function registerAudioIpc() {
         return;
       }
 
-      if (keyHook?.available && !entry?.preferGlobalShortcut) {
-        const hooked = keyHook.watch(code, (domCode) => {
-          emitGlobalKeyCode(domCode);
+      if (keyHook?.available && (needsPhysicalKeypadHook(code) || (enableNativeKeyHook && !entry?.preferGlobalShortcut))) {
+        const hooked = keyHook.watch(code, (domCode, modifiers) => {
+          emitGlobalKeyCode(domCode, modifiers);
         });
 
         if (hooked) {
@@ -2358,7 +2393,7 @@ function registerAudioIpc() {
 
     return {
       ok: true,
-      mode: keyHook?.available ? "uiohook" : "globalShortcut",
+      mode: native.length ? "uiohook" : "globalShortcut",
       registeredCount: globalKeybindRegistrations.length,
       native,
       globalShortcut: globalShortcutResults,

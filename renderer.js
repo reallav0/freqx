@@ -415,22 +415,9 @@ function keyCodeToAcceleratorParts(code) {
   }
 
   if (/^Numpad\d$/.test(code)) {
-    const digit = code.slice(6);
-    const fallbackMap = {
-      0: "Insert",
-      1: "End",
-      2: "Down",
-      3: "PageDown",
-      4: "Left",
-      5: "Clear",
-      6: "Right",
-      7: "Home",
-      8: "Up",
-      9: "PageUp"
-    };
-
-    const fallback = fallbackMap[digit];
-    return fallback ? [`num${digit}`, fallback] : [`num${digit}`];
+    // Navigation-key aliases also match the separate navigation cluster.
+    // The native keypad hook handles Num Lock off without claiming those keys.
+    return [`num${code.slice(6)}`];
   }
 
   if (/^F\d{1,2}$/.test(code)) {

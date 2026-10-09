@@ -11,7 +11,9 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "lint": "eslint . --max-warnings 0",
-    "test:unit": "node --test tests/desktop-config.cjs tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs tests/voice-worklet.cjs",
+    "test:unit": "node --test tests/desktop-config.cjs tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs tests/voice-worklet.cjs tests/keybinds.cjs",
+    "test:keybinds": "node --test tests/keybinds.cjs",
+    "test:keybinds-desktop": "node tests/keybinds-electron.cjs",
     "test:driver": "node tests/driver-security.cjs",
     "test:auth-desktop": "node tests/auth-electron.cjs",
     "prepare:audio": "node scripts/prepare-audio.cjs",

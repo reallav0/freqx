@@ -108,7 +108,7 @@ npm.cmd run dev
 
 Packaged builds use the trusted `https://api.freqx.app` configuration. Keep server credentials in the backend project.
 
-**Keybinds.** Electron's built-in global shortcuts are the default. Developers can enable the optional `uiohook-napi` hook through `app.nativeKeyHookEnabled` in the desktop configuration; source launches also accept `FREQX_ENABLE_NATIVE_KEY_HOOK=1`.
+**Keybinds.** Ordinary keys use Electron's built-in global shortcuts. On Windows, keypad bindings automatically load the existing `uiohook-napi` hook to distinguish physical keypad navigation aliases. Numpad 1 works with Num Lock on or off, including modifier chords, without also binding the separate End key. The hook stops when no keypad bindings remain. If the native hook cannot load or start, keypad digits fall back to Electron's Num Lock on shortcuts; an occupied shortcut is reported as unavailable. `app.nativeKeyHookEnabled: false` keeps ordinary keys on Electron. Developers can opt other keys into the hook through that configuration flag; source launches also accept `FREQX_ENABLE_NATIVE_KEY_HOOK=1`.
 
 **Website imports.** Installed Windows builds register `freqx://`. Links can import audio into the local library or pass the request to the running instance:
 
