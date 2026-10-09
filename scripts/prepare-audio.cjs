@@ -28,3 +28,4 @@ if (aecManifest.upstream.commit !== 'e1d663e86f2ab03269b9ae873af38d0103c4df3d') 
 verify(aecDirectory, 'aec3.wasm', aecManifest, ['a.a:memory','a.b:function','a.c:function','a.d:function','a.e:function','a.f:function','a.g:function'], Array.from('hijklmnopqrstuvwxyzAB'));
 console.log('Verified pinned optional WebRTC AEC3 engine.');
 require('./prepare-loopback.cjs');
+require('./prepare-link-tools.cjs');

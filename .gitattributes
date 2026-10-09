@@ -1,1 +1,3 @@
 # Desktop project. Backend Docker/certificate attributes live in freqx-api.
+# Preserve vendored legal texts exactly; upstream whitespace is intentional.
+runtime/vendor/link-tools/*.txt -text -whitespace

@@ -1,0 +1,22 @@
+{
+  "yt-dlp": {
+    "version": "2026.08.19",
+    "archive": "yt-dlp.zip",
+    "archiveSha256": "7134d6bdbbed576350bc122180685587bfb843295c74193a9152fc00841cb0ed",
+    "binary": "yt-dlp.exe",
+    "bytes": 17840399,
+    "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+    "license": "GPL-3.0-or-later (official executable); Unlicense (yt-dlp source)",
+    "source": "https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19"
+  },
+  "deno": {
+    "version": "2.9.7",
+    "archive": "deno.zip",
+    "archiveSha256": "a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238",
+    "binary": "deno.exe",
+    "bytes": 97462048,
+    "sha256": "e020f3e232bd16e33768dee528e5983349c962952051ced0a5d58ad42f5d9b33",
+    "license": "MIT (Deno); third-party components retain their licenses",
+    "source": "https://github.com/denoland/deno/releases/tag/v2.9.7"
+  }
+}
