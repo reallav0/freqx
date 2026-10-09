@@ -22,6 +22,17 @@ connection. A single deadline covers redirects/body, and streamed byte limits
 apply even without a Content-Length. The existing Discover host allowlist is
 unchanged.
 
+Website media uses a bounded HTTP Range request so YouTube's CDN does not
+throttle the transfer past its deadline. A 206 response is accepted only when
+its Content-Range starts at zero and contains the entire file within 24 MiB;
+partial segments, mismatched lengths and oversized totals are rejected. Only
+the extractor's bounded User-Agent, Accept and Accept-Language are forwarded;
+cookies, authorization, proxy headers and transport headers are discarded.
+The extractor's pre-playback wait is honored up to 30 seconds. A rejected
+website stream (HTTP 403) gets one fresh resolution, with an overall 90-second
+budget across resolution, waiting and download. Cancellation interrupts all
+three phases. Discover downloads retain their existing response policy.
+
 Content-Type and file signatures are both checked. Media decoding occurs in a
 fresh sandboxed Chromium renderer with no Node, preload, app IPC, permissions,
 remote network, navigation or popups. Only its local validator and one staged
@@ -53,3 +64,15 @@ decoder, audio routing, cancellation, rejected files and board persistence.
 Pass `--app-root PATH_TO_APP_ASAR` directly to
 `node tests/audio-links-electron.cjs` to check a packaged build. Audio fixtures
 and screenshots are written only under ignored `output/`.
+
+An opt-in live check also exercises the actual pinned extractor, proxy,
+HTTPS download, sandbox decoder and normalized library save without network
+fixtures. It writes comparison WAVs and a report under ignored
+`output/audio-links-live/`. Use a public track under five minutes:
+
+```powershell
+node tests/audio-links-live-electron.cjs --url 'https://www.youtube.com/watch?v=h7MYJghRWt0&list=RDh7MYJghRWt0&start_radio=1' --repeat 3
+```
+
+Add `--app-root PATH_TO_APP_ASAR` to verify a packaged build. Live checks are
+separate from unit tests because website availability and rate limits vary.
