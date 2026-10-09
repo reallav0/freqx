@@ -19,8 +19,9 @@ const globalV6 = new net.BlockList();
 globalV6.addSubnet('2000::', 3, 'ipv6');
 const blockedV6 = new net.BlockList();
 blockedV6.addSubnet('2001:db8::', 32, 'ipv6');
-blockedV6.addSubnet('2001::', 32, 'ipv6'); // Teredo tunnelling
+blockedV6.addSubnet('2001::', 23, 'ipv6'); // IETF special-purpose space, including Teredo/ORCHID
 blockedV6.addSubnet('2002::', 16, 'ipv6'); // 6to4 tunnelling
+blockedV6.addSubnet('3fff::', 20, 'ipv6'); // Documentation space
 
 function downloadError(message) {
   return Object.assign(new Error(message), { code: 'PUBLIC_LIBRARY_UNAVAILABLE' });
@@ -62,19 +63,22 @@ function publicLookup(hostname, options, callback) {
 // DNS policy at the actual connection, avoiding a validation/connection race.
 async function downloadBytes(value, limit, {
   signal, timeoutMs = desktopConfig.network.downloadTimeoutMs, maxRedirects = desktopConfig.network.maxRedirects, allowedHosts = DEFAULT_HOSTS,
-  request = https.get, lookup = publicLookup
+  request = https.get, lookup = publicLookup,
+  // Internal callers can use a different URL policy without broadening the
+  // catalog allowlist. Never accept these callbacks/options over IPC.
+  parseUrl = input => parseRemoteUrl(input, allowedHosts), validateResponse, onComplete
 } = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new TypeError('Invalid download limit');
   const deadline = AbortSignal.timeout(timeoutMs);
   const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  let url = parseRemoteUrl(value, allowedHosts);
+  let url = parseUrl(value);
   for (let redirects = 0; ; redirects++) {
     combined.throwIfAborted();
     const result = await new Promise((resolve, reject) => {
       let req;
       try {
         req = request(url, {
-          signal: combined, lookup, agent: false,
+          signal: combined, lookup, agent: false, rejectUnauthorized: true,
           headers: { 'User-Agent': 'freqx', 'Accept-Encoding': 'identity' }
         }, response => {
           const fail = error => { response.destroy(); reject(error); };
@@ -86,13 +90,14 @@ async function downloadBytes(value, limit, {
             try {
               if (typeof response.headers.location !== 'string' || /[\u0000-\u0020\u007f\\]/.test(response.headers.location)) throw downloadError('Invalid library redirect.');
               const location = new URL(response.headers.location, url).href;
-              resolve({ redirect: parseRemoteUrl(location, allowedHosts) });
+              resolve({ redirect: parseUrl(location) });
             } catch (error) { reject(error); }
             return;
           }
           if (status !== 200) return fail(downloadError(`Library download returned HTTP ${status}.`));
           const encoding = response.headers['content-encoding'];
           if (encoding && encoding !== 'identity') return fail(downloadError('Encoded library responses are not supported.'));
+          try { validateResponse?.(response.headers, url); } catch (error) { return fail(error); }
           const rawLength = response.headers['content-length'];
           let declared;
           if (rawLength !== undefined) {
@@ -114,6 +119,7 @@ async function downloadBytes(value, limit, {
             if (!response.complete || bytes === 0 || (declared !== undefined && bytes !== declared)) {
               return reject(downloadError('Library download was incomplete.'));
             }
+            try { onComplete?.(response.headers, url); } catch (error) { return reject(error); }
             resolve({ bytes: Buffer.concat(chunks, bytes) });
           });
         });

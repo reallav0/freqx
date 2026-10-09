@@ -166,7 +166,7 @@ test('protocol reservation retries a collision without claiming or deleting anot
   assert.equal(await fs.promises.readFile(reservation.destinationPath, 'utf8'), 'download');
 });
 
-test('a failed protocol download removes only its own file after a reservation collision', async t => {
+test('a failed link commit removes only its own reservation after a filename collision', async t => {
   const directory = await temporaryDirectory(t);
   const context = importFixture(directory);
   const library = context.getLibraryDirectory();
@@ -177,38 +177,25 @@ test('a failed protocol download removes only its own file after a reservation c
       collided = true;
       await fs.promises.writeFile(filename, 'keep this import');
     }
-    return fs.promises.open(filename, flags);
+    const handle = await fs.promises.open(filename, flags);
+    handle.writeFile = async () => { throw new Error('write interrupted'); };
+    return handle;
   };
-  Object.assign(context, {
-    Transform: require('node:stream').Transform,
-    pipeline: require('node:stream/promises').pipeline,
-    parseRemoteAudioUrl: value => new URL(value), publicDnsLookup() {},
-    getHeaderText: value => String(value || ''), normalizeContentTypeHeader: value => value,
-    getExternalImportFileName: () => 'sound.wav', isAllowedRemoteAudioResponse: () => true,
-    normalizeExternalImportError: error => error,
-    createExternalImportError: message => new Error(message),
-    maxRemoteAudioBytes: 1024, maxRemoteAudioRedirects: 5, remoteAudioRequestTimeoutMs: 30000,
-    packageMetadata: { name: 'freqx' },
-    https: { get(_url, _options, callback) {
-      const request = new (require('node:events').EventEmitter)();
-      request.setTimeout = () => {};
-      queueMicrotask(() => {
-        const response = require('node:stream').Readable.from((async function* () {
-          yield Buffer.from('partial audio');
-          throw new Error('download interrupted');
-        })());
-        response.statusCode = 200;
-        response.headers = { 'content-type': 'audio/wav' };
-        callback(response);
-      });
-      return request;
-    } },
+  const bytes = Buffer.alloc(46);
+  bytes.write('RIFF', 0); bytes.writeUInt32LE(38, 4); bytes.write('WAVEfmt ', 8);
+  bytes.writeUInt32LE(16, 16); bytes.writeUInt16LE(1, 20); bytes.writeUInt16LE(1, 22);
+  bytes.writeUInt32LE(48000, 24); bytes.writeUInt32LE(96000, 28);
+  bytes.writeUInt16LE(2, 32); bytes.writeUInt16LE(16, 34); bytes.write('data', 36); bytes.writeUInt32LE(2, 40);
+  const { AudioLinkService } = require('../runtime/audio-link-service.cjs');
+  const service = new AudioLinkService({
+    download: async () => ({ bytes: Buffer.from('encoded audio'), filename: 'sound.mp3' }),
+    decode: async () => bytes, tempRoot: path.join(directory, 'link-tmp'),
+    reserve: filename => context.reserveLibraryDestination(library, filename), item: context.toLibraryItem,
   });
-  context.app.getVersion = () => '1.8.0';
-  vm.runInContext(section(mainSource, 'function createByteLimitTransform(', 'async function importAudioFromProtocolRequest('), context);
-  await assert.rejects(context.downloadRemoteAudioToLibrary({ sourceUrl: 'https://fixture.invalid/sound.wav' }), /download interrupted/);
+  await assert.rejects(service.import('https://fixture.invalid/audio', { owner: {} }), /write interrupted/);
   assert.deepEqual(await fs.promises.readdir(library), ['sound.wav']);
   assert.equal(await fs.promises.readFile(existing, 'utf8'), 'keep this import');
+  assert.deepEqual(await fs.promises.readdir(path.join(directory, 'link-tmp')), []);
 });
 
 function playbackFixture(mode, { delayedEngine = false } = {}) {
@@ -237,6 +224,7 @@ function playbackFixture(mode, { delayedEngine = false } = {}) {
     getSoundMetadata: () => ({ name: 'Fixture', playbackMode: mode, trimStart: 0, trimEnd: 0, volume: 1, fadeIn: 0, fadeOut: 0 }),
     decodeImportedAudio: () => { decodes++; return decode.promise; }, soundGainNode: {},
     discoverUi: null, nowPlaying: {}, importedLibraryItems: [item], syncSoundPlaybackVisuals() {},
+    cancelPendingAudioLink() {},
     setLibraryState: message => messages.push(message),
   });
   context.setupMixer = async () => { await engine.promise; context.audioContext = audioContext; };

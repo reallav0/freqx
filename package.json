@@ -11,7 +11,9 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "lint": "eslint . --max-warnings 0",
-    "test:unit": "node --test tests/desktop-config.cjs tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs tests/voice-worklet.cjs tests/keybinds.cjs",
+    "test:unit": "node --test tests/desktop-config.cjs tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/audio-link.cjs tests/audio-link-service.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs tests/voice-worklet.cjs tests/keybinds.cjs",
+    "test:audio-links-desktop": "node tests/audio-links-electron.cjs",
+    "test:link-tools": "node scripts/test-link-tools.cjs",
     "test:keybinds": "node --test tests/keybinds.cjs",
     "test:keybinds-desktop": "node tests/keybinds-electron.cjs",
     "test:driver": "node tests/driver-security.cjs",
@@ -111,6 +113,7 @@
       "audio/vendor/deepfilter/*.md",
       "audio/vendor/deepfilter/licenses/**/*",
       "runtime/**/*",
+      "!runtime/vendor/link-tools/deno-notices{,/**/*}",
       "assets/*.svg",
       "assets/library/**/*",
       "logo.png",

@@ -116,7 +116,7 @@ Packaged builds use the trusted `https://api.freqx.app` configuration. Keep serv
 freqx://import-sound?url=https%3A%2F%2Fexample.com%2Fsound.mp3&filename=sound.mp3&title=Sound
 ```
 
-Audio URLs must use HTTPS, resolve to a public network address, return a supported audio type, and be no larger than 100 MB.
+Use **Add link** to paste a direct audio URL, public YouTube video or public SoundCloud track and play it on your board. HTTPS links are checked for public addresses, safe redirects, supported audio bytes, and a 24 MiB/five-minute limit. Downloads are decoded in a disposable sandbox and saved as PCM WAV. Website protocol imports use the same validation. See [link playback and security](docs/implementation/audio-links.md).
 
 **Driver packaging.** Optional VB-CABLE packages belong in `drivers/`. Include the full official package and its companion driver files; automatic driver installation requires reviewed verification pins. The current policy blocks automatic driver installation until those pins are reviewed. Redistribution requires the appropriate VB-Audio license or permission. Follow the [driver verification guide](security/driver-verification.md).
 
@@ -129,3 +129,5 @@ Audio URLs must use HTTPS, resolve to a public network address, return a support
 Freqx is source-available and licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). Personal and other permitted non-commercial use, including modification and experimentation, is governed by that license. Commercial use outside its permitted purposes requires a [separate commercial license](COMMERCIAL_LICENSE.md). The [LICENSE](LICENSE) is authoritative; this change does not revoke rights previously granted under earlier licenses.
 
 The Freqx name, logo, and branding are covered separately by [TRADEMARKS.md](TRADEMARKS.md). Third-party components included with or used by Freqx remain subject to their respective licenses. Bundled audio notices, licenses and build provenance are documented with the [DeepFilterNet3 assets](audio/vendor/deepfilter/README.md), [RNNoise assets](audio/vendor/rnnoise/README.md) and [AEC3 assets](audio/vendor/aec3/README.md). See [voice isolation testing and VB-CABLE setup](audio/VOICE-ISOLATION.md).
+
+Website audio uses independent pinned [yt-dlp and Deno helpers](runtime/vendor/link-tools/README.md). Their licenses, source references and full third-party notices ship alongside the helpers.

@@ -8,21 +8,22 @@ const { createUpdateClient } = require('./runtime/update-client.cjs');
 const { config: desktopConfig } = require('./runtime/desktop-config.cjs');
 const updateConfiguration = desktopConfig.updater.feed;
 let updateClient;
-const dns = require("dns");
 const { execFile } = require("child_process");
 const fs = require("fs");
 const https = require("https");
-const net = require("net");
 const path = require("path");
-const { Transform } = require("stream");
-const { pipeline } = require("stream/promises");
 const { pathToFileURL } = require("url");
 const packageMetadata = require("./package.json");
 const { createCrashRecovery } = require("./runtime/crash-recovery.cjs");
 const { PublicLibrary } = require("./runtime/public-library.cjs");
 const { LoopbackService } = require('./runtime/loopback-reference.cjs');
+const { AudioLinkService } = require('./runtime/audio-link-service.cjs');
+const { downloadAudioLink } = require('./runtime/audio-link.cjs');
 const loopbackService = new LoopbackService({ appRoot: __dirname });
 const publicLibrary = new PublicLibrary({ appRoot: __dirname, development: !isPackaged, tempRoot: () => path.join(app.getPath('userData'), 'library-import-tmp') });
+const audioLinkService = new AudioLinkService({ download: (url, options) => downloadAudioLink(url, { ...options, toolsCache: path.join(app.getPath('userData'), 'link-tools') }), BrowserWindow, session, appRoot: __dirname,
+  tempRoot: () => path.join(app.getPath('userData'), 'audio-link-tmp'),
+  reserve: filename => reserveLibraryDestination(getLibraryDirectory(), filename), item: toLibraryItem });
 app.setName("freqx");
 
 
@@ -60,37 +61,7 @@ const recoverableElectronServiceNames = new Set([
   "video_capture.mojom.VideoCaptureService"
 ]);
 const supportedAudioExtensions = new Set([".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac", ".opus"]);
-const remoteAudioContentTypeExtensions = new Map([
-  ["audio/aac", ".aac"],
-  ["audio/aacp", ".aac"],
-  ["audio/flac", ".flac"],
-  ["audio/mp4", ".m4a"],
-  ["audio/mpeg", ".mp3"],
-  ["audio/mp3", ".mp3"],
-  ["audio/mpeg3", ".mp3"],
-  ["audio/ogg", ".ogg"],
-  ["audio/opus", ".opus"],
-  ["audio/vnd.wave", ".wav"],
-  ["audio/wav", ".wav"],
-  ["audio/wave", ".wav"],
-  ["audio/x-flac", ".flac"],
-  ["audio/x-m4a", ".m4a"],
-  ["audio/x-mp3", ".mp3"],
-  ["audio/x-mpeg", ".mp3"],
-  ["audio/x-mpeg-3", ".mp3"],
-  ["audio/x-wav", ".wav"],
-  ["application/ogg", ".ogg"]
-]);
-const genericRemoteAudioContentTypes = new Set([
-  "application/octet-stream",
-  "application/x-binary",
-  "application/x-download",
-  "binary/octet-stream"
-]);
 const maxProtocolUrlLength = desktopConfig.network.maxUrlLength;
-const maxRemoteAudioBytes = desktopConfig.network.protocolAudioBytes;
-const maxRemoteAudioRedirects = desktopConfig.network.maxRedirects;
-const remoteAudioRequestTimeoutMs = desktopConfig.network.protocolAudioTimeoutMs;
 const enableNativeKeyHook = desktopConfig.app.nativeKeyHookEnabled || (!isPackaged && process.env.FREQX_ENABLE_NATIVE_KEY_HOOK === "1");
 let appSettings = { ...desktopConfig.app.preferences };
 const pendingProtocolUrls = [];
@@ -1132,8 +1103,8 @@ function parseProtocolImportUrl(rawUrl) {
     throw createExternalImportError("This freqx link uses an unsupported action.", "unsupported-protocol-action");
   }
 
-  const sourceUrl = readProtocolTextParam(parsedUrl.searchParams, "url", 4096);
-  if (!sourceUrl) {
+  const sourceUrl = parsedUrl.searchParams.get('url');
+  if (typeof sourceUrl !== 'string' || !sourceUrl || sourceUrl.length > maxProtocolUrlLength) {
     throw createExternalImportError("This freqx import link is missing an audio URL.", "missing-audio-url");
   }
 
@@ -1200,386 +1171,17 @@ async function processProtocolImportUrl(rawUrl) {
   }
 }
 
-function normalizeHostName(hostname) {
-  return String(hostname || "").replace(/^\[|\]$/g, "").trim().toLowerCase();
-}
-
-function isBlockedIpAddress(address) {
-  const normalized = normalizeHostName(address);
-  const version = net.isIP(normalized);
-
-  if (version === 4) {
-    const octets = normalized.split(".").map((part) => Number.parseInt(part, 10));
-    if (octets.length !== 4 || octets.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) {
-      return true;
-    }
-
-    const [first, second] = octets;
-    return first === 0
-      || first === 10
-      || first === 127
-      || (first === 169 && second === 254)
-      || (first === 172 && second >= 16 && second <= 31)
-      || (first === 192 && second === 168)
-      || (first === 100 && second >= 64 && second <= 127)
-      || (first === 192 && second === 0)
-      || (first === 198 && (second === 18 || second === 19))
-      || first >= 224;
-  }
-
-  if (version === 6) {
-    const mappedIpv4 = normalized.match(/(?:^|:)ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
-    if (mappedIpv4) {
-      return isBlockedIpAddress(mappedIpv4[1]);
-    }
-
-    if (normalized === "::" || normalized === "::1") {
-      return true;
-    }
-
-    const firstSegment = normalized.split(":").find(Boolean) || "0";
-    const first = Number.parseInt(firstSegment, 16);
-    return Number.isFinite(first) && (
-      (first & 0xfe00) === 0xfc00
-      || (first & 0xffc0) === 0xfe80
-      || (first & 0xff00) === 0xff00
-    );
-  }
-
-  return false;
-}
-
-function isBlockedRemoteAudioHost(hostname) {
-  const normalized = normalizeHostName(hostname);
-  if (!normalized) {
-    return true;
-  }
-
-  return normalized === "localhost"
-    || normalized.endsWith(".localhost")
-    || normalized.endsWith(".local")
-    || (net.isIP(normalized) && isBlockedIpAddress(normalized));
-}
-
-function parseRemoteAudioUrl(rawUrl) {
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(rawUrl);
-  } catch (error) {
-    throw createExternalImportError("The audio URL in this freqx link is invalid.", "invalid-audio-url");
-  }
-
-  if (parsedUrl.protocol.toLowerCase() !== "https:") {
-    throw createExternalImportError("Only HTTPS audio links can be imported.", "unsupported-audio-url");
-  }
-
-  if (parsedUrl.username || parsedUrl.password) {
-    throw createExternalImportError("Audio links with embedded credentials are not supported.", "blocked-audio-url");
-  }
-
-  if (isBlockedRemoteAudioHost(parsedUrl.hostname)) {
-    throw createExternalImportError("That audio link points to a local or private network address.", "blocked-audio-host");
-  }
-
-  parsedUrl.hash = "";
-  return parsedUrl;
-}
-
-function publicDnsLookup(hostname, options, callback) {
-  dns.lookup(hostname, {
-    ...options,
-    all: true
-  }, (error, addresses) => {
-    if (error) {
-      callback(error);
-      return;
-    }
-
-    const resolvedAddresses = Array.isArray(addresses) ? addresses : [];
-    const blockedAddress = resolvedAddresses.find((entry) => isBlockedIpAddress(entry.address));
-    if (blockedAddress) {
-      callback(createExternalImportError(
-        "That audio link points to a local or private network address.",
-        "blocked-audio-host"
-      ));
-      return;
-    }
-
-    if (!resolvedAddresses.length) {
-      callback(createExternalImportError("The audio link host could not be resolved.", "audio-host-not-found"));
-      return;
-    }
-
-    if (options?.all) {
-      callback(null, resolvedAddresses);
-      return;
-    }
-
-    callback(null, resolvedAddresses[0].address, resolvedAddresses[0].family);
-  });
-}
-
-function getHeaderText(header) {
-  if (Array.isArray(header)) {
-    return String(header[0] || "");
-  }
-
-  return String(header || "");
-}
-
-function normalizeContentTypeHeader(header) {
-  return getHeaderText(header).split(";")[0].trim().toLowerCase();
-}
-
-function getRemoteAudioExtensionFromContentType(contentType) {
-  return remoteAudioContentTypeExtensions.get(contentType) || "";
-}
-
-function getSupportedAudioExtension(fileName) {
-  const extension = path.extname(String(fileName || "")).toLowerCase();
-  return supportedAudioExtensions.has(extension) ? extension : "";
-}
-
-function getFileNameFromUrlPath(parsedUrl) {
-  const rawName = path.posix.basename(parsedUrl.pathname || "");
-  if (!rawName || rawName === "/" || rawName === ".") {
-    return "";
-  }
-
-  try {
-    return decodeURIComponent(rawName);
-  } catch (error) {
-    return rawName;
-  }
-}
-
-function getFileNameFromContentDisposition(header) {
-  const value = getHeaderText(header);
-  if (!value) {
-    return "";
-  }
-
-  const encodedMatch = value.match(/filename\*=[^']*''([^;]+)/i);
-  if (encodedMatch) {
-    try {
-      return decodeURIComponent(encodedMatch[1].replace(/^"|"$/g, ""));
-    } catch (error) {
-    }
-  }
-
-  const plainMatch = value.match(/filename="?([^";]+)"?/i);
-  return plainMatch ? plainMatch[1] : "";
-}
-
-function isAllowedRemoteAudioResponse(contentType, extension) {
-  if (!contentType) {
-    return supportedAudioExtensions.has(extension);
-  }
-
-  if (remoteAudioContentTypeExtensions.has(contentType)) {
-    return true;
-  }
-
-  return genericRemoteAudioContentTypes.has(contentType) && supportedAudioExtensions.has(extension);
-}
-
-function sanitizeExternalFileBase(value) {
-  return String(value || "")
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
-    .replace(/\s+/g, " ")
-    .replace(/^\.+|\.+$/g, "")
-    .trim()
-    .slice(0, 96)
-    .trim() || "imported-audio";
-}
-
-function getExternalImportFileName(request, parsedUrl, contentType, contentDisposition) {
-  const urlFileName = getFileNameFromUrlPath(parsedUrl);
-  const dispositionFileName = getFileNameFromContentDisposition(contentDisposition);
-  const preferredName = request.filename || dispositionFileName || urlFileName || request.title || "imported-audio";
-  const contentTypeExtension = getRemoteAudioExtensionFromContentType(contentType);
-  const candidateExtension = [
-    request.filename,
-    dispositionFileName,
-    urlFileName
-  ].map(getSupportedAudioExtension).find(Boolean) || "";
-  const extension = contentTypeExtension || candidateExtension;
-
-  if (!supportedAudioExtensions.has(extension)) {
-    throw createExternalImportError("The audio link does not point to a supported audio file.", "unsupported-audio-file");
-  }
-
-  const preferredExtension = getSupportedAudioExtension(preferredName);
-  const baseNameSource = preferredExtension
-    ? path.basename(preferredName, preferredExtension)
-    : preferredName;
-
-  return `${sanitizeExternalFileBase(baseNameSource)}${extension}`;
-}
-
-function createByteLimitTransform(maxBytes) {
-  let receivedBytes = 0;
-
-  return new Transform({
-    transform(chunk, encoding, callback) {
-      receivedBytes += chunk.length;
-      if (receivedBytes > maxBytes) {
-        callback(createExternalImportError(
-          `Audio links must be ${Math.round(maxBytes / (1024 * 1024))} MB or smaller.`,
-          "audio-too-large"
-        ));
-        return;
-      }
-
-      callback(null, chunk);
-    }
-  });
-}
-
-async function removeFileQuietly(filePath) {
-  try {
-    await fs.promises.unlink(filePath);
-  } catch (error) {
-  }
-}
-
-async function downloadRemoteAudioToLibrary(request, rawUrl = request.sourceUrl, redirectCount = 0) {
-  const parsedUrl = parseRemoteAudioUrl(rawUrl);
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const succeed = (value) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      resolve(value);
-    };
-    const fail = (error) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      reject(normalizeExternalImportError(error));
-    };
-
-    const requestOptions = {
-      headers: {
-        Accept: "audio/*,application/octet-stream;q=0.8,*/*;q=0.1",
-        "User-Agent": `${packageMetadata.name || "freqx"}/${app.getVersion()}`
-      },
-      lookup: publicDnsLookup,
-      timeout: remoteAudioRequestTimeoutMs
-    };
-
-    const remoteRequest = https.get(parsedUrl, requestOptions, (response) => {
-      (async () => {
-        const statusCode = Number(response.statusCode || 0);
-        if ([301, 302, 303, 307, 308].includes(statusCode)) {
-          response.resume();
-          if (redirectCount >= maxRemoteAudioRedirects) {
-            throw createExternalImportError("The audio link redirected too many times.", "too-many-redirects");
-          }
-
-          const location = getHeaderText(response.headers.location);
-          if (!location) {
-            throw createExternalImportError("The audio link returned an invalid redirect.", "invalid-redirect");
-          }
-
-          const nextUrl = new URL(location, parsedUrl).href;
-          succeed(await downloadRemoteAudioToLibrary(request, nextUrl, redirectCount + 1));
-          return;
-        }
-
-        if (statusCode < 200 || statusCode >= 300) {
-          response.resume();
-          throw createExternalImportError(`The audio link returned HTTP ${statusCode}.`, "audio-http-error");
-        }
-
-        const contentLength = Number.parseInt(getHeaderText(response.headers["content-length"]), 10);
-        if (Number.isFinite(contentLength) && contentLength > maxRemoteAudioBytes) {
-          response.resume();
-          throw createExternalImportError(
-            `Audio links must be ${Math.round(maxRemoteAudioBytes / (1024 * 1024))} MB or smaller.`,
-            "audio-too-large"
-          );
-        }
-
-        const contentType = normalizeContentTypeHeader(response.headers["content-type"]);
-        const fileName = getExternalImportFileName(request, parsedUrl, contentType, response.headers["content-disposition"]);
-        const extension = path.extname(fileName).toLowerCase();
-
-        if (!isAllowedRemoteAudioResponse(contentType, extension)) {
-          response.resume();
-          throw createExternalImportError("The audio link did not return a supported audio file.", "unsupported-audio-response");
-        }
-
-        const libraryDir = getLibraryDirectory();
-        const { destinationPath, handle } = await reserveLibraryDestination(libraryDir, fileName);
-
-        try {
-          await pipeline(
-            response,
-            createByteLimitTransform(maxRemoteAudioBytes),
-            handle.createWriteStream()
-          );
-
-          const stat = await fs.promises.stat(destinationPath);
-          if (!stat.isFile() || stat.size <= 0) {
-            await removeFileQuietly(destinationPath);
-            throw createExternalImportError("The audio link returned an empty file.", "empty-audio-file");
-          }
-
-          succeed({
-            destinationPath,
-            finalUrl: parsedUrl.href,
-            contentType,
-            sizeBytes: Number(stat.size)
-          });
-        } catch (error) {
-          await handle.close();
-          await removeFileQuietly(destinationPath);
-          throw error;
-        }
-      })().catch(fail);
-    });
-
-    remoteRequest.setTimeout(remoteAudioRequestTimeoutMs, () => {
-      remoteRequest.destroy(createExternalImportError("The audio link timed out while downloading.", "download-timeout"));
-    });
-    remoteRequest.on("error", fail);
-  });
-}
-
 async function importAudioFromProtocolRequest(request) {
-  const downloaded = await downloadRemoteAudioToLibrary(request);
-  const item = toLibraryItem(downloaded.destinationPath);
-  const itemMetadata = {};
-
-  if (request.title) {
-    itemMetadata.name = request.title;
-  }
-
-  if (request.board) {
-    itemMetadata.board = request.board;
-  }
-
-  const metadata = Object.keys(itemMetadata).length > 0
-    ? { [item.path]: itemMetadata }
-    : {};
-
-  return {
-    ok: true,
-    canceled: false,
-    imported: [item],
-    skipped: [],
-    source: createExternalImportSource(request, {
-      finalUrl: downloaded.finalUrl,
-      contentType: downloaded.contentType,
-      sizeBytes: downloaded.sizeBytes
-    }),
-    metadata
-  };
+  const result = await audioLinkService.import(request.sourceUrl, {
+    owner: mainWindow?.webContents, kind: 'protocol', filename: request.filename || undefined
+  });
+  const item = result.imported[0];
+  const itemMetadata = { ...result.metadata?.[item.path] };
+  if (request.title) itemMetadata.name = request.title;
+  if (request.board) itemMetadata.board = request.board;
+  result.metadata = Object.keys(itemMetadata).length ? { [item.path]: itemMetadata } : {};
+  result.source = createExternalImportSource(request, { sizeBytes: item.sizeBytes });
+  return result;
 }
 
 function getSettingsPath() {
@@ -1746,9 +1348,9 @@ function createWindow(options = {}) {
   });
   const referenceOwner = mainWindow.webContents;
   referenceOwner.on('did-start-navigation', (event, url, inPlace, isMainFrame) => {
-    if (isMainFrame && !inPlace) loopbackService.stopOwner(referenceOwner);
+    if (isMainFrame && !inPlace) { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); }
   });
-  referenceOwner.on('destroyed', () => loopbackService.stopOwner(referenceOwner));
+  referenceOwner.on('destroyed', () => { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); });
 
   mainWindow.webContents.on("did-finish-load", () => {
     isShowingCrashScreen = isCrashScreenUrl(mainWindow.webContents.getURL());
@@ -1779,6 +1381,7 @@ function createWindow(options = {}) {
 
   mainWindow.webContents.on("render-process-gone", (event, details) => {
     loopbackService.stopOwner(referenceOwner);
+    audioLinkService.cancelOwner(referenceOwner);
     if (isQuitting || details?.reason === "clean-exit") {
       return;
     }
@@ -1807,6 +1410,7 @@ function createWindow(options = {}) {
     // Windows shutdown/logoff does not emit app.before-quit.
     isQuitting = true;
     loopbackService.stopAll();
+    audioLinkService.stopAll();
     crashRecovery.stop("windows-session-end");
   });
 
@@ -2084,6 +1688,20 @@ function registerAudioIpc() {
     assertTrustedIpcSender(event);
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || stripUrlState(event.senderFrame?.url) !== getRendererUrl('index.html')) throw new Error('Playback reference requires the main app frame.');
   };
+  const linkSender = event => {
+    assertTrustedIpcSender(event);
+    if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || stripUrlState(event.senderFrame?.url) !== getRendererUrl('index.html')) throw new Error('Link import requires the main app frame.');
+  };
+  ipcMain.handle('audio:import-link', async (event, url) => {
+    linkSender(event);
+    try {
+      return await audioLinkService.import(url, { owner: event.sender });
+    } catch (error) {
+      if (error.code === 'ABORT_ERR') return { ok: false, canceled: true, imported: [], skipped: [] };
+      return createExternalImportFailureResult(null, error);
+    }
+  });
+  ipcMain.handle('audio:cancel-link', event => { linkSender(event); audioLinkService.cancelOwner(event.sender); return { ok: true }; });
   ipcMain.handle('audio:reference-devices', event => { referenceSender(event); return loopbackService.list(); });
   ipcMain.handle('audio:reference-start', (event, endpointId) => { referenceSender(event); return loopbackService.start(event.sender, endpointId); });
   ipcMain.handle('audio:reference-stop', (event, id) => { referenceSender(event); loopbackService.stop(event.sender, id); });
@@ -2558,6 +2176,7 @@ if (hasSingleInstanceLock) {
   app.on("before-quit", () => {
     isQuitting = true;
     loopbackService.stopAll();
+    audioLinkService.stopAll();
     crashRecovery.stop("quit");
   });
 
