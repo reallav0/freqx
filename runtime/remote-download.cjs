@@ -27,6 +27,23 @@ function downloadError(message) {
   return Object.assign(new Error(message), { code: 'PUBLIC_LIBRARY_UNAVAILABLE' });
 }
 
+// Extractor metadata is untrusted. Only these noncredential browser headers
+// may follow a media URL; transport/security headers remain owned by Freqx.
+function safeMediaHeaders(input) {
+  const headers = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return headers;
+  const names = { 'user-agent': 'User-Agent', accept: 'Accept', 'accept-language': 'Accept-Language' };
+  for (const [name, value] of Object.entries(input)) {
+    if (!Object.hasOwn(names, name.toLowerCase())) continue;
+    const allowed = names[name.toLowerCase()];
+    if (typeof value !== 'string' || value.length > 1024 || /[^\x20-\x7e]/.test(value)) {
+      throw downloadError('Invalid media request header.');
+    }
+    headers[allowed] = value;
+  }
+  return headers;
+}
+
 function isPublicAddress(address) {
   const version = net.isIP(address);
   if (version === 4) return !blockedV4.check(address, 'ipv4');
@@ -66,11 +83,16 @@ async function downloadBytes(value, limit, {
   request = https.get, lookup = publicLookup,
   // Internal callers can use a different URL policy without broadening the
   // catalog allowlist. Never accept these callbacks/options over IPC.
-  parseUrl = input => parseRemoteUrl(input, allowedHosts), validateResponse, onComplete
+  parseUrl = input => parseRemoteUrl(input, allowedHosts), validateResponse, onComplete,
+  requestHeaders, wholeFileRange = false
 } = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new TypeError('Invalid download limit');
   const deadline = AbortSignal.timeout(timeoutMs);
   const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  const headers = { 'User-Agent': 'freqx', ...safeMediaHeaders(requestHeaders), 'Accept-Encoding': 'identity' };
+  // Website CDNs throttle un-ranged GETs. Request at most the entire permitted
+  // file, and accept a partial response only when it actually contains all of it.
+  if (wholeFileRange) headers.Range = `bytes=0-${limit - 1}`;
   let url = parseUrl(value);
   for (let redirects = 0; ; redirects++) {
     combined.throwIfAborted();
@@ -79,7 +101,7 @@ async function downloadBytes(value, limit, {
       try {
         req = request(url, {
           signal: combined, lookup, agent: false, rejectUnauthorized: true,
-          headers: { 'User-Agent': 'freqx', 'Accept-Encoding': 'identity' }
+          headers
         }, response => {
           const fail = error => { response.destroy(); reject(error); };
           response.on('error', reject);
@@ -94,15 +116,28 @@ async function downloadBytes(value, limit, {
             } catch (error) { reject(error); }
             return;
           }
-          if (status !== 200) return fail(downloadError(`Library download returned HTTP ${status}.`));
+          if (status !== 200 && !(wholeFileRange && status === 206)) {
+            return fail(Object.assign(downloadError(`Library download returned HTTP ${status}.`), { httpStatus: status }));
+          }
           const encoding = response.headers['content-encoding'];
           if (encoding && encoding !== 'identity') return fail(downloadError('Encoded library responses are not supported.'));
           try { validateResponse?.(response.headers, url); } catch (error) { return fail(error); }
           const rawLength = response.headers['content-length'];
           let declared;
+          if (status === 206) {
+            const range = typeof response.headers['content-range'] === 'string'
+              && /^bytes 0-(\d+)\/(\d+)$/.exec(response.headers['content-range']);
+            const end = range && Number(range[1]), total = range && Number(range[2]);
+            if (!range || !Number.isSafeInteger(total) || total < 1 || total > limit || end !== total - 1) {
+              return fail(downloadError('Media response does not contain a complete bounded file.'));
+            }
+            declared = total;
+          }
           if (rawLength !== undefined) {
             if (typeof rawLength !== 'string' || !/^\d+$/.test(rawLength)) return fail(downloadError('Invalid library Content-Length.'));
-            declared = Number(rawLength);
+            const length = Number(rawLength);
+            if (declared !== undefined && length !== declared) return fail(downloadError('Media range length does not match Content-Length.'));
+            declared = length;
             if (!Number.isSafeInteger(declared) || declared < 1 || declared > limit) return fail(downloadError('Library asset exceeds its size limit.'));
           }
           const chunks = [];
@@ -131,4 +166,4 @@ async function downloadBytes(value, limit, {
   }
 }
 
-module.exports = { downloadBytes, parseRemoteUrl, isPublicAddress, publicLookup, DEFAULT_HOSTS };
+module.exports = { downloadBytes, parseRemoteUrl, isPublicAddress, publicLookup, safeMediaHeaders, DEFAULT_HOSTS };

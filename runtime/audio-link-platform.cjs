@@ -4,7 +4,7 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { spawn, execFile } = require('node:child_process');
-const { publicLookup } = require('./remote-download.cjs');
+const { publicLookup, safeMediaHeaders } = require('./remote-download.cjs');
 const { prepareLinkTools } = require('./audio-link-tools.cjs');
 const { parseAudioLink, linkError, MAX_BYTES, MAX_SECONDS } = require('./audio-link.cjs');
 const PLATFORM_HOSTS = {
@@ -115,7 +115,13 @@ function validatePlatformResult(info, site) {
   const url = parseAudioLink(info.url);
   if (!permittedHost(url.hostname, site) || site === 'youtube' && !url.hostname.endsWith('.googlevideo.com')) throw linkError('The audio site returned an unsupported media address.');
   const title = typeof info.title === 'string' ? info.title.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 120).trim() : '';
-  return { url: url.href, title };
+  // Some YouTube clients require waiting for their pre-content ad interval.
+  // Honor the extractor timestamp, bounded independently of its metadata size.
+  const availableAt = info.available_at;
+  if (availableAt != null && (!Number.isFinite(availableAt) || availableAt <= 0 || availableAt > Date.now() / 1000 + 30)) {
+    throw linkError('The audio site requested an unsupported playback wait.');
+  }
+  return { url: url.href, title, headers: safeMediaHeaders(info.http_headers), ...(availableAt != null ? { availableAt } : {}) };
 }
 async function resolvePlatformLink(platform, { signal, toolsCache } = {}) {
   const tools = await prepareLinkTools(toolsCache, { signal });

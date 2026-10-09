@@ -1,7 +1,8 @@
 'use strict';
 const net = require('node:net');
 const path = require('node:path');
-const { downloadBytes } = require('./remote-download.cjs');
+const { setTimeout: wait } = require('node:timers/promises');
+const { downloadBytes, safeMediaHeaders } = require('./remote-download.cjs');
 const { config } = require('./desktop-config.cjs');
 
 const MAX_BYTES = config.catalog.remoteSoundBytes;
@@ -177,33 +178,57 @@ function safeFilename(url, extension, title) {
   return `${stem && !/^(?:con|prn|aux|nul|com\d|lpt\d)$/i.test(stem) ? stem : 'linked-audio'}${extension}`;
 }
 async function downloadAudioLink(value, { signal, resolvePlatform, download = downloadBytes, toolsCache } = {}) {
-  let url = parseAudioLink(value), title;
+  const input = parseAudioLink(value);
   signal?.throwIfAborted();
-  const platform = platformLink(url);
-  if (platform) {
-    const resolver = resolvePlatform || require('./audio-link-platform.cjs').resolvePlatformLink;
-    const result = await resolver(platform, { signal, toolsCache });
-    url = parseAudioLink(result.url); title = result.title;
-    const mediaHosts = platform.site === 'youtube' ? ['googlevideo.com'] : ['sndcdn.com', 'soundcloud.com'];
-    if (!mediaHosts.some(host => url.hostname === host || url.hostname.endsWith('.' + host))) throw linkError('The site returned an unsupported audio host.');
-  }
-  let headers, finalUrl;
-  signal?.throwIfAborted();
-  let bytes;
+  const platform = platformLink(input);
+  // One budget also covers the bounded ad wait and a fresh URL after a 403.
+  const deadline = AbortSignal.timeout(90000);
+  const operation = signal ? AbortSignal.any([signal, deadline]) : deadline;
   try {
-    bytes = await download(url.href, MAX_BYTES, {
-      signal, timeoutMs: config.network.protocolAudioTimeoutMs, parseUrl: parseAudioLink,
-      validateResponse: validateAudioHeaders, onComplete: (h, u) => { headers = h; finalUrl = u; }
-    });
+    for (let attempt = 0; ; attempt++) {
+      let url = input, title, requestHeaders;
+      operation.throwIfAborted();
+      if (platform) {
+        const resolver = resolvePlatform || require('./audio-link-platform.cjs').resolvePlatformLink;
+        const result = await resolver(platform, { signal: operation, toolsCache });
+        url = parseAudioLink(result.url); title = result.title;
+        requestHeaders = safeMediaHeaders(result.headers);
+        const mediaHosts = platform.site === 'youtube' ? ['googlevideo.com'] : ['sndcdn.com', 'soundcloud.com'];
+        if (!mediaHosts.some(host => url.hostname === host || url.hostname.endsWith('.' + host))) throw linkError('The site returned an unsupported audio host.');
+        if (result.availableAt != null) {
+          const delay = result.availableAt * 1000 - Date.now();
+          if (!Number.isFinite(result.availableAt) || result.availableAt <= 0 || delay > 30000) throw linkError('The audio site requested an unsupported playback wait.');
+          if (delay > 0) await wait(Math.ceil(delay), undefined, { signal: operation });
+        }
+      }
+      let headers, finalUrl, bytes;
+      operation.throwIfAborted();
+      try {
+        bytes = await download(url.href, MAX_BYTES, {
+          signal: operation, timeoutMs: config.network.protocolAudioTimeoutMs, parseUrl: parseAudioLink,
+          requestHeaders, wholeFileRange: Boolean(platform),
+          validateResponse: validateAudioHeaders, onComplete: (h, u) => { headers = h; finalUrl = u; }
+        });
+      } catch (error) {
+        operation.throwIfAborted();
+        // Never retry a validation failure or replay the rejected signed URL.
+        // Refresh metadata once, with all the same URL/DNS/header policies.
+        if (platform && error.httpStatus === 403 && attempt === 0) continue;
+        if (error.httpStatus === 403) {
+          throw linkError(`${platform?.site === 'youtube' ? 'YouTube' : platform?.site === 'soundcloud' ? 'SoundCloud' : 'The audio server'} refused this audio stream. Try again later or use a direct audio file link.`);
+        }
+        throw error;
+      }
+      operation.throwIfAborted();
+      const extension = sniffAudio(bytes), type = contentType(headers || {});
+      if (MIME.has(type) && MIME.get(type) !== extension) throw linkError('The audio format does not match its Content-Type.');
+      return { bytes, filename: safeFilename(finalUrl || url, extension, title), finalUrl: (finalUrl || url).href, contentType: type, ...(title ? { title } : {}) };
+    }
   } catch (error) {
     signal?.throwIfAborted();
     if (error.userMessage) throw error;
-    if (error.name === 'TimeoutError') throw linkError('The audio download timed out. Try a shorter clip.');
+    if (deadline.aborted || error.name === 'TimeoutError' || error.cause?.name === 'TimeoutError') throw linkError('The audio download timed out. Try a shorter clip.');
     throw linkError('The audio download failed its network, size or response checks.');
   }
-  signal?.throwIfAborted();
-  const extension = sniffAudio(bytes), type = contentType(headers || {});
-  if (MIME.has(type) && MIME.get(type) !== extension) throw linkError('The audio format does not match its Content-Type.');
-  return { bytes, filename: safeFilename(finalUrl || url, extension, title), finalUrl: (finalUrl || url).href, contentType: type, ...(title ? { title } : {}) };
 }
 module.exports = { downloadAudioLink, parseAudioLink, platformLink, sniffAudio, validateAudioHeaders, safeFilename, linkError, MAX_BYTES, MAX_SECONDS };

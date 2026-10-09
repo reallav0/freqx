@@ -4,13 +4,15 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { Readable } = require('node:stream');
 const dns = require('node:dns');
-const { downloadBytes, parseRemoteUrl, isPublicAddress, publicLookup } = require('../runtime/remote-download.cjs');
+const { downloadBytes, parseRemoteUrl, isPublicAddress, publicLookup, safeMediaHeaders } = require('../runtime/remote-download.cjs');
 const url = 'https://audio.freqx.app/sound.mp3';
 
 function transport(responses) {
   let calls = 0;
+  const requests = [];
   const request = (target, options, callback) => {
     calls++;
+    requests.push({ target, options });
     const req = new EventEmitter();
     const onAbort = () => req.emit('error', options.signal.reason);
     options.signal.addEventListener('abort', onAbort, { once: true });
@@ -26,8 +28,10 @@ function transport(responses) {
     });
     return req;
   };
-  return { request, calls: () => calls };
+  return { request, calls: () => calls, requests };
 }
+
+const lowerHeaders = headers => Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
 
 test('streams without Content-Length but stops at the enforced byte limit', async () => {
   assert.equal((await downloadBytes(url, 5, transport([{}]))).toString(), 'audio');
@@ -81,4 +85,69 @@ test('URL and connection-time DNS policies reject local and reserved destination
     dns.lookup = (host, options, callback) => callback(null, [{ address: '1.1.1.1', family: 4 }, { address: '127.0.0.1', family: 4 }]);
     await assert.rejects(new Promise((resolve, reject) => publicLookup('audio.freqx.app', {}, error => error ? reject(error) : resolve())), /not public/);
   } finally { dns.lookup = original; }
+});
+
+test('internal media headers retain only bounded ASCII browser request headers', () => {
+  const headers = safeMediaHeaders({ 'User-Agent': 'Mozilla/5.0', Accept: '*/*', 'accept-language': 'en-US,en;q=0.5',
+    Cookie: 'private-cookie', Authorization: 'Bearer private', Host: '127.0.0.1', Range: 'bytes=100-',
+    'Accept-Encoding': 'gzip', Referer: 'https://youtube.com/?private=query', 'Proxy-Authorization': 'private',
+    'X-Forwarded-For': '127.0.0.1', Unknown: 'discard' });
+  assert.deepEqual(lowerHeaders(headers), { 'user-agent': 'Mozilla/5.0', accept: '*/*', 'accept-language': 'en-US,en;q=0.5' });
+  for (const name of ['User-Agent', 'Accept', 'Accept-Language']) {
+    for (const value of ['browser\r\nCookie: secret', 'browser\u0000', 'browser\u007f', 'non-ASCII-é', ['browser'], {}, 1, 'x'.repeat(1025)]) {
+      assert.throws(() => safeMediaHeaders({ [name]: value }), undefined, `${name} rejects ${JSON.stringify(value)}`);
+    }
+  }
+});
+
+test('whole-file Range is opt-in and accepts only a complete bounded partial response', async () => {
+  const partial = transport([{ status: 206, headers: { 'content-range': 'bytes 0-4/5', 'content-length': '5' } }]);
+  assert.equal((await downloadBytes(url, 6, { ...partial, wholeFileRange: true,
+    requestHeaders: { 'User-Agent': 'Mozilla/5.0', Accept: 'audio/*', Cookie: 'discard', 'Accept-Encoding': 'gzip' } })).toString(), 'audio');
+  const headers = lowerHeaders(partial.requests[0].options.headers);
+  assert.equal(headers.range, 'bytes=0-5');
+  assert.equal(headers['user-agent'], 'Mozilla/5.0');
+  assert.equal(headers.accept, 'audio/*');
+  assert.equal(headers['accept-encoding'], 'identity');
+  assert.equal(headers.cookie, undefined);
+  assert.equal(partial.requests[0].options.lookup, publicLookup);
+  assert.equal(partial.requests[0].options.rejectUnauthorized, true);
+  const noLength = transport([{ status: 206, headers: { 'content-range': 'bytes 0-4/5' } }]);
+  assert.equal((await downloadBytes(url, 6, { ...noLength, wholeFileRange: true })).toString(), 'audio');
+  const ignored = transport([{ status: 200, headers: { 'content-length': '5' } }]);
+  assert.equal((await downloadBytes(url, 6, { ...ignored, wholeFileRange: true })).toString(), 'audio');
+  const catalog = transport([{ status: 206, headers: { 'content-range': 'bytes 0-4/5' } }]);
+  await assert.rejects(downloadBytes(url, 6, catalog), error => error.httpStatus === 206);
+  assert.equal(lowerHeaders(catalog.requests[0].options.headers).range, undefined);
+});
+
+test('whole-file Range rejects gaps, partial segments, malformed totals and mismatched bodies', async () => {
+  for (const contentRange of [undefined, '', 'bytes 1-5/6', 'bytes 0-3/5', 'bytes 0-5/5', 'bytes 0-6/7',
+    'bytes 0-4/*', 'bytes */5', 'bytes 0-0/0', 'bytes 0-4/NaN', 'bytes 0-4/999999999999999999999',
+    'bytes 0-4/5\r\nX: y', ['bytes 0-4/5'], 'items 0-4/5', 'bytes 0-4/5, 0-4/5']) {
+    await assert.rejects(downloadBytes(url, 6, { ...transport([{ status: 206, headers: { 'content-range': contentRange } }]), wholeFileRange: true }), undefined, String(contentRange));
+  }
+  for (const record of [
+    { headers: { 'content-range': 'bytes 0-4/5', 'content-length': '4' } },
+    { headers: { 'content-range': 'bytes 0-4/5', 'content-length': '6' } },
+    { headers: { 'content-range': 'bytes 0-4/5' }, chunks: ['audi'] },
+    { headers: { 'content-range': 'bytes 0-4/5' }, chunks: ['audio', 'x'] },
+    { headers: { 'content-range': 'bytes 0-4/5' }, complete: false },
+    { headers: { 'content-range': 'bytes 0-4/5', 'content-encoding': 'gzip' } },
+    { headers: { 'content-range': 'bytes 0-5/6' }, chunks: ['123', '456', '7'] },
+  ]) await assert.rejects(downloadBytes(url, 6, { ...transport([{ ...record, status: 206 }]), wholeFileRange: true }));
+});
+
+test('whole-file Range keeps redirect security and HTTP errors expose only a numeric status', async () => {
+  for (const location of ['http://audio.freqx.app/x', 'https://127.0.0.1/x', 'https://user:password@audio.freqx.app/x']) {
+    const attempt = transport([{ status: 302, headers: { location } }]);
+    await assert.rejects(downloadBytes(url, 6, { ...attempt, wholeFileRange: true }));
+    assert.equal(attempt.calls(), 1);
+  }
+  const attempt = transport([{ status: 302, headers: { location: '/next' } }, { status: 206, headers: { 'content-range': 'bytes 0-4/5' } }]);
+  await downloadBytes(url, 6, { ...attempt, wholeFileRange: true });
+  assert.equal(attempt.calls(), 2);
+  assert.ok(attempt.requests.every(({ options }) => lowerHeaders(options.headers).range === 'bytes=0-5' && options.lookup === publicLookup && options.rejectUnauthorized));
+  await assert.rejects(downloadBytes(url + '?token=private-signed-url', 6, transport([{ status: 403 }])), error =>
+    error.httpStatus === 403 && error.code === 'PUBLIC_LIBRARY_UNAVAILABLE' && !error.message.includes('private-signed-url'));
 });
