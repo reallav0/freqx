@@ -19,11 +19,29 @@ const globalV6 = new net.BlockList();
 globalV6.addSubnet('2000::', 3, 'ipv6');
 const blockedV6 = new net.BlockList();
 blockedV6.addSubnet('2001:db8::', 32, 'ipv6');
-blockedV6.addSubnet('2001::', 32, 'ipv6'); // Teredo tunnelling
+blockedV6.addSubnet('2001::', 23, 'ipv6'); // IETF special-purpose space, including Teredo/ORCHID
 blockedV6.addSubnet('2002::', 16, 'ipv6'); // 6to4 tunnelling
+blockedV6.addSubnet('3fff::', 20, 'ipv6'); // Documentation space
 
 function downloadError(message) {
   return Object.assign(new Error(message), { code: 'PUBLIC_LIBRARY_UNAVAILABLE' });
+}
+
+// Extractor metadata is untrusted. Only these noncredential browser headers
+// may follow a media URL; transport/security headers remain owned by Freqx.
+function safeMediaHeaders(input) {
+  const headers = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return headers;
+  const names = { 'user-agent': 'User-Agent', accept: 'Accept', 'accept-language': 'Accept-Language' };
+  for (const [name, value] of Object.entries(input)) {
+    if (!Object.hasOwn(names, name.toLowerCase())) continue;
+    const allowed = names[name.toLowerCase()];
+    if (typeof value !== 'string' || value.length > 1024 || /[^\x20-\x7e]/.test(value)) {
+      throw downloadError('Invalid media request header.');
+    }
+    headers[allowed] = value;
+  }
+  return headers;
 }
 
 function isPublicAddress(address) {
@@ -62,20 +80,28 @@ function publicLookup(hostname, options, callback) {
 // DNS policy at the actual connection, avoiding a validation/connection race.
 async function downloadBytes(value, limit, {
   signal, timeoutMs = desktopConfig.network.downloadTimeoutMs, maxRedirects = desktopConfig.network.maxRedirects, allowedHosts = DEFAULT_HOSTS,
-  request = https.get, lookup = publicLookup
+  request = https.get, lookup = publicLookup,
+  // Internal callers can use a different URL policy without broadening the
+  // catalog allowlist. Never accept these callbacks/options over IPC.
+  parseUrl = input => parseRemoteUrl(input, allowedHosts), validateResponse, onComplete,
+  requestHeaders, wholeFileRange = false
 } = {}) {
   if (!Number.isSafeInteger(limit) || limit < 1) throw new TypeError('Invalid download limit');
   const deadline = AbortSignal.timeout(timeoutMs);
   const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  let url = parseRemoteUrl(value, allowedHosts);
+  const headers = { 'User-Agent': 'freqx', ...safeMediaHeaders(requestHeaders), 'Accept-Encoding': 'identity' };
+  // Website CDNs throttle un-ranged GETs. Request at most the entire permitted
+  // file, and accept a partial response only when it actually contains all of it.
+  if (wholeFileRange) headers.Range = `bytes=0-${limit - 1}`;
+  let url = parseUrl(value);
   for (let redirects = 0; ; redirects++) {
     combined.throwIfAborted();
     const result = await new Promise((resolve, reject) => {
       let req;
       try {
         req = request(url, {
-          signal: combined, lookup, agent: false,
-          headers: { 'User-Agent': 'freqx', 'Accept-Encoding': 'identity' }
+          signal: combined, lookup, agent: false, rejectUnauthorized: true,
+          headers
         }, response => {
           const fail = error => { response.destroy(); reject(error); };
           response.on('error', reject);
@@ -86,18 +112,32 @@ async function downloadBytes(value, limit, {
             try {
               if (typeof response.headers.location !== 'string' || /[\u0000-\u0020\u007f\\]/.test(response.headers.location)) throw downloadError('Invalid library redirect.');
               const location = new URL(response.headers.location, url).href;
-              resolve({ redirect: parseRemoteUrl(location, allowedHosts) });
+              resolve({ redirect: parseUrl(location) });
             } catch (error) { reject(error); }
             return;
           }
-          if (status !== 200) return fail(downloadError(`Library download returned HTTP ${status}.`));
+          if (status !== 200 && !(wholeFileRange && status === 206)) {
+            return fail(Object.assign(downloadError(`Library download returned HTTP ${status}.`), { httpStatus: status }));
+          }
           const encoding = response.headers['content-encoding'];
           if (encoding && encoding !== 'identity') return fail(downloadError('Encoded library responses are not supported.'));
+          try { validateResponse?.(response.headers, url); } catch (error) { return fail(error); }
           const rawLength = response.headers['content-length'];
           let declared;
+          if (status === 206) {
+            const range = typeof response.headers['content-range'] === 'string'
+              && /^bytes 0-(\d+)\/(\d+)$/.exec(response.headers['content-range']);
+            const end = range && Number(range[1]), total = range && Number(range[2]);
+            if (!range || !Number.isSafeInteger(total) || total < 1 || total > limit || end !== total - 1) {
+              return fail(downloadError('Media response does not contain a complete bounded file.'));
+            }
+            declared = total;
+          }
           if (rawLength !== undefined) {
             if (typeof rawLength !== 'string' || !/^\d+$/.test(rawLength)) return fail(downloadError('Invalid library Content-Length.'));
-            declared = Number(rawLength);
+            const length = Number(rawLength);
+            if (declared !== undefined && length !== declared) return fail(downloadError('Media range length does not match Content-Length.'));
+            declared = length;
             if (!Number.isSafeInteger(declared) || declared < 1 || declared > limit) return fail(downloadError('Library asset exceeds its size limit.'));
           }
           const chunks = [];
@@ -114,6 +154,7 @@ async function downloadBytes(value, limit, {
             if (!response.complete || bytes === 0 || (declared !== undefined && bytes !== declared)) {
               return reject(downloadError('Library download was incomplete.'));
             }
+            try { onComplete?.(response.headers, url); } catch (error) { return reject(error); }
             resolve({ bytes: Buffer.concat(chunks, bytes) });
           });
         });
@@ -125,4 +166,4 @@ async function downloadBytes(value, limit, {
   }
 }
 
-module.exports = { downloadBytes, parseRemoteUrl, isPublicAddress, publicLookup, DEFAULT_HOSTS };
+module.exports = { downloadBytes, parseRemoteUrl, isPublicAddress, publicLookup, safeMediaHeaders, DEFAULT_HOSTS };

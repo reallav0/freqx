@@ -51,6 +51,8 @@ contextBridge.exposeInMainWorld("soundmuncher", {
   },
   sendTestTone: (deviceId) => ipcRenderer.invoke("audio:send-test-tone", deviceId),
   importAudioFiles: () => ipcRenderer.invoke("audio:import-files"),
+  importAudioLink: (url) => ipcRenderer.invoke('audio:import-link', url),
+  cancelAudioLink: () => ipcRenderer.invoke('audio:cancel-link'),
   getPublicLibrary: () => ipcRenderer.invoke("library:catalog"),
   previewPublicSound: (id) => ipcRenderer.invoke("library:preview", id),
   importPublicSound: (id) => ipcRenderer.invoke("library:import", id),

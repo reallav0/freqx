@@ -245,6 +245,13 @@ const dbValueFooter = document.getElementById("dbValueFooter");
 const meterFillFooter = document.getElementById("meterFillFooter");
 const meterTrackFooter = document.getElementById("meterTrackFooter");
 const importAudioButton = document.getElementById("importAudio");
+const openAudioLinkButton = document.getElementById('openAudioLink');
+const audioLinkOverlay = document.getElementById('audioLinkOverlay');
+const audioLinkForm = document.getElementById('audioLinkForm');
+const audioLinkUrl = document.getElementById('audioLinkUrl');
+const audioLinkStatus = document.getElementById('audioLinkStatus');
+const playAudioLinkButton = document.getElementById('playAudioLink');
+let pendingAudioLink = null;
 const openLibraryButton = document.getElementById("openLibrary");
 const importedList = document.getElementById("importedList");
 const libraryCount = document.getElementById("libraryCount");
@@ -415,22 +422,9 @@ function keyCodeToAcceleratorParts(code) {
   }
 
   if (/^Numpad\d$/.test(code)) {
-    const digit = code.slice(6);
-    const fallbackMap = {
-      0: "Insert",
-      1: "End",
-      2: "Down",
-      3: "PageDown",
-      4: "Left",
-      5: "Clear",
-      6: "Right",
-      7: "Home",
-      8: "Up",
-      9: "PageUp"
-    };
-
-    const fallback = fallbackMap[digit];
-    return fallback ? [`num${digit}`, fallback] : [`num${digit}`];
+    // Navigation-key aliases also match the separate navigation cluster.
+    // The native keypad hook handles Num Lock off without claiming those keys.
+    return [`num${code.slice(6)}`];
   }
 
   if (/^F\d{1,2}$/.test(code)) {
@@ -2159,6 +2153,75 @@ async function completeAudioImport(result, canceledMessage = "Import canceled.",
   }
 }
 
+function openAudioLink() {
+  if (!audioLinkOverlay) return;
+  audioLinkOverlay.hidden = false;
+  if (!pendingAudioLink) audioLinkStatus.textContent = '';
+  (pendingAudioLink ? document.getElementById('cancelAudioLink') : audioLinkUrl)?.focus();
+}
+
+function cancelPendingAudioLink() {
+  if (!pendingAudioLink || pendingAudioLink.canceled) return;
+  pendingAudioLink.canceled = true;
+  audioLinkStatus.textContent = 'Canceling link import…';
+  window.soundmuncher?.cancelAudioLink?.().catch(() => {});
+}
+
+function closeAudioLink() {
+  cancelPendingAudioLink();
+  audioLinkOverlay.hidden = true;
+  audioLinkUrl.value = '';
+  openAudioLinkButton?.focus();
+}
+
+async function importAndPlayAudioLink(event) {
+  event.preventDefault();
+  if (pendingAudioLink) return;
+  if (!window.soundmuncher?.importAudioLink) {
+    audioLinkStatus.textContent = 'Link import is unavailable.';
+    return;
+  }
+  const request = { canceled: false };
+  const boardAtSubmit = selectedBoard || defaultBoardName;
+  const url = audioLinkUrl.value.trim();
+  if (!url) return;
+  pendingAudioLink = request;
+  audioLinkUrl.disabled = true;
+  playAudioLinkButton.disabled = true;
+  audioLinkForm.setAttribute('aria-busy', 'true');
+  audioLinkStatus.textContent = 'Downloading and checking audio…';
+  try {
+    const result = await window.soundmuncher.importAudioLink(url);
+    // Cancel/Close/Stop all must not launch playback after an async download.
+    if (request.canceled || result?.canceled) return;
+    if (!result?.ok || !result.imported?.length) {
+      audioLinkStatus.textContent = result?.message || 'This link could not be imported. Try a supported public audio link.';
+      return;
+    }
+    const board = boards.includes(boardAtSubmit) ? boardAtSubmit : defaultBoardName;
+    result.metadata ||= {};
+    for (const item of result.imported) result.metadata[item.path] = { ...result.metadata[item.path], board };
+    await completeAudioImport(result, '', { successMessage: `Added linked audio to ${board}.` });
+    if (request.canceled) return;
+    const item = importedLibraryItems.find(candidate => candidate.path === result.imported[0].path);
+    if (!item) { audioLinkStatus.textContent = 'Audio was saved. Open your board to play it.'; return; }
+    audioLinkOverlay.hidden = true;
+    audioLinkUrl.value = '';
+    openAudioLinkButton?.focus();
+    await playImportedSound(item);
+  } catch {
+    if (!request.canceled) audioLinkStatus.textContent = 'This link could not be imported. Try a supported public audio link.';
+  } finally {
+    if (pendingAudioLink === request) {
+      pendingAudioLink = null;
+      audioLinkUrl.disabled = false;
+      playAudioLinkButton.disabled = false;
+      audioLinkForm.removeAttribute('aria-busy');
+      if (request.canceled) audioLinkStatus.textContent = 'Link import canceled.';
+    }
+  }
+}
+
 async function importAudioFiles() {
   if (!window.soundmuncher?.importAudioFiles) {
     setLibraryState("Audio import bridge unavailable.");
@@ -2363,6 +2426,7 @@ function hasActiveSoundForPath(itemPath) {
 }
 
 function stopAllSounds() {
+  cancelPendingAudioLink();
   for (const request of pendingSoundStarts) request.cancelled = true;
   pendingSoundStarts.clear();
   discoverUi?.stopPreview();
@@ -3801,6 +3865,20 @@ startHiddenCheckbox?.addEventListener("change", () => {
 importAudioButton.addEventListener("click", async () => {
   await importAudioFiles();
   refreshWalkthroughIfOpen();
+});
+openAudioLinkButton?.addEventListener('click', openAudioLink);
+audioLinkForm?.addEventListener('submit', importAndPlayAudioLink);
+document.getElementById('closeAudioLink')?.addEventListener('click', closeAudioLink);
+document.getElementById('cancelAudioLink')?.addEventListener('click', closeAudioLink);
+audioLinkOverlay?.addEventListener('click', event => { if (event.target === audioLinkOverlay) closeAudioLink(); });
+audioLinkOverlay?.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { event.preventDefault(); closeAudioLink(); }
+  if (event.key === 'Tab') {
+    const controls = Array.from(audioLinkForm.querySelectorAll('button:not(:disabled), input:not(:disabled)'));
+    const first = controls[0], last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }
 });
 libraryPanel?.addEventListener("dragover", handleImportDragOver);
 libraryPanel?.addEventListener("dragleave", handleImportDragLeave);

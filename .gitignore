@@ -61,6 +61,7 @@ audio-library/
 # This local repository is not included in Electron packaging.
 /audio/vendor/deepfilter/upstream/
 /audio/vendor/deepfilter/rust/target/
+/runtime/vendor/link-tools/deno-notices/
 
 # Editor/OS files
 .vscode/

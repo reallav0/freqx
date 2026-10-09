@@ -165,6 +165,11 @@ function fixture(options = {}) {
         start(owner, id) { calls.referenceRequests.push({ owner, id }); return {}; }
         stop() {} ack() {}
       } };
+      if (name === './runtime/audio-link-service.cjs') return { AudioLinkService: class {
+        cancelOwner() {} stopAll() {}
+        import() { throw new Error('Unexpected link import in recovery fixture'); }
+      } };
+      if (name === './runtime/audio-link.cjs') return { downloadAudioLink() { throw new Error('Unexpected link download in recovery fixture'); } };
       if (name === './runtime/update-client.cjs') return { createUpdateClient: options => {
         calls.updateConfigs.push(options.config);
         return { check: async () => ({ ok: false }), status: () => ({ status: 'idle' }), install: () => ({ ok: false }) };
@@ -293,6 +298,20 @@ async function main() {
     frame.url = pathToFileURL(path.join(root, 'crash.html')).href;
     assert.throws(() => start({ sender: owner, senderFrame: frame }, 'physical'), /main app frame/);
     assert.deepEqual(subject.calls.referenceRequests, ['list']);
+  });
+
+  await check('link import and cancellation IPC admit only the main soundboard frame', async () => {
+    const subject = fixture(); await subject.ready();
+    const owner = subject.window.webContents;
+    const frame = { url: subject.window.url }; owner.mainFrame = frame;
+    const start = subject.ipcHandlers.get('audio:import-link');
+    const cancel = subject.ipcHandlers.get('audio:cancel-link');
+    await assert.rejects(start({ sender: owner, senderFrame: { url: frame.url } }, 'https://audio.freqx.app/sound.wav'), /main app frame/);
+    assert.throws(() => cancel({ sender: { mainFrame: frame }, senderFrame: frame }), /main app frame/);
+    assert.equal(cancel({ sender: owner, senderFrame: frame }).ok, true);
+    frame.url = pathToFileURL(path.join(root, 'crash.html')).href;
+    await assert.rejects(start({ sender: owner, senderFrame: frame }, 'https://audio.freqx.app/sound.wav'), /main app frame/);
+    assert.throws(() => cancel({ sender: owner, senderFrame: frame }), /main app frame/);
   });
 
   await check('renderer-death burst produces one deferred hidden restart', async () => {

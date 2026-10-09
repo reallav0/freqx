@@ -37,6 +37,7 @@
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
             </svg>
           </button>
+          <button id="openAudioLink" class="mixer-action quiet-action" type="button">Add link</button>
           <button id="importAudio" class="mixer-action primary-action" type="button">
             <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -222,6 +223,26 @@
         </div>
       </footer>
     </main>
+    <div id="audioLinkOverlay" class="modal-overlay" hidden>
+      <form id="audioLinkForm" class="modal-panel audio-link-panel" role="dialog" aria-modal="true" aria-labelledby="audioLinkTitle" aria-describedby="audioLinkHelp">
+        <div class="modal-head">
+          <div>
+            <h2 id="audioLinkTitle">Play audio from a link</h2>
+            <p id="audioLinkHelp" class="routing-tip">Paste a direct audio, YouTube, or SoundCloud link. Up to 24 MiB and 5 minutes. Saved to your board for replay.</p>
+          </div>
+          <button id="closeAudioLink" class="mixer-action compact-action" type="button">Close</button>
+        </div>
+        <label class="form-field" for="audioLinkUrl">
+          <span>Audio link</span>
+          <input id="audioLinkUrl" class="text-input" type="url" required maxlength="4096" placeholder="https://…" autocomplete="off" spellcheck="false" />
+        </label>
+        <p id="audioLinkStatus" class="routing-tip" role="status" aria-live="polite"></p>
+        <div class="modal-actions">
+          <button id="cancelAudioLink" class="mixer-action quiet-action" type="button">Cancel</button>
+          <button id="playAudioLink" class="mixer-action primary-action" type="submit">Play</button>
+        </div>
+      </form>
+    </div>
     <div id="soundEditorOverlay" class="modal-overlay" hidden>
       <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="soundEditorTitle">
         <div class="modal-head">
