@@ -65,7 +65,7 @@ Builds go to `dist/`: `FreqX-Setup-<version>.exe` and `FreqX-Portable-<version>.
 
 Bug reports, feature ideas, and pull requests are welcome. For bugs, include your Windows version, Freqx version, audio devices, and steps to reproduce. For code changes, explain the behavior you changed and how you verified it.
 
-Contributions are made under the repository's contribution terms, including [LICENSE](LICENSE). Ensure you have the right to submit your work.
+Contributions are made under the repository's contribution terms, including [LICENSE](LICENSE). Ensure you have the right to submit your work. Have fun!
 
 Start with the standard checks and run additional checks relevant to your change:
 
