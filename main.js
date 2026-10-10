@@ -49,6 +49,11 @@ let recoveryScheduled = false;
 const isRecoveryLaunch = process.argv.includes("--recovered");
 const appUserModelId = "app.freqx.desktop";
 const websiteUrl = desktopConfig.app.websiteUrl;
+const websiteDestinations = Object.freeze({
+  home: websiteUrl,
+  soundboard: new URL('/soundboard', websiteUrl).href,
+  account: new URL('/account', websiteUrl).href
+});
 const protocolScheme = "freqx";
 const protocolUrlPrefix = `${protocolScheme}:`;
 const protocolImportAction = "import-sound";
@@ -1708,9 +1713,9 @@ function registerAudioIpc() {
   ipcMain.handle('audio:reference-cancel', event => { referenceSender(event); loopbackService.stopOwner(event.sender); });
   ipcMain.on('audio:reference-ack', (event, id) => { try { referenceSender(event); loopbackService.ack(event.sender, id); } catch {} });
   const catalog = new PlatformLibrary({ getClient: () => authProtocolHandler.client(), fallback: publicLibrary, development: !isPackaged });
-  ipcMain.handle("library:catalog", async (event) => {
+  ipcMain.handle("library:catalog", async (event, options) => {
     assertTrustedIpcSender(event);
-    return catalog.getCatalog();
+    return catalog.getCatalog(options);
   });
   ipcMain.handle("library:preview", async (event, id) => {
     assertTrustedIpcSender(event);
@@ -1772,9 +1777,10 @@ function registerAudioIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("app:open-website", async (event) => {
+  ipcMain.handle("app:open-website", async (event, destination = 'home') => {
     assertTrustedIpcSender(event);
-    await shell.openExternal(websiteUrl);
+    if (typeof destination !== 'string' || !Object.hasOwn(websiteDestinations, destination)) throw new Error('Invalid website destination.');
+    await shell.openExternal(websiteDestinations[destination]);
     return { ok: true };
   });
 

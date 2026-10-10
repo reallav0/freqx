@@ -8,7 +8,7 @@ Turn a perfectly timed sound into part of the conversation. Freqx is a Windows s
 
 https://github.com/user-attachments/assets/40e06b0f-d9c8-447d-a0c6-7e8856d06956
 
-[Download for Windows](https://github.com/reallav0/freqx/releases/latest) · [Visit freqx.app](https://freqx.app) · [Report a bug or suggest a feature](https://github.com/reallav0/freqx/issues)
+[Download for Windows](https://github.com/reallav0/freqx/releases/latest) · [Visit freqx.app](https://freqx.app/) · [Browse sounds](https://freqx.app/soundboard) · [Account](https://freqx.app/account) · [Report a bug or suggest a feature](https://github.com/reallav0/freqx/issues)
 
 ## Make it your soundboard
 
@@ -73,6 +73,10 @@ Start with the standard checks and run additional checks relevant to your change
 npm.cmd run lint
 npm.cmd run test:unit
 ```
+
+Discover loads pages from `GET https://api.freqx.app/api/sounds`, follows `nextCursor` when more sounds are requested, and sends search and category filters to the API. Its library total comes from `GET /api/catalog/stats`; sorting applies to loaded sounds, and category choices accumulate as pages and searches return them. The packaged catalog remains available when the API cannot be reached.
+
+Verify Discover with `npm.cmd run test:public-library`. Use `npm.cmd run test:public-library:live` to check the live API, Chromium audio decoding, local importing, and soundboard playback with an isolated profile and silent audio outputs. The live check uses anonymous API reads and creates no cloud sounds.
 
 Useful places to start:
 
