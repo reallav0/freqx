@@ -35,6 +35,7 @@
     "test:echo": "node --test tests/aec-filter.cjs tests/loopback-reference.cjs",
     "test:reference-desktop": "node tests/playback-reference-desktop.cjs",
     "test:public-library": "node --test tests/public-library.cjs && node tests/discover-library.cjs",
+    "test:public-library:live": "node tests/discover-library.cjs --live",
     "test:recovery": "node tests/main-crash-recovery.cjs && node tests/crash-watchdog.cjs && node tests/recovery-integration.cjs",
     "compare:voice": "node scripts/compare-voice-isolation.cjs",
     "benchmark:voice": "node scripts/benchmark-voice-isolation.cjs",

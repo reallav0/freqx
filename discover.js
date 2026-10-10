@@ -14,6 +14,9 @@
     let sounds = [], selectedCategory = 'all', loaded = false, loading = false;
     let sourceLabel = 'FREQX ORIGINALS';
     let failed = false, playingId = null, previewRevision = 0;
+    let paginated = false, nextCursor = null, totalSounds = null, catalogRevision = 0, searchTimer;
+    const knownCategories = new Set();
+    let categoriesRendered = false;
     let boardChosen = false;
     const pageSize = window.FreqxDesktopConfig.current.ui.discoverPageSize;
     let visibleLimit = pageSize;
@@ -139,7 +142,7 @@
     }
     function render() {
       const query = search.value.trim().toLocaleLowerCase();
-      const filtered = sounds.filter(sound =>
+      const filtered = paginated ? [...sounds] : sounds.filter(sound =>
         (selectedCategory === 'all' || sound.category === selectedCategory) &&
         `${sound.title} ${sound.description} ${sound.tags.join(' ')}`.toLocaleLowerCase().includes(query));
       filtered.sort($('discoverSort').value === 'duration'
@@ -148,47 +151,98 @@
       const shown = filtered.slice(0, visibleLimit);
       grid.replaceChildren(...shown.map(cardFor));
       const remaining = filtered.length - shown.length;
-      loadMoreButton.hidden = remaining <= 0;
-      loadMoreButton.textContent = remaining > 0 ? `Load more (${remaining})` : 'Load more';
-      $('discoverCount').textContent = `${String(filtered.length).padStart(2, '0')} ${filtered.length === 1 ? 'SOUND' : 'SOUNDS'} / ${sourceLabel.toUpperCase()}`;
+      loadMoreButton.hidden = remaining <= 0 && !nextCursor;
+      loadMoreButton.disabled = loading;
+      loadMoreButton.textContent = loading && sounds.length ? 'Loading more…' : failed && sounds.length ? 'Try loading more' : remaining > 0 ? `Load more (${remaining} loaded)` : 'Load more';
+      $('discoverCount').textContent = paginated
+        ? `${shown.length.toLocaleString()} SHOWN / ${totalSounds === null ? sourceLabel.toUpperCase() : `${totalSounds.toLocaleString()} SOUNDS`}`
+        : `${String(filtered.length).padStart(2, '0')} ${filtered.length === 1 ? 'SOUND' : 'SOUNDS'} / ${sourceLabel.toUpperCase()}`;
       $('discoverEmpty').hidden = filtered.length > 0 || loading;
-      $('discoverEmptyTitle').textContent = failed ? 'The library is taking a break.' : sounds.length ? 'No signal this time.' : 'A little quiet here.';
-      $('discoverEmptyCopy').textContent = failed ? 'We couldn’t load the sounds. Try again in a moment.' : sounds.length ? 'Try a different search or explore all sounds.' : 'Check back for new sounds. Your own boards are ready whenever you are.';
-      $('discoverReset').hidden = !sounds.length || filtered.length > 0;
+      const filteredQuery = Boolean(query || selectedCategory !== 'all');
+      $('discoverEmptyTitle').textContent = failed ? 'The library is taking a break.' : sounds.length || filteredQuery ? 'No signal this time.' : 'A little quiet here.';
+      $('discoverEmptyCopy').textContent = failed ? 'We couldn’t load the sounds. Try again in a moment.' : sounds.length || filteredQuery ? 'Try a different search or explore all sounds.' : 'Check back for new sounds. Your own boards are ready whenever you are.';
+      $('discoverReset').hidden = !filteredQuery || filtered.length > 0;
       $('discoverRetry').hidden = !failed;
       categories.querySelectorAll('button').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.category === selectedCategory)));
       syncAdded();
     }
-    function resetFilters() {
-      search.value = ''; selectedCategory = 'all'; visibleLimit = pageSize; stopPreview(); render();
+    function loadingState(value, append = false) {
+      loading = value;
+      $('discoverLoading').hidden = !value || append;
+      if (value) page.setAttribute('aria-busy', 'true');
+      else page.removeAttribute('aria-busy');
     }
-    async function load() {
-      if (loading) return;
-      loading = true; failed = false;
-      $('discoverLoading').hidden = false; $('discoverEmpty').hidden = true;
-      page.setAttribute('aria-busy', 'true');
+    function updateCategories(catalog) {
+      if (!paginated) knownCategories.clear();
+      for (const category of [...(catalog.categories || []), ...catalog.sounds.map(sound => sound.category)]) {
+        if (typeof category === 'string' && category && category !== 'all') knownCategories.add(category);
+      }
+      if (selectedCategory !== 'all') knownCategories.add(selectedCategory);
+      const values = ['all', ...knownCategories];
+      const buttons = [...categories.querySelectorAll('button')];
+      if (categoriesRendered && buttons.length === values.length && buttons.every((button, index) => button.dataset.category === values[index])) return;
+      categoriesRendered = true;
+      categories.replaceChildren(...values.map(category => {
+        const button = element('button', 'discover-category', category === 'all' ? 'All sounds' : humanizeTitle(category));
+        button.type = 'button'; button.dataset.category = category;
+        button.addEventListener('click', () => {
+          if (selectedCategory === category) return;
+          selectedCategory = category; changeFilters();
+        });
+        return button;
+      }));
+    }
+    function changeFilters(delay = 0) {
+      clearTimeout(searchTimer);
+      stopPreview(); visibleLimit = pageSize;
+      if (loaded && !paginated) { render(); return; }
+      const revision = ++catalogRevision;
+      sounds = []; cards.clear(); nextCursor = null; failed = false;
+      loadingState(true); render();
+      if (delay) searchTimer = setTimeout(() => void load({ revision }), delay);
+      else void load({ revision });
+    }
+    function resetFilters() {
+      search.value = ''; selectedCategory = 'all'; changeFilters();
+    }
+    async function load({ append = false, revision } = {}) {
+      if (append && (loading || !nextCursor)) return;
+      if (revision === undefined) revision = append ? catalogRevision : ++catalogRevision;
+      const cursor = append ? nextCursor : undefined;
+      loadingState(true, append); failed = false; render();
       try {
-        const catalog = await adapter.getCatalog();
-        sounds = catalog.sounds;
+        const catalog = await adapter.getCatalog({
+          search: search.value.trim(), category: selectedCategory === 'all' ? '' : selectedCategory,
+          ...(cursor ? { cursor } : {})
+        });
+        if (revision !== catalogRevision) return;
+        if (append && !catalog.paginated) throw new Error('The library could not load more sounds. Try again.');
+        paginated = Boolean(catalog.paginated);
+        sounds = append
+          ? [...new Map([...sounds, ...catalog.sounds].map(sound => [sound.id, sound])).values()]
+          : catalog.sounds;
+        nextCursor = paginated ? catalog.nextCursor || null : null;
+        if (Number.isSafeInteger(catalog.totalSounds) && catalog.totalSounds >= 0) totalSounds = catalog.totalSounds;
+        else if (!append) totalSounds = null;
         sourceLabel = catalog.sourceLabel || sourceLabel;
-        cards.clear();
-        visibleLimit = pageSize;
-        categories.replaceChildren(...['all', ...new Set(sounds.map(sound => sound.category))].map(category => {
-          const button = element('button', 'discover-category', category === 'all' ? 'All sounds' : category);
-          button.type = 'button'; button.dataset.category = category;
-          button.addEventListener('click', () => { selectedCategory = category; visibleLimit = pageSize; stopPreview(); render(); });
-          return button;
-        }));
+        if (append) visibleLimit += pageSize;
+        else { cards.clear(); visibleLimit = pageSize; }
+        updateCategories(catalog);
+        $('discoverSortLabel').textContent = paginated ? 'Sort loaded' : 'Sort';
+        $('discoverSort').setAttribute('aria-label', paginated ? 'Sort loaded sounds' : 'Sort sounds');
         $('discoverState').textContent = catalog.source === 'remote'
           ? 'Sounds from the public freqx library. Ready for your boards.'
           : 'Original sounds. Included with freqx. Ready for your boards.';
         $('discoverSource').textContent = sourceLabel.toUpperCase();
+        if (append) $('discoverFeedback').textContent = '';
         loaded = true;
-      } catch {
-        failed = true; $('discoverState').textContent = 'Your soundboard is still ready to play.';
+      } catch (error) {
+        if (revision !== catalogRevision) return;
+        failed = true;
+        if (append) $('discoverFeedback').textContent = error?.message || 'Could not load more sounds. Try again.';
+        else $('discoverState').textContent = 'Your soundboard is still ready to play.';
       } finally {
-        loading = false; $('discoverLoading').hidden = true;
-        page.removeAttribute('aria-busy'); render();
+        if (revision === catalogRevision) { loadingState(false); render(); }
       }
     }
     function show(discover) {
@@ -198,7 +252,7 @@
         const selected = index === Number(discover);
         tab.setAttribute('aria-selected', String(selected)); tab.tabIndex = selected ? 0 : -1;
       });
-      if (discover) { syncBoards(); if (!loaded) void load(); }
+      if (discover) { syncBoards(); if (!loaded && !loading) void load(); }
       else { stopPreview(); $('discoverFeedback').textContent = ''; }
     }
     tabs.forEach((tab, index) => {
@@ -210,17 +264,24 @@
         show(next === 1); tabs[next].focus();
       });
     });
-    search.addEventListener('input', () => { stopPreview(); visibleLimit = pageSize; render(); });
+    search.addEventListener('input', () => changeFilters(250));
     $('discoverSort').addEventListener('change', () => { stopPreview(); visibleLimit = pageSize; render(); });
     board.addEventListener('change', () => { boardChosen = true; syncAdded(); });
     $('discoverReset').addEventListener('click', resetFilters);
     $('discoverRetry').addEventListener('click', () => void load());
-    loadMoreButton.addEventListener('click', () => { visibleLimit += pageSize; render(); });
+    loadMoreButton.addEventListener('click', () => {
+      if (loading) return;
+      if (paginated && visibleLimit >= sounds.length && nextCursor) void load({ append: true });
+      else { visibleLimit += pageSize; render(); }
+    });
+    $('discoverWebsite').addEventListener('click', () => {
+      void adapter.openWebsite('soundboard').catch(() => { $('discoverFeedback').textContent = 'Could not open the website. Try again.'; });
+    });
     $('discoverExplore').addEventListener('click', () => {
       resetFilters();
       $('discoverCount').scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
     });
-    window.addEventListener('pagehide', stopPreview);
+    window.addEventListener('pagehide', () => { clearTimeout(searchTimer); catalogRevision++; stopPreview(); });
     return Object.freeze({ show, stopPreview, refresh: syncBoards });
   }
   window.FreqxDiscover = Object.freeze({ init });

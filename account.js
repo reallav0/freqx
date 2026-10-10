@@ -151,6 +151,10 @@
     }
   }
   element('openAccount').addEventListener('click', openAccount);
+  element('accountWebsite').addEventListener('click', async () => {
+    try { await bridge.openWebsite('account'); }
+    catch { status('Could not open the website. Try again.', 'error'); }
+  });
   element('closeAccount').addEventListener('click', closeAccount);
   overlay.addEventListener('click', event => { if (event.target === overlay) closeAccount(); });
   overlay.addEventListener('keydown', event => {

@@ -4003,7 +4003,8 @@ async function initializeConfiguredApp() {
   renderBoardControls();
   syncGlobalKeybinds();
   discoverUi = window.FreqxDiscover?.init({
-  getCatalog: () => window.soundmuncher.getPublicLibrary(),
+  getCatalog: (options) => window.soundmuncher.getPublicLibrary(options),
+  openWebsite: (destination) => window.soundmuncher.openWebsite(destination),
   previewSound: previewDiscoverSound,
   stopPreview: stopDiscoverPreview,
   importSound: importDiscoverSound,

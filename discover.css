@@ -41,6 +41,7 @@
 .discover-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
 .discover-load-more { display:block; width:100%; margin-top:13px; color:var(--text); background:var(--surface); border-color:var(--border-strong); font-size:13px; }
 .discover-load-more[hidden] { display:none; }
+.discover-load-more:disabled { opacity:.65; }
 .discover-card { position:relative; display:flex; flex-direction:column; min-width:0; padding:16px; border:2px solid transparent; border-radius:12px; background:var(--pad); color:var(--pad-ink); }
 .discover-card.is-playing { border-color:var(--accent); }
 .discover-card-top { display:flex; align-items:center; justify-content:space-between; gap:8px; font:11px var(--font-mono); color:var(--pad-muted); text-transform:uppercase; }
