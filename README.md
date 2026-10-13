@@ -61,7 +61,7 @@ npm.cmd run dist   # Windows installer and portable executable
 
 Builds go to `dist/`: `FreqX-Setup-<version>.exe` and `FreqX-Portable-<version>.exe`. These commands build locally without publishing. Installed builds offer background update downloads and ask you to confirm a restart to install them; source and portable builds update manually. See [releases and updates](docs/implementation/releases.md).
 
-### Contribute
+### Contribute:
 
 Bug reports, feature ideas, and pull requests are welcome. For bugs, include your Windows version, Freqx version, audio devices, and steps to reproduce. For code changes, explain the behavior you changed and how you verified it.
 
