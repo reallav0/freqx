@@ -37,7 +37,7 @@ VB-CABLE's names describe the two ends of the same cable: Freqx sends audio into
 
 Voice isolation is enabled by default. Its control sits below **Microphone input** in the mixer, with **Off**, **Standard**, and **Strong** options. If isolation becomes unavailable, microphone audio continues through the fallback path.
 
-## Source-available, made to be explored
+## Source-available, made to be explored:
 
 This repository contains the Electron desktop app, its audio engine, and the interface for boards, Discover, and accounts. Explore the code, build it yourself, or help improve the experience. The API and website live in a [separate backend project](https://github.com/reallav0/freqx-api); local soundboard development does not require running that server.
 
