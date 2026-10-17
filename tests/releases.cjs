@@ -8,7 +8,27 @@ const { createHash } = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { bump } = require('../scripts/release-version.cjs');
 const { getReleaseState, prepareRelease } = require('../scripts/release-state.cjs');
+const { generate } = require('../scripts/release-artifacts.cjs');
 const { createUpdateClient, verifyDownload } = require('../runtime/update-client.cjs');
+test('Windows distribution builds the setup installer only', () => {
+  const { build } = require('../package.json');
+  assert.deepEqual(build.win.target, ['nsis']);
+  assert.equal(build.portable, undefined);
+});
+test('release checksums exclude leftover portable builds while retaining updater files', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'freqx-release-artifacts-'));
+  try {
+    await fs.mkdir(path.join(directory, 'audio/vendor/deepfilter'), { recursive: true });
+    await fs.writeFile(path.join(directory, 'package.json'), JSON.stringify({ version: '2.0.4' }));
+    await fs.writeFile(path.join(directory, 'package-lock.json'), JSON.stringify({ packages: { 'node_modules/electron': { version: '44.5.1' } } }));
+    await fs.writeFile(path.join(directory, 'audio/vendor/deepfilter/manifest.json'), JSON.stringify({ files: {} }));
+    await fs.writeFile(path.join(directory, 'SBOM.cdx.json'), JSON.stringify({ bomFormat: 'CycloneDX', components: [] }));
+    for (const filename of ['FreqX-Setup-2.0.4.exe', 'FreqX-Setup-2.0.4.exe.blockmap', 'latest.yml', 'FreqX-Portable-2.0.4.exe']) await fs.writeFile(path.join(directory, filename), filename);
+    assert.deepEqual(generate(directory, directory), ['FreqX-Setup-2.0.4.exe', 'FreqX-Setup-2.0.4.exe.blockmap', 'SBOM.cdx.json', 'latest.yml']);
+    const sums = await fs.readFile(path.join(directory, 'SHA256SUMS.txt'), 'utf8');
+    assert.ok(sums.includes('FreqX-Setup-2.0.4.exe')); assert.ok(!sums.includes('Portable'));
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
 test('release lookup treats a missing release as a successful unpublished state', () => {
   const run = args => {
     assert.deepEqual(args.slice(0, 2), ['api', 'graphql']);

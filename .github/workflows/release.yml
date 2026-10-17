@@ -81,7 +81,7 @@ jobs:
         if: steps.existing.outputs.published != 'true' && !github.event.repository.private
         with:
           subject-path: |
-            dist/FreqX-*.exe
+            dist/FreqX-Setup-*.exe
             dist/latest.yml
             dist/SBOM.cdx.json
             dist/SHA256SUMS.txt
@@ -91,7 +91,7 @@ jobs:
         run: |
           node scripts/release-state.cjs --prepare
           if ($LASTEXITCODE -ne 0) { throw 'Release preparation failed.' }
-          $artifacts = Get-ChildItem dist -File | Where-Object { $_.Name -match '^(FreqX-.*\.exe(\.blockmap)?|latest\.yml|SBOM\.cdx\.json|SHA256SUMS\.txt)$' } | Select-Object -ExpandProperty FullName
+          $artifacts = Get-ChildItem dist -File | Where-Object { $_.Name -match '^(FreqX-Setup-\d+\.\d+\.\d+\.exe(\.blockmap)?|latest\.yml)$' } | Select-Object -ExpandProperty FullName
           gh release upload $env:RELEASE_TAG @artifacts --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Release artifact upload failed.' }
           gh release edit $env:RELEASE_TAG --draft=false

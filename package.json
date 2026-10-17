@@ -72,8 +72,7 @@
     "win": {
       "icon": "logo.ico",
       "target": [
-        "nsis",
-        "portable"
+        "nsis"
       ],
       "signAndEditExecutable": false
     },
@@ -87,9 +86,6 @@
       "uninstallerIcon": "logo.ico",
       "deleteAppDataOnUninstall": true,
       "include": "installer/vbcable.nsh"
-    },
-    "portable": {
-      "artifactName": "FreqX-Portable-${version}.${ext}"
     },
     "extraResources": [
       {
