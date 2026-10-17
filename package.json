@@ -1,6 +1,6 @@
 {
   "name": "freqx",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Freqx desktop soundboard app",
   "main": "main.js",
   "author": "Av0",
@@ -11,10 +11,13 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "lint": "eslint . --max-warnings 0",
-    "test:unit": "node --test tests/desktop-config.cjs tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/audio-link.cjs tests/audio-link-service.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs tests/voice-worklet.cjs tests/mix-features.cjs tests/keybinds.cjs",
+    "test:unit": "node --test tests/desktop-config.cjs tests/public-library.cjs tests/catalog-security.cjs tests/remote-download.cjs tests/audio-link.cjs tests/audio-link-service.cjs tests/auth-client.cjs tests/platform-library.cjs tests/releases.cjs tests/desktop-races.cjs tests/project-layout.cjs tests/voice-worklet.cjs tests/mix-features.cjs tests/auto-ptt.cjs tests/keybinds.cjs",
     "test:audio-links-desktop": "node tests/audio-links-electron.cjs",
     "test:audio-links-live": "node tests/audio-links-live-electron.cjs",
     "test:link-tools": "node scripts/test-link-tools.cjs",
+    "test:auto-ptt": "node --test tests/auto-ptt.cjs",
+    "test:auto-ptt-windows": "node tests/auto-ptt-windows.cjs",
+    "test:auto-ptt-desktop": "node tests/mic-isolation.cjs --auto-ptt",
     "test:keybinds": "node --test tests/keybinds.cjs",
     "test:keybinds-desktop": "node tests/keybinds-electron.cjs",
     "test:driver": "node tests/driver-security.cjs",

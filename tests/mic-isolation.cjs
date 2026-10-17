@@ -126,6 +126,7 @@ function installFixtures() {
     boards: ['Main'], sounds: { 'fixture:tone': { name: 'Isolation routing fixture', board: 'Main', volume: 0.2, playbackMode: 'loop' } },
   }));
   const noop = async () => ({ ok: true });
+  stats.ptt = { begins: [], ends: [], refreshes: [], releases: 0, configurations: [] };
   window.soundmuncher = {
     appName: 'Freqx', websiteUrl: 'https://freqx.app',
     reportCrash: async report => { stats.crashes.push(report); return report; },
@@ -140,6 +141,19 @@ function installFixtures() {
     openUpdatePage: noop, reloadAfterCrash: noop, openCrashLog: noop, quitAfterCrash: noop,
     onGlobalKeybindTriggered: () => () => {}, onExternalImportStarted: () => () => {},
     onExternalImportCompleted: () => () => {}, onFatalError: () => () => {},
+    listAutoPttApps: async () => ({ apps: [{ processName: 'TestGame.exe', title: 'Test game' }] }),
+    configureAutoPtt: async configuration => {
+      stats.ptt.configurations.push(configuration); stats.ptt.onState?.({ status: configuration.enabled ? 'ready' : 'off' }); return { ok: true };
+    },
+    beginAutoPtt: async input => {
+      stats.ptt.begins.push(input);
+      if (stats.ptt.defer) await new Promise(resolve => { stats.ptt.finish = resolve; });
+      return { ok: true, holding: true };
+    },
+    endAutoPtt: async id => { stats.ptt.ends.push(id); return { ok: true }; },
+    refreshAutoPtt: ids => stats.ptt.refreshes.push(ids),
+    releaseAutoPtt: () => { stats.ptt.releases++; },
+    onAutoPttState: handler => { stats.ptt.onState = handler; return () => {}; },
   };
 }
 
@@ -234,6 +248,47 @@ async function runMain() {
       const baseline = await evaluate(graphExpression);
       fs.writeFileSync(path.join(output, 'baseline-graph.json'), JSON.stringify(baseline, null, 2));
       assert('baseline mixer graph captured with protected output branches', baseline.edges.length === 13, baseline);
+    } else if (process.argv.includes('--auto-ptt')) {
+      assert('auto PTT starts off with no automatic key request', await evaluate('!autoPushToTalkToggle.checked && __micTest.ptt.begins.length===0'));
+      await evaluate(`(async()=>{await refreshAutoPttApps();autoPttTargetSelect.value='TestGame.exe';autoPttTargetSelect.dispatchEvent(new Event('change',{bubbles:true}));autoPushToTalkToggle.checked=true;autoPushToTalkToggle.dispatchEvent(new Event('change',{bubbles:true}));await autoPttConfigurationReady;})()`);
+      assert('target app and talk key configure the native bridge', await evaluate('isAutoPushToTalkEnabled && __micTest.ptt.configurations.at(-1).targetProcess==="TestGame.exe" && __micTest.ptt.configurations.at(-1).key==="KeyV"'));
+      await evaluate(`(async()=>{libraryMetadata[importedLibraryItems[0].path].playbackMode='overlap';await playImportedSound(importedLibraryItems[0]);await playImportedSound(importedLibraryItems[0]);})()`);
+      assert('overlapping clips receive distinct PTT leases before sources start', await evaluate('activeSoundNodes.size===2 && __micTest.ptt.begins.length===2 && new Set(__micTest.ptt.begins.map(i=>i.id)).size===2 && Array.from(activeSoundNodes).every(e=>e.autoPttLease?.active)'));
+      await until('activeSoundNodes.size===0','ordinary sound completion');
+      assert('natural completion releases each lease exactly once', await evaluate('__micTest.ptt.ends.length===2 && new Set(__micTest.ptt.ends).size===2 && autoPttHeartbeatTimer===null'));
+      await evaluate(`(async()=>{libraryMetadata[importedLibraryItems[0].path].playbackMode='loop';await playImportedSound(importedLibraryItems[0]);})()`);
+      await pause(900);
+      assert('loop playback refreshes its live lease while the app is hidden', await evaluate('__micTest.ptt.begins.at(-1).durationMs===0 && __micTest.ptt.refreshes.some(ids=>ids.includes(__micTest.ptt.begins.at(-1).id))'));
+      await evaluate('stopAllSounds()');
+      assert('Stop all releases PTT immediately and clears its heartbeat', await evaluate('activeSoundNodes.size===0 && autoPttLeases.size===0 && autoPttHeartbeatTimer===null && __micTest.ptt.ends.length===3'));
+      await evaluate(`__micTest.ptt.defer=true;void(window.__pendingPtt=playImportedSound(importedLibraryItems[0]));`);
+      await until('__micTest.ptt.begins.length===4','delayed native acquisition');
+      await evaluate('stopAllSounds();__micTest.ptt.finish();__micTest.ptt.defer=false;__pendingPtt');
+      assert('Stop during native acquisition cannot start late audio or leave a key lease', await evaluate('activeSoundNodes.size===0 && pendingSoundStarts.size===0 && autoPttLeases.size===0 && __micTest.ptt.ends.filter(id=>id===__micTest.ptt.begins.at(-1).id).length===1'));
+      const beforePreview = await evaluate('__micTest.ptt.begins.length');
+      await evaluate(`(async()=>{openSoundEditor(importedLibraryItems[0]);previewSoundEditor();await new Promise(r=>setTimeout(r,150));stopAllSounds();closeSoundEditor();await sendTestTone();stopAllSounds();})()`);
+      assert('editor previews and test tones do not press the talk key', await evaluate('__micTest.ptt.begins.length')===beforePreview);
+      await evaluate(`(async()=>{await setMixToOutputEnabled(false);await playImportedSound(importedLibraryItems[0]);stopAllSounds();await setMixToOutputEnabled(true);})()`);
+      assert('monitor-only playback never activates automatic PTT', await evaluate('__micTest.ptt.begins.length')===beforePreview);
+      await evaluate(`(async()=>{await playImportedSound(importedLibraryItems[0]);await setMixToOutputEnabled(false);})()`);
+      assert('turning Mix off releases the key while clips continue locally', await evaluate('activeSoundNodes.size===1 && autoPttLeases.size===0 && autoPttHeartbeatTimer===null'));
+      await evaluate('stopAllSounds();setMixToOutputEnabled(true)');
+      await evaluate(`assignKeybind('blocked',{code:'KeyV'});`);
+      assert('talk key cannot also become a sound trigger', await evaluate('!importedKeybinds.blocked && autoPttState.textContent.includes("auto push-to-talk key")'));
+      await evaluate(`autoPttTargetSelect.value='TestGame.exe';configureAutoPttSettings()`);
+      const saved = await evaluate('JSON.parse(localStorage.getItem("soundmuncher:mixer-settings"))');
+      await createWindow(saved);
+      assert('automatic PTT settings restore across launches', await evaluate('isAutoPushToTalkEnabled && selectedAutoPttTarget==="TestGame.exe" && selectedAutoPttKey==="KeyV"'));
+      // A visible, unfocused fixture gives Chromium a fresh scrolled compositor frame.
+      win.showInactive(); await pause(100);
+      await evaluate(`document.querySelector('.auto-ptt-controls').scrollIntoView({block:'center'})`);
+      await pause(150);
+      fs.writeFileSync(path.join(output,'auto-ptt.png'),(await win.webContents.capturePage()).toPNG());
+      win.setSize(1000,760); await pause(100);
+      await evaluate(`document.querySelector('.auto-ptt-controls').scrollIntoView({block:'center'})`); await pause(100);
+      fs.writeFileSync(path.join(output,'auto-ptt-compact.png'),(await win.webContents.capturePage()).toPNG());
+      win.hide();
+      assert('PTT controls and playback finish with no renderer or DSP errors', await evaluate('__micTest.crashes.length===0 && __micTest.worklets.every(w=>w.errors.length===0)'));
     } else if (process.argv.includes('--mix-features')) {
       assert('mixer loads three limiters and one audio-thread sidechain', await evaluate('__micTest.worklets.filter(w=>w.name === "freqx-peak-limiter").length === 3 && __micTest.worklets.filter(w=>w.name === "freqx-voice-priority").length === 1'));
       assert('new balance controls start off and preserve the existing mic level', await evaluate('!voicePriorityToggle.checked && !matchClipLoudnessToggle.checked && Number(micGainSlider.value) === 0.71'));

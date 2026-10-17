@@ -27,6 +27,8 @@ tuning changes.
 Microphone volume accepts 0–300%. Voice priority, clip loudness matching, and
 lookahead peak protection have dedicated tuning groups under `audio`; see
 [voice and clip balance](audio-balance.md) for signal routing and checks.
+`audio.autoPushToTalk` defines key lead-in, release padding, and the renderer lease
+timeout; see [automatic push-to-talk](auto-push-to-talk.md).
 
 Restart a development app after editing. Run the checks and rebuild the app to
 distribute a configuration change. JSON is not reloaded in a running audio graph.

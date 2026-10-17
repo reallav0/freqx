@@ -235,6 +235,12 @@ const voicePriorityToggle = document.getElementById("voicePriorityToggle");
 const voicePriorityStrength = document.getElementById("voicePriorityStrength");
 const voicePriorityState = document.getElementById("voicePriorityState");
 const matchClipLoudnessToggle = document.getElementById("matchClipLoudness");
+const autoPushToTalkToggle = document.getElementById("autoPushToTalk");
+const autoPttTargetSelect = document.getElementById("autoPttTarget");
+const autoPttKeySelect = document.getElementById("autoPttKey");
+const refreshAutoPttAppsButton = document.getElementById("refreshAutoPttApps");
+const autoPttState = document.getElementById("autoPttState");
+const autoPttHelp = document.getElementById("autoPttHelp");
 const inputDeviceSelect = document.getElementById("inputDevice");
 const outputDeviceSelect = document.getElementById("outputDevice");
 const localPlaybackDeviceSelect = document.getElementById("localPlaybackDevice");
@@ -337,6 +343,26 @@ let isVoicePriorityEnabled;
 let selectedVoicePriorityStrength;
 let isMatchClipLoudnessEnabled;
 let voicePriorityActive = false;
+let isAutoPushToTalkEnabled = false;
+let selectedAutoPttKey = "KeyV";
+let selectedAutoPttTarget = "";
+let autoPttApps = [];
+let autoPttAppsLoaded = false;
+let autoPttAppsLoading = false;
+let autoPttStateRevision = 0;
+let autoPttConfigureRevision = 0;
+let autoPttConfigurationReady = Promise.resolve();
+let autoPttValidationMessage = "";
+let autoPttLeaseEpoch = 0;
+let autoPttLeaseSerial = 0;
+let autoPttHeartbeatTimer = null;
+const autoPttLeases = new Map();
+const autoPttKeyCodes = [
+  ...Array.from({ length: 26 }, (_, index) => `Key${String.fromCharCode(65 + index)}`),
+  ...Array.from({ length: 10 }, (_, index) => `Digit${index}`),
+  ...Array.from({ length: 24 }, (_, index) => `F${index + 1}`),
+  "Space", "Mouse4", "Mouse5"
+];
 let micStream;
 let micTrackEndedListener;
 let micSource;
@@ -655,6 +681,10 @@ function loadMixerSettings() {
     if (typeof settings?.voicePriority === "boolean") isVoicePriorityEnabled = settings.voicePriority;
     if (["gentle", "medium", "strong"].includes(settings?.voicePriorityStrength)) selectedVoicePriorityStrength = settings.voicePriorityStrength;
     if (typeof settings?.matchClipLoudness === "boolean") isMatchClipLoudnessEnabled = settings.matchClipLoudness;
+    if (typeof settings?.autoPushToTalk === "boolean") isAutoPushToTalkEnabled = settings.autoPushToTalk;
+    if (autoPttKeyCodes.includes(settings?.autoPttKey)) selectedAutoPttKey = settings.autoPttKey;
+    if (typeof settings?.autoPttTarget === "string" && settings.autoPttTarget.length <= 260
+      && !/[\u0000-\u001f\\/]/.test(settings.autoPttTarget)) selectedAutoPttTarget = settings.autoPttTarget;
 
     if (typeof settings?.voiceIsolation === "boolean") {
       isVoiceIsolationEnabled = settings.voiceIsolation;
@@ -692,6 +722,9 @@ function saveMixerSettings() {
       voicePriority: isVoicePriorityEnabled,
       voicePriorityStrength: selectedVoicePriorityStrength,
       matchClipLoudness: isMatchClipLoudnessEnabled,
+      autoPushToTalk: isAutoPushToTalkEnabled,
+      autoPttKey: selectedAutoPttKey,
+      autoPttTarget: selectedAutoPttTarget,
       voiceIsolation: isVoiceIsolationEnabled,
       voiceIsolationMode: selectedVoiceIsolationMode,
       voiceIsolationStrength: selectedVoiceIsolationStrength,
@@ -1218,6 +1251,12 @@ function assignKeybind(path, binding) {
   const normalized = normalizeKeybindBinding(binding);
   if (!normalized) {
     return;
+  }
+  if (window.soundmuncher?.configureAutoPtt && isAutoPushToTalkEnabled && normalized.code === selectedAutoPttKey) {
+    const message = `${autoPttKeyLabel(selectedAutoPttKey)} is the auto push-to-talk key. Choose another sound or stop key.`;
+    setAutoPttState("error", message);
+    setLibraryState(message);
+    return false;
   }
 
   const signature = getKeybindSignature(normalized);
@@ -1811,7 +1850,7 @@ function previewSoundEditor() {
 
   const previous = libraryMetadata[item.path];
   libraryMetadata[item.path] = readSoundEditorMetadata(item);
-  playImportedSound(item);
+  playImportedSound(item, { autoPtt: false });
   if (previous) {
     libraryMetadata[item.path] = previous;
   } else {
@@ -2367,6 +2406,216 @@ async function removeImportedAudio(item) {
   }
 }
 
+function autoPttKeyLabel(code) {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^Mouse[45]$/.test(code)) return `Mouse ${code.slice(5)}`;
+  return code;
+}
+
+function autoPttBridgeAvailable() {
+  return ["configureAutoPtt", "beginAutoPtt", "endAutoPtt", "refreshAutoPtt", "releaseAutoPtt"]
+    .every(method => typeof window.soundmuncher?.[method] === "function");
+}
+
+function setAutoPttState(status, message = "") {
+  if (!autoPttState) return;
+  const labels = {
+    off: "Auto push-to-talk off",
+    ready: `Ready · ${autoPttKeyLabel(selectedAutoPttKey)}`,
+    holding: `Holding ${autoPttKeyLabel(selectedAutoPttKey)} for your clip`,
+    waiting: "Waiting for the selected app to be focused",
+    error: "Auto push-to-talk is unavailable."
+  };
+  autoPttState.dataset.state = status;
+  autoPttState.dataset.active = String(status === "holding");
+  autoPttState.textContent = message || labels[status] || labels.off;
+}
+
+function renderAutoPttApps() {
+  if (!autoPttTargetSelect) return;
+  autoPttTargetSelect.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = autoPttAppsLoaded && !autoPttApps.length ? "Open your app, then refresh" : "Choose an app…";
+  autoPttTargetSelect.appendChild(placeholder);
+  const apps = [...autoPttApps];
+  if (selectedAutoPttTarget && !apps.some(app => app.processName.toLowerCase() === selectedAutoPttTarget.toLowerCase())) {
+    apps.unshift({ processName: selectedAutoPttTarget, title: autoPttAppsLoaded ? "Not running" : "Saved app" });
+  }
+  for (const app of apps) {
+    const option = document.createElement("option");
+    option.value = app.processName;
+    option.textContent = app.title ? `${app.processName} · ${app.title}` : app.processName;
+    option.title = option.textContent;
+    autoPttTargetSelect.appendChild(option);
+  }
+  const selected = apps.find(app => app.processName.toLowerCase() === selectedAutoPttTarget.toLowerCase());
+  autoPttTargetSelect.value = selected?.processName || "";
+}
+
+function updateAutoPttControls() {
+  const available = autoPttBridgeAvailable();
+  if (autoPttHelp) {
+    autoPttHelp.textContent = "Holds your talk key while clips play in the selected app. Match this key in your game's settings. Works while that app is focused."
+      + (/^Mouse[45]$/.test(selectedAutoPttKey) ? " Keep the pointer over the selected app for mouse talk keys." : "");
+  }
+  if (autoPushToTalkToggle) {
+    autoPushToTalkToggle.checked = isAutoPushToTalkEnabled;
+    autoPushToTalkToggle.disabled = !available;
+  }
+  if (autoPttKeySelect) {
+    autoPttKeySelect.value = selectedAutoPttKey;
+    autoPttKeySelect.disabled = !available;
+  }
+  if (autoPttTargetSelect) autoPttTargetSelect.disabled = !available;
+  if (refreshAutoPttAppsButton) refreshAutoPttAppsButton.disabled = autoPttAppsLoading || typeof window.soundmuncher?.listAutoPttApps !== "function";
+}
+
+async function refreshAutoPttApps() {
+  if (autoPttAppsLoading || typeof window.soundmuncher?.listAutoPttApps !== "function") return;
+  autoPttAppsLoading = true;
+  if (refreshAutoPttAppsButton) {
+    refreshAutoPttAppsButton.disabled = true;
+    refreshAutoPttAppsButton.textContent = "Refreshing…";
+  }
+  try {
+    const result = await window.soundmuncher.listAutoPttApps();
+    const seen = new Set();
+    autoPttApps = (Array.isArray(result?.apps) ? result.apps : []).filter(app => {
+      if (typeof app?.processName !== "string" || !app.processName || seen.has(app.processName.toLowerCase())) return false;
+      seen.add(app.processName.toLowerCase());
+      return true;
+    }).map(app => ({ processName: app.processName, title: String(app.title || "").slice(0, 120) }));
+    autoPttAppsLoaded = true;
+    renderAutoPttApps();
+    if (!autoPttApps.length && !isAutoPushToTalkEnabled) setAutoPttState("off", "Open your game or call app, then refresh the app list.");
+  } catch {
+    setAutoPttState("error", "Could not list running apps. Open your app and refresh again.");
+  } finally {
+    autoPttAppsLoading = false;
+    if (refreshAutoPttAppsButton) refreshAutoPttAppsButton.textContent = "Refresh";
+    updateAutoPttControls();
+  }
+}
+
+function stopAutoPttHeartbeatIfIdle() {
+  if (autoPttHeartbeatTimer !== null && !Array.from(autoPttLeases.values()).some(lease => lease.active && !lease.released)) {
+    clearInterval(autoPttHeartbeatTimer);
+    autoPttHeartbeatTimer = null;
+  }
+}
+
+function endAutoPttLease(lease) {
+  if (!lease || lease.released) return;
+  lease.released = true;
+  autoPttLeases.delete(lease.id);
+  stopAutoPttHeartbeatIfIdle();
+  try {
+    Promise.resolve(window.soundmuncher?.endAutoPtt?.(lease.id)).catch(() => {
+      if (isAutoPushToTalkEnabled) setAutoPttState("error", "Could not release the talk key. Turn auto push-to-talk off.");
+    });
+  } catch {
+    setAutoPttState("error", "Could not release the talk key. Turn auto push-to-talk off.");
+  }
+}
+
+function releaseAllAutoPttLeases() {
+  autoPttLeaseEpoch += 1;
+  for (const lease of autoPttLeases.values()) endAutoPttLease(lease);
+  stopAutoPttHeartbeatIfIdle();
+  try { window.soundmuncher?.releaseAutoPtt?.(); } catch {}
+}
+
+function startAutoPttHeartbeat() {
+  if (autoPttHeartbeatTimer !== null) return;
+  autoPttHeartbeatTimer = setInterval(() => {
+    const ids = Array.from(autoPttLeases.values()).filter(lease => lease.active && !lease.released).map(lease => lease.id);
+    if (!ids.length) { stopAutoPttHeartbeatIfIdle(); return; }
+    try { window.soundmuncher.refreshAutoPtt(ids); }
+    catch {
+      releaseAllAutoPttLeases();
+      setAutoPttState("error", "Auto push-to-talk stopped. Turn it off and on to retry.");
+    }
+  }, 750);
+}
+
+function hasAutoPttKeyConflict(key = selectedAutoPttKey) {
+  return Object.values(importedKeybinds).some(binding => normalizeKeybindBinding(binding)?.code === key);
+}
+
+function configureAutoPttSettings() {
+  releaseAllAutoPttLeases();
+  const revision = ++autoPttConfigureRevision;
+  autoPttValidationMessage = "";
+  if (isAutoPushToTalkEnabled && !autoPttBridgeAvailable()) autoPttValidationMessage = "Auto push-to-talk is unavailable in this build.";
+  else if (isAutoPushToTalkEnabled && !selectedAutoPttTarget) autoPttValidationMessage = "Choose a target app before enabling auto push-to-talk.";
+  else if (isAutoPushToTalkEnabled && hasAutoPttKeyConflict()) autoPttValidationMessage = `${autoPttKeyLabel(selectedAutoPttKey)} is already a sound or stop key. Choose another talk key.`;
+  if (autoPttValidationMessage) isAutoPushToTalkEnabled = false;
+  const configuration = { enabled: isAutoPushToTalkEnabled, key: selectedAutoPttKey, targetProcess: selectedAutoPttTarget };
+  updateAutoPttControls();
+  saveMixerSettings();
+  if (autoPttValidationMessage) setAutoPttState("error", autoPttValidationMessage);
+  else setAutoPttState(configuration.enabled ? "waiting" : "off", configuration.enabled ? "Preparing auto push-to-talk…" : "");
+  autoPttConfigurationReady = autoPttConfigurationReady.catch(() => {}).then(async () => {
+    if (revision !== autoPttConfigureRevision) return;
+    if (typeof window.soundmuncher?.configureAutoPtt !== "function") {
+      if (!autoPttValidationMessage) setAutoPttState("off", "Auto push-to-talk is unavailable in this build.");
+      return;
+    }
+    try {
+      const result = await window.soundmuncher.configureAutoPtt(configuration);
+      if (revision !== autoPttConfigureRevision) return;
+      if (!result?.ok) throw new Error(result?.error || "Auto push-to-talk could not start.");
+      if (autoPttValidationMessage) setAutoPttState("error", autoPttValidationMessage);
+      else if (!configuration.enabled) setAutoPttState("off");
+    } catch (error) {
+      if (revision !== autoPttConfigureRevision) return;
+      isAutoPushToTalkEnabled = false;
+      autoPttValidationMessage = error?.message || "Auto push-to-talk could not start.";
+      updateAutoPttControls();
+      saveMixerSettings();
+      setAutoPttState("error", autoPttValidationMessage);
+    }
+  });
+  return autoPttConfigurationReady;
+}
+
+function canUseAutoPtt() {
+  return isAutoPushToTalkEnabled && autoPttBridgeAvailable() && isMixToOutputEnabled && isVirtualOutputSelection()
+    && Number(masterGainSlider.value) > 0 && Number(soundGainSlider.value) > 0;
+}
+
+async function beginAutoPttForSound(request, durationMs, volume) {
+  if (volume <= 0 || !canUseAutoPtt() || request.autoPttEpoch !== autoPttLeaseEpoch) return null;
+  await autoPttConfigurationReady;
+  if (request.cancelled || !canUseAutoPtt() || request.autoPttEpoch !== autoPttLeaseEpoch) return null;
+  const lease = { id: window.crypto?.randomUUID?.() || `ptt-${Date.now().toString(36)}-${++autoPttLeaseSerial}`, active: false, released: false };
+  autoPttLeases.set(lease.id, lease);
+  request.autoPttLease = lease;
+  const stateRevision = autoPttStateRevision;
+  try {
+    const result = await window.soundmuncher.beginAutoPtt({ id: lease.id, durationMs });
+    if (request.cancelled || lease.released || !canUseAutoPtt() || request.autoPttEpoch !== autoPttLeaseEpoch) {
+      endAutoPttLease(lease);
+      return null;
+    }
+    if (!result?.ok) throw new Error(result?.error || "Auto push-to-talk could not hold the talk key.");
+    if (result.holding === false) {
+      endAutoPttLease(lease);
+      return null;
+    }
+    lease.active = true;
+    startAutoPttHeartbeat();
+    if (stateRevision === autoPttStateRevision) setAutoPttState("holding");
+    return lease;
+  } catch (error) {
+    endAutoPttLease(lease);
+    if (!request.cancelled && request.autoPttEpoch === autoPttLeaseEpoch) setAutoPttState("error", error?.message || "Auto push-to-talk could not start.");
+    return null;
+  }
+}
+
 async function decodeImportedAudio(item) {
   if (importedAudioBuffers.has(item.path)) {
     return storeImportedAudioBuffer(item.path, importedAudioBuffers.get(item.path));
@@ -2378,11 +2627,12 @@ async function decodeImportedAudio(item) {
   return storeImportedAudioBuffer(item.path, decoded);
 }
 
-function trackSoundNode(sourceNode, outputNode = null, itemPath = "") {
+function trackSoundNode(sourceNode, outputNode = null, itemPath = "", autoPttLease = null) {
   const entry = {
     sourceNode,
     outputNode,
     itemPath,
+    autoPttLease,
     stopped: false
   };
 
@@ -2390,6 +2640,7 @@ function trackSoundNode(sourceNode, outputNode = null, itemPath = "") {
   syncSoundPlaybackVisuals();
 
   sourceNode.addEventListener?.("ended", () => {
+    if (entry.autoPttLease) endAutoPttLease(entry.autoPttLease);
     try {
       sourceNode.disconnect();
     } catch (error) {
@@ -2419,6 +2670,7 @@ function stopTrackedSound(entry) {
   }
 
   entry.stopped = true;
+  if (entry.autoPttLease) endAutoPttLease(entry.autoPttLease);
 
   try {
     entry.sourceNode.stop(0);
@@ -2443,6 +2695,7 @@ function stopSoundsByPath(itemPath) {
   for (const request of pendingSoundStarts) {
     if (request.itemPath === itemPath) {
       request.cancelled = true;
+      if (request.autoPttLease) endAutoPttLease(request.autoPttLease);
       pendingSoundStarts.delete(request);
     }
   }
@@ -2458,6 +2711,7 @@ function hasActiveSoundForPath(itemPath) {
 
 function stopAllSounds() {
   cancelPendingAudioLink();
+  if (window.soundmuncher?.releaseAutoPtt) releaseAllAutoPttLeases();
   for (const request of pendingSoundStarts) request.cancelled = true;
   pendingSoundStarts.clear();
   discoverUi?.stopPreview();
@@ -2487,7 +2741,7 @@ async function getClipLoudnessGain(buffer, trimStart, trimEnd) {
   return (await trims.get(key)).gain;
 }
 
-async function playImportedSound(item) {
+async function playImportedSound(item, options = {}) {
   const metadata = getSoundMetadata(item);
   if (metadata.playbackMode === "once" && hasActiveSoundForPath(item.path)) {
     setLibraryState(`${metadata.name} is already playing.`);
@@ -2505,7 +2759,8 @@ async function playImportedSound(item) {
   }
 
   // Reserve playback before either engine startup or decoding can yield.
-  const request = { itemPath: item.path, cancelled: false };
+  const request = { itemPath: item.path, cancelled: false, autoPttEpoch: window.soundmuncher?.beginAutoPtt ? autoPttLeaseEpoch : 0, autoPttLease: null };
+  let entry;
   pendingSoundStarts.add(request);
   try {
     await setupMixer({ requestMic: false, routeOutput: false });
@@ -2524,6 +2779,9 @@ async function playImportedSound(item) {
       if (!isMatchClipLoudnessEnabled) loudnessGain = 1;
     }
     const clipVolume = metadata.volume * loudnessGain;
+    let autoPttLease = null;
+    if (options.autoPtt !== false && window.soundmuncher?.beginAutoPtt) autoPttLease = await beginAutoPttForSound(request, metadata.playbackMode === "loop" ? 0 : playableDuration * 1000, metadata.volume);
+    if (request.cancelled) return;
     const source = audioContext.createBufferSource();
     const outputGain = audioContext.createGain();
 
@@ -2553,7 +2811,8 @@ async function playImportedSound(item) {
 
     source.connect(outputGain);
     outputGain.connect(soundGainNode);
-    trackSoundNode(source, outputGain, item.path);
+    entry = trackSoundNode(source, outputGain, item.path, autoPttLease);
+    request.autoPttLease = null;
     if (source.loop) {
       source.start(now, trimStart);
     } else {
@@ -2563,8 +2822,10 @@ async function playImportedSound(item) {
     nowPlaying.textContent = metadata.name;
     if (isMatchClipLoudnessEnabled && metadata.matchLoudness) setLibraryState(`Playing ${metadata.name} with matched loudness.`);
   } catch (error) {
+    if (entry) stopTrackedSound(entry);
     if (!request.cancelled) setLibraryState(`Could not play ${item.name}. ${mixerGraphFailed ? "Audio protection could not start. Restart Freqx and try again." : ""}`.trim());
   } finally {
+    if (request.autoPttLease) endAutoPttLease(request.autoPttLease);
     pendingSoundStarts.delete(request);
   }
 }
@@ -2814,6 +3075,7 @@ async function refreshOutputDevices() {
 }
 
 async function applyOutputDevice() {
+  if (window.soundmuncher?.releaseAutoPtt && !isVirtualOutputSelection()) releaseAllAutoPttLeases();
   if (!mixOutContext) {
     return;
   }
@@ -2981,6 +3243,7 @@ function updateMixStateText() {
 }
 
 function updateMixerGains() {
+  if (window.soundmuncher?.releaseAutoPtt && (Number(masterGainSlider.value) <= 0 || Number(soundGainSlider.value) <= 0)) releaseAllAutoPttLeases();
   if (!audioContext || !micGainNode || mixerGraphFailed) {
     return;
   }
@@ -3707,7 +3970,7 @@ function handleKeybindKeydown(event) {
       return;
     }
 
-    assignKeybind(keybindCapturePath, keybindFromKeyboardEvent(event));
+    if (assignKeybind(keybindCapturePath, keybindFromKeyboardEvent(event)) === false) return;
     const label = importedKeybinds[keybindCapturePath]?.label || event.code;
     cancelKeybindCapture();
     setLibraryState(`Keybind saved: ${label}.`);
@@ -3803,6 +4066,7 @@ async function setMicCaptureEnabled(enabled) {
 }
 
 async function setMixToOutputEnabled(enabled) {
+  if (!enabled && window.soundmuncher?.releaseAutoPtt) releaseAllAutoPttLeases();
   if (enabled) {
     try {
       await setupMixer({ requestMic: false });
@@ -3909,6 +4173,22 @@ matchClipLoudnessToggle?.addEventListener("change", () => {
   isMatchClipLoudnessEnabled = matchClipLoudnessToggle.checked;
   saveMixerSettings();
   setLibraryState(isMatchClipLoudnessEnabled ? "Clip loudness matching applies the next time you play a sound." : "Clip loudness matching off.");
+});
+autoPushToTalkToggle?.addEventListener("change", () => {
+  isAutoPushToTalkEnabled = autoPushToTalkToggle.checked;
+  void configureAutoPttSettings();
+});
+autoPttTargetSelect?.addEventListener("change", () => {
+  selectedAutoPttTarget = autoPttTargetSelect.value;
+  void configureAutoPttSettings();
+});
+autoPttKeySelect?.addEventListener("change", () => {
+  selectedAutoPttKey = autoPttKeySelect.value;
+  void configureAutoPttSettings();
+});
+refreshAutoPttAppsButton?.addEventListener("click", refreshAutoPttApps);
+autoPttTargetSelect?.addEventListener("focus", () => {
+  if (!autoPttAppsLoaded) void refreshAutoPttApps();
 });
 voiceIsolationToggle?.addEventListener("change", () => {
   void setVoiceIsolationEnabled(voiceIsolationToggle.checked);
@@ -4167,6 +4447,9 @@ async function initializeConfiguredApp() {
   isVoicePriorityEnabled = defaults.voicePriority;
   selectedVoicePriorityStrength = defaults.voicePriorityStrength;
   isMatchClipLoudnessEnabled = defaults.matchClipLoudness;
+  isAutoPushToTalkEnabled = defaults.autoPushToTalk ?? false;
+  selectedAutoPttKey = defaults.autoPttKey || "KeyV";
+  selectedAutoPttTarget = defaults.autoPttTarget || "";
   soundToMixBoost = desktopConfig.audio.soundToMixBoost;
   micGateClosedGain = desktopConfig.audio.micGateClosedGain;
   importedAudioBufferCacheLimitBytes = desktopConfig.audio.bufferCacheBytes;
@@ -4188,6 +4471,28 @@ async function initializeConfiguredApp() {
   updateGainLabels();
   updateToggleButtonLabels();
   loadKeybinds();
+  if (autoPttKeySelect) {
+    for (const code of autoPttKeyCodes) {
+      const option = document.createElement("option");
+      option.value = code;
+      option.textContent = autoPttKeyLabel(code);
+      autoPttKeySelect.appendChild(option);
+    }
+  }
+  renderAutoPttApps();
+  updateAutoPttControls();
+  window.soundmuncher?.onAutoPttState?.((state) => {
+    autoPttStateRevision += 1;
+    if (["waiting", "error", "off"].includes(state?.status)) {
+      for (const lease of autoPttLeases.values()) endAutoPttLease(lease);
+      stopAutoPttHeartbeatIfIdle();
+    }
+    if (autoPttValidationMessage) setAutoPttState("error", autoPttValidationMessage);
+    else if (!isAutoPushToTalkEnabled) setAutoPttState("off");
+    else if (["off", "ready", "holding", "waiting", "error"].includes(state?.status)) setAutoPttState(state.status, state.message);
+  });
+  await configureAutoPttSettings();
+  if (isAutoPushToTalkEnabled) void refreshAutoPttApps();
   renderStopKeybindButton();
   renderBoardControls();
   syncGlobalKeybinds();
@@ -4258,3 +4563,4 @@ window.addEventListener("pagehide", () => {
   stopAllSounds();
   clearImportedAudioBufferCache();
 });
+window.addEventListener("beforeunload", releaseAllAutoPttLeases);

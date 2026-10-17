@@ -103,7 +103,10 @@
       "masterGain": 1,
       "voicePriority": false,
       "voicePriorityStrength": "medium",
-      "matchClipLoudness": false
+      "matchClipLoudness": false,
+      "autoPushToTalk": false,
+      "autoPttKey": "KeyV",
+      "autoPttTarget": ""
     },
     "voiceModes": {
       "light": {
@@ -115,6 +118,7 @@
         "postFilterBeta": 0
       }
     },
+    "autoPushToTalk": { "leadMs": 80, "tailMs": 120, "leaseTimeoutMs": 3000 },
     "peakProtection": { "ceilingDb": -1, "channels": 2, "lookaheadMs": 3, "releaseMs": 80 },
     "voicePriority": {
       "thresholdDb": -42,
