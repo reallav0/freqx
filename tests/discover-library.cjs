@@ -93,6 +93,10 @@ async function run() {
   fixtureHandler('audio:list-imported-files', listImportedFiles);
   fixtureHandler('audio:external-imports-ready', () => { initialized = true; });
   fixtureHandler('keybinds:register-global', () => ({ failed: [] }));
+  fixtureHandler('auto-ptt:configure', configuration => {
+    if (configuration.enabled) throw new Error('Automatic PTT input is forbidden in the library fixture.');
+    return { ok: true };
+  });
   fixtureHandler('app:check-for-updates', () => ({ updateAvailable: false, currentVersion: '1.7.0' }));
   fixtureHandler('audio:import-files', () => ({ canceled: true, imported: [] }));
   fixtureHandler('audio:remove-imported-file', filePath => {

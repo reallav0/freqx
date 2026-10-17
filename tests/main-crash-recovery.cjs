@@ -19,7 +19,7 @@ const checks = [];
 
 function fixture(options = {}) {
   const calls = {
-    nativeLoads: [], starts: 0, restarts: [], stops: [], recoveries: [],
+    nativeLoads: [], starts: 0, restarts: [], stops: [], recoveries: [], autoPttStops: 0,
     exits: [], quits: 0, windows: [], writes: [], sends: [], referenceRequests: [], updateConfigs: [], switches: [], hardwareDisabled: 0,
   };
   const timers = [];
@@ -147,6 +147,9 @@ function fixture(options = {}) {
       }
       if (name === './runtime/desktop-config.cjs') return { config: options.config || require('../runtime/desktop-config.cjs').config };
       if (name === './runtime/auth-client.cjs') return { registerAuthIpc() {} };
+      if (name === './runtime/auto-ptt.cjs') return { AutoPttService: class {
+        stop() { calls.autoPttStops++; }
+      } };
       if (name === './runtime/app-mode.cjs') return require('../runtime/app-mode.cjs');
       if (name === './runtime/public-library.cjs') return {
         PublicLibrary: class {
@@ -320,6 +323,7 @@ async function main() {
     subject.window.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: -1073741819 });
     subject.window.webContents.emit('did-fail-load', {}, -2, 'Failed', subject.window.url, true);
     subject.window.webContents.emit('preload-error', {}, path.join(root, 'preload.js'), new Error('Fixture preload failure'));
+    assert.equal(subject.calls.autoPttStops, 1, 'renderer death releases PTT before deferred recovery');
     assertNotRecoveredSynchronously(subject);
     await subject.flushTimers();
     assert.equal(subject.calls.restarts.length, 1);
@@ -346,11 +350,27 @@ async function main() {
     assert.deepEqual(subject.window.loaded, ['index.html']);
   });
 
+  await check('main-frame navigation and renderer destruction stop PTT without restarting', async () => {
+    const subject = fixture();
+    await subject.ready();
+    const owner = subject.window.webContents;
+    owner.emit('did-start-navigation', {}, subject.window.url + '#anchor', true, true);
+    owner.emit('did-start-navigation', {}, subject.window.url, false, false);
+    assert.equal(subject.calls.autoPttStops, 0, 'in-place and subframe navigation preserve PTT');
+    owner.emit('did-start-navigation', {}, subject.window.url, false, true);
+    assert.equal(subject.calls.autoPttStops, 1, 'main-frame replacement stops PTT immediately');
+    owner.emit('destroyed');
+    assert.equal(subject.calls.autoPttStops, 2, 'renderer destruction independently stops PTT');
+    await subject.flushTimers();
+    assert.equal(subject.calls.restarts.length, 0);
+  });
+
   for (const eventName of ['uncaughtException', 'unhandledRejection']) {
     await check(`main ${eventName} restarts without continuing in a crash screen`, async () => {
       const subject = fixture();
       await subject.ready();
       subject.process.emit(eventName, new Error(`Fixture ${eventName}`));
+      assert.equal(subject.calls.autoPttStops, 1, 'fatal main failure releases PTT immediately');
       assertNotRecoveredSynchronously(subject);
       await subject.flushTimers();
       assert.equal(subject.calls.restarts.length, 1);
@@ -411,6 +431,7 @@ async function main() {
     const subject = fixture();
     await subject.ready();
     subject.window.webContents.emit('render-process-gone', {}, { reason: 'clean-exit', exitCode: 0 });
+    assert.equal(subject.calls.autoPttStops, 1, 'even a clean renderer exit stops PTT');
     await subject.flushTimers();
     assert.equal(subject.calls.restarts.length, 0);
   });
@@ -419,7 +440,11 @@ async function main() {
     const subject = fixture();
     await subject.ready();
     subject.window.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
+    const beforeQuitStops = subject.calls.autoPttStops;
     subject.app.emit('before-quit', {});
+    assert.equal(subject.calls.autoPttStops, beforeQuitStops + 1, 'before-quit independently stops PTT');
+    subject.app.emit('will-quit', {});
+    assert.equal(subject.calls.autoPttStops, beforeQuitStops + 2, 'will-quit also stops PTT');
     await subject.flushTimers();
     assert.ok(subject.calls.stops.length > 0);
     assert.equal(subject.calls.restarts.length, 0);
@@ -429,7 +454,9 @@ async function main() {
     const subject = fixture();
     await subject.ready();
     subject.window.webContents.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
+    const beforeSessionStops = subject.calls.autoPttStops;
     subject.window.emit('session-end', { reasons: ['shutdown'] });
+    assert.equal(subject.calls.autoPttStops, beforeSessionStops + 1, 'Windows session end independently stops PTT');
     await subject.flushTimers();
     assert.ok(subject.calls.stops.length > 0);
     assert.equal(subject.calls.restarts.length, 0);
@@ -439,12 +466,14 @@ async function main() {
     const subject = fixture();
     await subject.ready();
     subject.window.emit('unresponsive');
+    assert.equal(subject.calls.autoPttStops, 1, 'PTT stops immediately while recovery still waits for the grace period');
     await subject.advanceTimers(14999);
     assert.equal(subject.calls.restarts.length, 0);
     subject.window.emit('responsive');
     await subject.advanceTimers(15000);
     assert.equal(subject.calls.restarts.length, 0);
     assert.equal(subject.window.visible, true);
+    assert.equal(subject.calls.autoPttStops, 1, 'becoming responsive does not restart or stop PTT again');
   });
 
   await check('sustained renderer stall triggers one recovery after the grace period', async () => {
@@ -452,6 +481,7 @@ async function main() {
     await subject.ready();
     subject.window.emit('unresponsive');
     subject.window.emit('unresponsive');
+    assert.equal(subject.calls.autoPttStops, 2, 'each stalled-renderer notification stops PTT safely');
     await subject.advanceTimers(14999);
     assert.equal(subject.calls.restarts.length, 0);
     await subject.advanceTimers(1);
