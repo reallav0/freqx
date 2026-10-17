@@ -167,6 +167,18 @@ input.pad-volume-slider::-moz-range-thumb { width: 10px; height: 10px; border: 0
 .meter-fill { width: 0; height: 100%; background: var(--accent); transition: width 50ms linear; }
 .meter-scale { display: flex; justify-content: space-between; margin-top: 5px; color: #a4a49f; font: 9px var(--font-mono); }
 .mixer-grid { display: grid; gap: 7px; padding: 11px 0; border-bottom: 1px solid var(--border); }
+.mix-assist-controls { display: grid; gap: 5px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.mix-assist-controls .setting-toggle { gap: 8px; min-height: 25px; font-size: 12px; }
+.mix-assist-help, .mix-assist-state { margin: 0; font-size: 11px; line-height: 1.4; color: var(--text-muted); }
+.mix-assist-controls > .mix-assist-help:first-child { margin-bottom: 4px; }
+.mic-level { display: grid; grid-template-columns: 1fr auto; gap: 5px; margin-bottom: 5px; color: var(--text-muted); font: 10px var(--font-mono); }
+.mic-level .meter-track { grid-column: 1 / -1; height: 5px; }
+.voice-priority-row { display: grid; grid-template-columns: minmax(0, 1fr) 100px; align-items: center; gap: 8px; }
+.voice-priority-row .device-select { height: 29px; font-size: 12px; }
+.mix-assist-state { min-height: 16px; }
+.mix-assist-state[data-active="true"] { color: var(--accent); }
+.sound-loudness-toggle, .sound-loudness-help { grid-column: 1 / -1; }
+.sound-loudness-help { margin-top: -8px; }
 .mixer-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; row-gap: 4px; min-width: 0; }
 .mixer-control > span { font-size: 13px; color: var(--text); }
 .mixer-control output { grid-column: 2; grid-row: 1; color: var(--text-muted); font: 11px var(--font-mono); }

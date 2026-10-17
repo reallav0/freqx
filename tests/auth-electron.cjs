@@ -88,7 +88,7 @@ async function run() {
     await evaluate(`document.getElementById('closeAccount').focus()`);
     window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
     window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab', modifiers: ['shift'] });
-    await assertFocus('accountPhone', 'Shift+Tab wraps to the last dialog control');
+    await assertFocus('accountWebsite', 'Shift+Tab wraps to the last dialog control');
     assert.equal(await evaluate(`document.getElementById('accountOverlay').contains(document.activeElement)`), true, 'Shift+Tab stays in the dialog');
     window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
     window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });

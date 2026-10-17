@@ -17,6 +17,9 @@ https://github.com/user-attachments/assets/40e06b0f-d9c8-447d-a0c6-7e8856d06956
 - **Shape every clip.** Adjust volume, trim, fades, and color. Choose overlap, restart, play once, or toggle loop to suit the sound.
 - **Keep your voice clear.** Choose Light (RNNoise), High quality (local DeepFilterNet3), or Off, with adjustable strength to reduce microphone background noise before your voice joins the mix. Soundboard clips bypass isolation, and microphone audio is not uploaded for processing.
 - **Control what everyone hears.** Balance your microphone, soundboard, and main output, and choose a separate output for hearing your own clips.
+- **Boost a quiet microphone.** Raise microphone volume up to 300% after voice isolation. Peak protection follows the boost and protects the final mix.
+- **Keep callouts audible.** Optional Voice priority lowers soundboard clips in your outgoing mix while you speak, then restores them smoothly. Choose Gentle, Medium, or Strong; your local clip monitor keeps its original level.
+- **Balance your clips.** Optional Match clip loudness analyzes each clip locally on first playback and balances its level. Clip volume, trims, and fades still apply; exclude individual sounds in Edit Sound. Matching applies on the next playback, and your original files stay unchanged.
 - **Make it feel like yours.** Organize boards, switch app and pad themes, and use compact mode. The interface pairs dot lettering and monochrome pads with red accents.
 
 Your local boards and playback work without an account. Freqx also runs in the system tray, remembers your audio devices, and offers optional launch on Windows startup.

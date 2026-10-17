@@ -198,7 +198,7 @@ test('a failed link commit removes only its own reservation after a filename col
   assert.deepEqual(await fs.promises.readdir(path.join(directory, 'link-tmp')), []);
 });
 
-function playbackFixture(mode, { delayedEngine = false } = {}) {
+function playbackFixture(mode, { delayedEngine = false, matching = false } = {}) {
   const decode = deferred();
   const engine = deferred();
   const starts = [];
@@ -219,9 +219,14 @@ function playbackFixture(mode, { delayedEngine = false } = {}) {
     createGain: () => ({ ...makeNode(), gain: { setValueAtTime() {}, linearRampToValueAtTime() {} } }),
   };
   const item = { path: 'fixture.wav', name: 'Fixture' };
+  if (!delayedEngine) engine.resolve();
+  const analysis = deferred();
+  let analyses = 0;
   const context = vm.createContext({ desktopConfig,
+    mixerGraphFailed: false, isMatchClipLoudnessEnabled: matching, clipLoudnessCache: new WeakMap(),
+    window: { FreqxLoudness: { analyze: () => { analyses++; return analysis.promise; } } },
     audioContext: delayedEngine ? null : audioContext, activeSoundNodes: new Set(), pendingSoundStarts: new Set(),
-    getSoundMetadata: () => ({ name: 'Fixture', playbackMode: mode, trimStart: 0, trimEnd: 0, volume: 1, fadeIn: 0, fadeOut: 0 }),
+    getSoundMetadata: () => ({ name: 'Fixture', playbackMode: mode, trimStart: 0, trimEnd: 0, volume: 1, fadeIn: 0, fadeOut: 0, matchLoudness: true }),
     decodeImportedAudio: () => { decodes++; return decode.promise; }, soundGainNode: {},
     discoverUi: null, nowPlaying: {}, importedLibraryItems: [item], syncSoundPlaybackVisuals() {},
     cancelPendingAudioLink() {},
@@ -229,7 +234,7 @@ function playbackFixture(mode, { delayedEngine = false } = {}) {
   });
   context.setupMixer = async () => { await engine.promise; context.audioContext = audioContext; };
   vm.runInContext(section(rendererSource, 'function trackSoundNode(', 'function setRouteState('), context);
-  return { context, item, decode, engine, starts, messages, decodes: () => decodes, play: () => context.playImportedSound(item) };
+  return { context, item, decode, engine, starts, messages, analysis, analyses: () => analyses, decodes: () => decodes, play: () => context.playImportedSound(item) };
 }
 
 test('Stop all cancels loading playback while allowing a subsequent press', async () => {
@@ -303,6 +308,36 @@ test('overlap still allows simultaneous sounds; decode errors release play-once 
   await once.play();
   assert.equal(once.starts.length, 1);
   assert.equal(once.context.pendingSoundStarts.size, 0);
+});
+
+test('Stop during loudness analysis prevents playback and shares analysis with the next press', async () => {
+  const fixture = playbackFixture('overlap', { matching: true });
+  const first = fixture.play();
+  fixture.decode.resolve({ duration: 1 });
+  await tick();
+  assert.equal(fixture.analyses(), 1);
+  fixture.context.stopAllSounds();
+  const second = fixture.play();
+  await tick();
+  assert.equal(fixture.analyses(), 1, 'simultaneous requests reuse bounded analysis');
+  fixture.analysis.resolve({ gain: 2 });
+  await Promise.all([first, second]);
+  assert.equal(fixture.starts.length, 1);
+  assert.equal(fixture.context.pendingSoundStarts.size, 0);
+});
+
+test('failed loudness analysis releases playback reservation and can be retried', async () => {
+  const fixture = playbackFixture('once', { matching: true });
+  const first = fixture.play();
+  fixture.decode.resolve({ duration: 1 });
+  await tick();
+  fixture.analysis.reject(new Error('analysis failed'));
+  await first;
+  assert.equal(fixture.context.pendingSoundStarts.size, 0);
+  assert.equal(fixture.starts.length, 0);
+  fixture.context.window.FreqxLoudness.analyze = async () => ({ gain: 1 });
+  await fixture.play();
+  assert.equal(fixture.starts.length, 1);
 });
 
 function isolationFixture(t, { failAssets = false, deferModel = false, needsRawCapture = false,

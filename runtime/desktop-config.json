@@ -78,6 +78,7 @@
       "fadeIn": 0,
       "fadeOut": 0,
       "playbackMode": "overlap",
+      "matchLoudness": true,
       "favorite": false,
       "pinned": false
     },
@@ -99,7 +100,10 @@
       "playbackEnabled": true,
       "micGain": 0.75,
       "soundGain": 0.5,
-      "masterGain": 1
+      "masterGain": 1,
+      "voicePriority": false,
+      "voicePriorityStrength": "medium",
+      "matchClipLoudness": false
     },
     "voiceModes": {
       "light": {
@@ -110,6 +114,20 @@
         "attenuationDb": 35,
         "postFilterBeta": 0
       }
+    },
+    "peakProtection": { "ceilingDb": -1, "channels": 2, "lookaheadMs": 3, "releaseMs": 80 },
+    "voicePriority": {
+      "thresholdDb": -42,
+      "holdMs": 180,
+      "attackMs": 15,
+      "releaseMs": 400,
+      "reductions": { "gentle": 6, "medium": 12, "strong": 18 }
+    },
+    "loudness": {
+      "targetLufs": -18,
+      "maxBoostDb": 12,
+      "maxCutDb": 24,
+      "peakCeilingDb": -1
     },
     "limiter": {
       "threshold": -3,

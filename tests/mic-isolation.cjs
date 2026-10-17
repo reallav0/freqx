@@ -197,7 +197,7 @@ async function runMain() {
     assert('renderer initializes with fixture microphone', await evaluate('isMicCaptureEnabled && !!micStream && __micTest.crashes.length === 0'));
   }
   const graphExpression = `(() => {
-    const nodes = { soundGainNode, soundToMixGainNode, masterGainNode, compressorNode, mixDestination, appPlaybackGainNode, appPlaybackDestination, mixOutSource, mixOutGainNode, localOutSource, levelAnalyser, mixOutDestination: mixOutContext.destination, localOutDestination: localOutContext.destination };
+    const nodes = { soundGainNode, voicePriorityNode, soundToMixGainNode, masterGainNode, compressorNode, mixLimiterNode, mixDestination, appPlaybackGainNode, localPlaybackLimiterNode, appPlaybackDestination, mixOutSource, mixOutGainNode, localOutSource, levelAnalyser, mixOutDestination: mixOutContext.destination, localOutDestination: localOutContext.destination };
     const ids = Object.fromEntries(Object.entries(nodes).map(([name,node]) => [name,__micTest.id(node)]));
     const protectedIds = new Set(Object.values(ids));
     return {
@@ -233,7 +233,95 @@ async function runMain() {
     if (process.argv.includes('--baseline')) {
       const baseline = await evaluate(graphExpression);
       fs.writeFileSync(path.join(output, 'baseline-graph.json'), JSON.stringify(baseline, null, 2));
-      assert('baseline mixer graph captured before integration', baseline.edges.length === 10, baseline);
+      assert('baseline mixer graph captured with protected output branches', baseline.edges.length === 13, baseline);
+    } else if (process.argv.includes('--mix-features')) {
+      assert('mixer loads three limiters and one audio-thread sidechain', await evaluate('__micTest.worklets.filter(w=>w.name === "freqx-peak-limiter").length === 3 && __micTest.worklets.filter(w=>w.name === "freqx-voice-priority").length === 1'));
+      assert('new balance controls start off and preserve the existing mic level', await evaluate('!voicePriorityToggle.checked && !matchClipLoudnessToggle.checked && Number(micGainSlider.value) === 0.71'));
+      await evaluate(`micGainSlider.value='3';micGainSlider.dispatchEvent(new Event('input',{bubbles:true}));`);
+      assert('300% gain applies after isolation and persists without clamping', await evaluate('micGainNode.gain.value > 0.71 && micGainValue.textContent === "300%" && JSON.parse(localStorage.getItem("soundmuncher:mixer-settings")).micGain === 3'));
+      await evaluate(`window.__testOsc=audioContext.createOscillator();__testOsc.frequency.value=1000;
+        window.__testOscGain=audioContext.createGain();__testOscGain.gain.value=.04;
+        __testOsc.connect(__testOscGain).connect(micGainNode);__testOsc.start();
+        window.__micAnalyser=audioContext.createAnalyser();__micAnalyser.fftSize=2048;micLimiterNode.connect(__micAnalyser);
+        window.__readRms=async analyser=>{let power=0;const data=new Float32Array(2048);for(let n=0;n<8;n++){await new Promise(r=>setTimeout(r,20));analyser.getFloatTimeDomainData(data);for(const value of data)power+=value*value;}return Math.sqrt(power/(8*data.length));};
+        micGainSlider.value='1';updateMixerGains();`);
+      await pause(180);
+      const normal = await evaluate('__readRms(__micAnalyser)');
+      await evaluate('micGainSlider.value="3";micGainSlider.dispatchEvent(new Event("input",{bubbles:true}))');
+      await pause(180);
+      const boosted = await evaluate('__readRms(__micAnalyser)');
+      assert('real audio microphone boost triples low-level amplitude', Math.abs(boosted / normal - 3) < 0.06, { normal, boosted });
+      assert('mic meter shows the boosted voice independently of the full mix', await evaluate('updateMicLevelMeter();Number(micLevelTrack.getAttribute("aria-valuenow")) > -30 && micLevelValue.textContent !== "-inf dB"'));
+      await evaluate('__testOscGain.gain.value=1.5');
+      await pause(200);
+      const peak = await evaluate('(()=>{const data=new Float32Array(2048);__micAnalyser.getFloatTimeDomainData(data);return Math.max(...data.map(Math.abs));})()');
+      assert('real boosted microphone peaks stay under the limiter ceiling', peak > 0.7 && peak <= 10 ** (-1 / 20) + 0.001, { peak });
+      await evaluate('__testOsc.stop();__testOscGain.disconnect();micLimiterNode.disconnect(__micAnalyser);');
+      await evaluate(`(async()=>{window.__soundAnalysers=[appPlaybackGainNode,soundToMixGainNode,mixLimiterNode].map(node=>{const a=audioContext.createAnalyser();a.fftSize=2048;node.connect(a);return a;});
+        voicePriorityToggle.checked=true;voicePriorityToggle.dispatchEvent(new Event('change',{bubbles:true}));
+        await playImportedSound(importedLibraryItems[0]);})()`);
+      await pause(300);
+      const before = await measureSound();
+      await evaluate(`Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});document.dispatchEvent(new Event('visibilitychange'));__micTest.captures.at(-1).source.offset.value=.05;`);
+      await until('voicePriorityState.dataset.active === "true"', 'ducking while page is hidden');
+      await pause(200);
+      const ducked = await measureSound();
+      assert('Voice Priority attenuates the outgoing clips about 12 dB while minimized', Math.abs(20 * Math.log10(ducked[1] / before[1]) + 12) < 0.5, { before, ducked });
+      assert('Voice Priority keeps the local soundboard monitor unchanged', Math.abs(ducked[0] / before[0] - 1) < 0.02);
+      await evaluate('__micTest.captures.at(-1).source.offset.value=0');
+      await pause(2400);
+      const restored = await measureSound();
+      assert('clips recover smoothly after speech ends', restored[1] / before[1] > 0.98 && await evaluate('voicePriorityState.dataset.active === "false"'));
+      await evaluate(`voicePriorityStrength.value='strong';voicePriorityStrength.dispatchEvent(new Event('change',{bubbles:true}));
+        __micTest.captures.at(-1).source.offset.value=.05;`);
+      await pause(350);
+      const strong = await measureSound();
+      assert('Strong priority applies the selected 18 dB reduction', Math.abs(20 * Math.log10(strong[1] / before[1]) + 18) < 0.5);
+      await evaluate('setMicCaptureEnabled(false)');
+      await pause(2400);
+      assert('mic off disables ducking and releases microphone tracks', await evaluate('!micStream && voicePriorityNode.parameters.get("enabled").value === 0 && __micTest.captures.at(-1).stream.getTracks().every(track=>track.readyState==="ended")'));
+      const micOff = await measureSound();
+      assert('mic off restores the outgoing clip volume', micOff[1] / before[1] > 0.98);
+      await evaluate(`(async()=>{delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));stopAllSounds();
+        matchClipLoudnessToggle.checked=true;matchClipLoudnessToggle.dispatchEvent(new Event('change',{bubbles:true}));
+        await playImportedSound(importedLibraryItems[0]);})()`);
+      await pause(80); // AudioParam scheduling takes effect on the next render quantum.
+      const gain = await evaluate('Array.from(activeSoundNodes)[0].outputNode.gain.value');
+      const expected = await evaluate(`(async()=>{const item=importedLibraryItems[0],meta=getSoundMetadata(item),buffer=await decodeImportedAudio(item);return meta.volume*(await FreqxLoudness.analyze(buffer,desktopConfig.audio.loudness)).gain;})()`);
+      assert('board playback applies the measured loudness multiplier', Math.abs(gain - expected) < 0.0001 && Math.abs(gain - 0.2) > 0.01, { gain, expected });
+      await evaluate(`(async()=>{stopAllSounds();openSoundEditor(importedLibraryItems[0]);soundEditorMatchLoudness.checked=false;saveSoundEditorButton.click();await playImportedSound(importedLibraryItems[0]);})()`);
+      await pause(80);
+      const optOut = await evaluate('({ gain:Array.from(activeSoundNodes)[0].outputNode.gain.value, meta:getSoundMetadata(importedLibraryItems[0]), stored:JSON.parse(localStorage.getItem("soundmuncher:library-metadata")) })');
+      assert('per-sound opt-out preserves the manual volume and is saved', optOut.meta.matchLoudness === false && Math.abs(optOut.gain - optOut.meta.volume) < 0.0001 && optOut.stored.sounds[Object.keys(optOut.stored.sounds)[0]].matchLoudness === false);
+      const downmix = await evaluate(`(async()=>{
+        const results=[];
+        for(const channels of [4,6]){
+          const context=new OfflineAudioContext(2,4800,48000);
+          await context.audioWorklet.addModule(new URL('audio/mix-worklet.mjs',location.href));
+          const node=new AudioWorkletNode(context,'freqx-voice-priority',{
+            numberOfInputs:2,numberOfOutputs:1,outputChannelCount:[2],channelCount:2,channelCountMode:'explicit',channelInterpretation:'speakers'});
+          const source=context.createBufferSource();source.buffer=context.createBuffer(channels,4800,48000);
+          if(channels===4){source.buffer.getChannelData(0).fill(.1);source.buffer.getChannelData(1).fill(.1);}
+          else source.buffer.getChannelData(2).fill(.1);
+          source.connect(node,0,0);node.connect(context.destination);source.start();
+          const output=await context.startRendering();results.push([output.getChannelData(0)[1000],output.getChannelData(1)[1000]]);
+        }
+        return results;
+      })()`);
+      assert('real worklet speaker downmix preserves quad fronts and 5.1 center audio',
+        downmix[0].every(value=>Math.abs(value-.05)<1e-6) && downmix[1].every(value=>Math.abs(value-.1*Math.SQRT1_2)<1e-6), downmix);
+      const saved = await evaluate('JSON.parse(localStorage.getItem("soundmuncher:mixer-settings"))');
+      await createWindow(saved);
+      assert('new balance preferences restore across launches including 300%', await evaluate('Number(micGainSlider.value)===3 && voicePriorityToggle.checked && voicePriorityStrength.value==="strong" && matchClipLoudnessToggle.checked'));
+      await evaluate(`voicePriorityToggle.scrollIntoView({block:'center'});`);
+      await pause(100);
+      fs.writeFileSync(path.join(output, 'mix-features.png'), (await win.webContents.capturePage()).toPNG());
+      assert('audio-thread processors complete without errors or renderer crashes', await evaluate('__micTest.crashes.length===0 && __micTest.worklets.every(w=>w.errors.length===0)'));
+      await evaluate('micLimiterNode.dispatchEvent(new Event("processorerror"))');
+      await until('audioContext.state==="suspended" && mixOutContext.state==="suspended" && localOutContext.state==="suspended"', 'failed DSP output suspension');
+      assert('failed peak protection stops microphone tracks and exposes a restart message', await evaluate('mixerGraphFailed && !isMicCaptureEnabled && !micStream && !micSource && routeState.textContent.includes("Restart") && __micTest.captures.at(-1).stream.getTracks().every(t=>t.readyState==="ended")'));
+      await evaluate('playImportedSound(importedLibraryItems[0])');
+      assert('failed DSP cannot restart unprotected playback', await evaluate('activeSoundNodes.size===0 && pendingSoundStarts.size===0 && audioContext.state==="suspended"'));
     } else {
       assert('persisted off preference loads', await evaluate('!voiceIsolationToggle.checked && !micIsolationSession && voiceIsolationMode.value === "off"'));
       assert('microphone disables all Chromium processing', await evaluate(`__micTest.captures.every(({constraints}) => {
@@ -249,7 +337,7 @@ async function runMain() {
       await until('activeSoundNodes.size === 1', 'looping soundboard fixture');
       await pause(250);
       const baseline = await evaluate(graphExpression);
-      const expectedConnections = [['soundGainNode','soundToMixGainNode'],['soundGainNode','appPlaybackGainNode'],['soundToMixGainNode','masterGainNode'],['masterGainNode','compressorNode'],['compressorNode','mixDestination'],['compressorNode','levelAnalyser'],['appPlaybackGainNode','appPlaybackDestination'],['mixOutSource','mixOutGainNode'],['mixOutGainNode','mixOutDestination'],['localOutSource','localOutDestination']];
+      const expectedConnections = [['soundGainNode','voicePriorityNode'],['voicePriorityNode','soundToMixGainNode'],['soundGainNode','appPlaybackGainNode'],['soundToMixGainNode','masterGainNode'],['masterGainNode','compressorNode'],['compressorNode','mixLimiterNode'],['mixLimiterNode','mixDestination'],['mixLimiterNode','levelAnalyser'],['appPlaybackGainNode','localPlaybackLimiterNode'],['localPlaybackLimiterNode','appPlaybackDestination'],['mixOutSource','mixOutGainNode'],['mixOutGainNode','mixOutDestination'],['localOutSource','localOutDestination']];
       assert('existing soundboard and output routing remains intact', expectedConnections.every(([from,to]) => baseline.edges.some(edge => edge[0] === baseline.ids[from] && edge[1] === baseline.ids[to])));
       const beforeSignal = await measureSound();
       assert('soundboard fixtures reach local playback, mix branch and mixed output', beforeSignal.every(value => value > 0.005), beforeSignal);
@@ -257,7 +345,7 @@ async function runMain() {
       await evaluate('voiceIsolationToggle.click()');
       await until('!!micIsolationSession', 'voice isolation session');
       await pause(200);
-      assert('toggle enables local RNNoise on a dedicated 48 kHz context', await evaluate('__micTest.worklets.length === 1 && __micTest.worklets[0].context.sampleRate === 48000 && __micTest.worklets[0].context !== audioContext && __micTest.worklets[0].context !== mixOutContext && __micTest.worklets[0].context !== localOutContext'));
+      assert('toggle enables local RNNoise on a dedicated 48 kHz context', await evaluate('(()=>{const worklets=__micTest.worklets.filter(w=>w.name==="freqx-voice-isolation");return worklets.length===1 && worklets[0].context.sampleRate===48000 && worklets[0].context!==audioContext && worklets[0].context!==mixOutContext && worklets[0].context!==localOutContext;})()'));
       assert('only mic source consumes processed stream', await evaluate('micSource.mediaStream === micIsolationSession.stream && micSource.mediaStream !== micStream && __micTest.edges.some(edge => edge[0] === __micTest.id(micSource) && edge[1] === __micTest.id(micGainNode))'));
       assert('toggle does not reacquire or stop physical input', await evaluate('micStream === __originalMic && __micTest.captures.length === __originalCaptureCount && micStream.getTracks().every(track => track.readyState === "live")'));
       assert('toggle does not call output routing APIs', await evaluate('__micTest.sinks.length') === sinksBefore);
