@@ -7,7 +7,50 @@ const os = require('node:os');
 const { createHash } = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { bump } = require('../scripts/release-version.cjs');
+const { getReleaseState, prepareRelease } = require('../scripts/release-state.cjs');
 const { createUpdateClient, verifyDownload } = require('../runtime/update-client.cjs');
+test('release lookup treats a missing release as a successful unpublished state', () => {
+  const run = args => {
+    assert.deepEqual(args.slice(0, 2), ['api', 'graphql']);
+    assert.ok(args.includes('owner=reallav0')); assert.ok(args.includes('name=freqx')); assert.ok(args.includes('tag=v2.0.3'));
+    return JSON.stringify({ data: { repository: { release: null } } });
+  };
+  assert.deepEqual(getReleaseState('reallav0/freqx', 'v2.0.3', run), { exists: false, published: false });
+});
+test('release lookup distinguishes drafts from published releases', () => {
+  for (const isDraft of [true, false]) {
+    const run = () => JSON.stringify({ data: { repository: { release: { isDraft } } } });
+    assert.deepEqual(getReleaseState('reallav0/freqx', 'v2.0.3', run), { exists: true, published: !isDraft });
+  }
+});
+test('release lookup fails on CLI errors, GraphQL errors and malformed responses', () => {
+  for (const message of ['authentication failed', 'network unavailable', 'rate limit exceeded']) {
+    assert.throws(() => getReleaseState('reallav0/freqx', 'v2.0.3', () => { throw new Error(message); }), new RegExp(message));
+  }
+  for (const response of [{ errors: [{ message: 'denied' }], data: { repository: { release: null } } }, { data: { repository: null } }, {}, { data: { repository: {} } }, { data: { repository: { release: { isDraft: 'false' } } } }]) {
+    assert.throws(() => getReleaseState('reallav0/freqx', 'v2.0.3', () => JSON.stringify(response)), /lookup failed|invalid release/);
+  }
+  assert.throws(() => getReleaseState('reallav0/freqx', 'v2.0.3', () => 'not JSON'), SyntaxError);
+});
+test('release preparation creates only missing drafts and refuses published artifacts', () => {
+  for (const release of [null, { isDraft: true }, { isDraft: false }]) {
+    const commands = [];
+    const run = args => { commands.push(args); return JSON.stringify({ data: { repository: { release } } }); };
+    if (release?.isDraft === false) assert.throws(() => prepareRelease('reallav0/freqx', 'v2.0.3', run), /already published/);
+    else prepareRelease('reallav0/freqx', 'v2.0.3', run);
+    assert.equal(commands.length, release === null ? 2 : 1);
+    if (release === null) assert.deepEqual(commands[1], ['release', 'create', 'v2.0.3', '--repo', 'reallav0/freqx', '--verify-tag', '--draft', '--generate-notes', '--title', 'FreqX v2.0.3']);
+  }
+});
+test('release preparation stops on lookup and draft creation failures', () => {
+  let calls = 0;
+  assert.throws(() => prepareRelease('reallav0/freqx', 'v2.0.3', () => { calls++; throw new Error('lookup unavailable'); }), /lookup unavailable/);
+  assert.equal(calls, 1);
+  assert.throws(() => prepareRelease('reallav0/freqx', 'v2.0.3', args => {
+    if (args[0] === 'api') return JSON.stringify({ data: { repository: { release: null } } });
+    throw new Error('creation denied');
+  }), /creation denied/);
+});
 test('runtime update feed matches the release publisher independently of build metadata', () => {
   const metadata = require('../package.json');
   assert.deepEqual(require('../runtime/desktop-config.cjs').config.updater.feed, metadata.build.publish);

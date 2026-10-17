@@ -12,6 +12,10 @@ The version remains 1.8.0 locally; automation was not run against the remote.
 
 Each source SHA is recorded in the release commit/tag. Reruns find that tag and
 do not bump again. Published releases are skipped; failed drafts can be completed.
+The release lookup uses GitHub GraphQL so a missing release returns a successful
+null result instead of leaving PowerShell with a failing CLI exit code. Lookup
+errors stop the job; publication rechecks the release and refuses to replace
+artifacts if it has already been published.
 Version and tag push are atomic, preventing a partial remote bump. Workflows are
 serialized and never cancel an active release. If main advances while its checks
 run, the old event stops rather than releasing unchecked newer code; the latest
