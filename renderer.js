@@ -228,6 +228,13 @@ const masterGainSlider = document.getElementById("masterGain");
 const micGainValue = document.getElementById("micGainValue");
 const soundGainValue = document.getElementById("soundGainValue");
 const masterGainValue = document.getElementById("masterGainValue");
+const micLevelValue = document.getElementById("micLevelValue");
+const micLevelTrack = document.getElementById("micLevelTrack");
+const micLevelFill = document.getElementById("micLevelFill");
+const voicePriorityToggle = document.getElementById("voicePriorityToggle");
+const voicePriorityStrength = document.getElementById("voicePriorityStrength");
+const voicePriorityState = document.getElementById("voicePriorityState");
+const matchClipLoudnessToggle = document.getElementById("matchClipLoudness");
 const inputDeviceSelect = document.getElementById("inputDevice");
 const outputDeviceSelect = document.getElementById("outputDevice");
 const localPlaybackDeviceSelect = document.getElementById("localPlaybackDevice");
@@ -274,6 +281,7 @@ const soundEditorColor = document.getElementById("soundEditorColor");
 const soundEditorMode = document.getElementById("soundEditorMode");
 const soundEditorVolume = document.getElementById("soundEditorVolume");
 const soundEditorVolumeValue = document.getElementById("soundEditorVolumeValue");
+const soundEditorMatchLoudness = document.getElementById("soundEditorMatchLoudness");
 const soundEditorTrimStart = document.getElementById("soundEditorTrimStart");
 const soundEditorTrimEnd = document.getElementById("soundEditorTrimEnd");
 const soundEditorFadeIn = document.getElementById("soundEditorFadeIn");
@@ -317,6 +325,18 @@ let referenceRefreshGeneration = 0;
 let lastDefaultReferenceId;
 
 let audioContext;
+let mixerGraphReady = null;
+let mixerGraphFailed = false;
+let voicePriorityNode;
+let micLimiterNode;
+let mixLimiterNode;
+let localPlaybackLimiterNode;
+let micLevelAnalyser;
+let micLevelData;
+let isVoicePriorityEnabled;
+let selectedVoicePriorityStrength;
+let isMatchClipLoudnessEnabled;
+let voicePriorityActive = false;
 let micStream;
 let micTrackEndedListener;
 let micSource;
@@ -381,6 +401,7 @@ let importedAudioBufferCacheLimitBytes;
 let importedAudioBufferTotalBytes = 0;
 const activeSoundNodes = new Set();
 const pendingSoundStarts = new Set();
+const clipLoudnessCache = new WeakMap();
 let discoverUi;
 let discoverPreviewSource = null;
 let discoverPreviewGain = null;
@@ -617,11 +638,12 @@ function loadMixerSettings() {
     const settings = raw ? JSON.parse(raw) : null;
 
     [
-      [micGainSlider, settings?.micGain],
-      [soundGainSlider, settings?.soundGain],
-      [masterGainSlider, settings?.masterGain]
-    ].forEach(([slider, value]) => {
-      const clamped = clampUnitInterval(value);
+      [micGainSlider, settings?.micGain, 3],
+      [soundGainSlider, settings?.soundGain, 1],
+      [masterGainSlider, settings?.masterGain, 1]
+    ].forEach(([slider, value, maximum]) => {
+      const clamped = typeof value === "number" && Number.isFinite(value)
+        ? Math.min(maximum, Math.max(0, value)) : null;
       if (slider && clamped !== null) {
         slider.value = String(clamped);
       }
@@ -630,6 +652,9 @@ function loadMixerSettings() {
     if (typeof settings?.soundPlayback === "boolean") {
       isSoundPlaybackEnabled = settings.soundPlayback;
     }
+    if (typeof settings?.voicePriority === "boolean") isVoicePriorityEnabled = settings.voicePriority;
+    if (["gentle", "medium", "strong"].includes(settings?.voicePriorityStrength)) selectedVoicePriorityStrength = settings.voicePriorityStrength;
+    if (typeof settings?.matchClipLoudness === "boolean") isMatchClipLoudnessEnabled = settings.matchClipLoudness;
 
     if (typeof settings?.voiceIsolation === "boolean") {
       isVoiceIsolationEnabled = settings.voiceIsolation;
@@ -664,6 +689,9 @@ function saveMixerSettings() {
       soundGain: Number(soundGainSlider.value),
       masterGain: Number(masterGainSlider.value),
       soundPlayback: isSoundPlaybackEnabled,
+      voicePriority: isVoicePriorityEnabled,
+      voicePriorityStrength: selectedVoicePriorityStrength,
+      matchClipLoudness: isMatchClipLoudnessEnabled,
       voiceIsolation: isVoiceIsolationEnabled,
       voiceIsolationMode: selectedVoiceIsolationMode,
       voiceIsolationStrength: selectedVoiceIsolationStrength,
@@ -709,6 +737,7 @@ function normalizeSoundMetadata(item, metadata = {}) {
     board,
     color,
     volume: clampNumber(metadata.volume, 0, 1.5, defaults.volume),
+    matchLoudness: typeof metadata.matchLoudness === "boolean" ? metadata.matchLoudness : defaults.matchLoudness,
     trimStart: clampNumber(metadata.trimStart, 0, 3600, defaults.trimStart),
     trimEnd: clampNumber(metadata.trimEnd, 0, 3600, defaults.trimEnd),
     fadeIn: clampNumber(metadata.fadeIn, 0, 30, defaults.fadeIn),
@@ -1700,6 +1729,7 @@ function openSoundEditor(item) {
   if (soundEditorVolumeValue) {
     soundEditorVolumeValue.textContent = percent(metadata.volume);
   }
+  if (soundEditorMatchLoudness) soundEditorMatchLoudness.checked = metadata.matchLoudness;
   if (soundEditorTrimStart) {
     soundEditorTrimStart.value = String(metadata.trimStart);
   }
@@ -1732,6 +1762,7 @@ function readSoundEditorMetadata(item) {
     board: soundEditorBoard?.value,
     color: soundEditorColor?.value,
     volume: soundEditorVolume?.value,
+    matchLoudness: soundEditorMatchLoudness?.checked,
     trimStart: soundEditorTrimStart?.value,
     trimEnd: soundEditorTrimEnd?.value,
     fadeIn: soundEditorFadeIn?.value,
@@ -2440,6 +2471,22 @@ function stopAllSounds() {
   setLibraryState("Stopped all playing sounds.");
 }
 
+async function getClipLoudnessGain(buffer, trimStart, trimEnd) {
+  let trims = clipLoudnessCache.get(buffer);
+  if (!trims) {
+    trims = new Map();
+    clipLoudnessCache.set(buffer, trims);
+  }
+  const key = `${trimStart}:${trimEnd}`;
+  if (!trims.has(key)) {
+    if (!window.FreqxLoudness) throw new Error("Clip loudness analysis is unavailable.");
+    const analysis = window.FreqxLoudness.analyze(buffer, { ...desktopConfig.audio.loudness, trimStart, trimEnd });
+    trims.set(key, analysis);
+    analysis.catch(() => { if (trims.get(key) === analysis) trims.delete(key); });
+  }
+  return (await trims.get(key)).gain;
+}
+
 async function playImportedSound(item) {
   const metadata = getSoundMetadata(item);
   if (metadata.playbackMode === "once" && hasActiveSoundForPath(item.path)) {
@@ -2461,9 +2508,7 @@ async function playImportedSound(item) {
   const request = { itemPath: item.path, cancelled: false };
   pendingSoundStarts.add(request);
   try {
-    if (!audioContext) {
-      await setupMixer({ requestMic: false });
-    }
+    await setupMixer({ requestMic: false, routeOutput: false });
     if (request.cancelled) return;
 
     const buffer = await decodeImportedAudio(item);
@@ -2471,6 +2516,14 @@ async function playImportedSound(item) {
     const trimStart = Math.min(metadata.trimStart, Math.max(0, buffer.duration - 0.01));
     const trimEnd = Math.min(metadata.trimEnd, Math.max(0, buffer.duration - trimStart - 0.01));
     const playableDuration = Math.max(0.01, buffer.duration - trimStart - trimEnd);
+    let loudnessGain = 1;
+    if (isMatchClipLoudnessEnabled && metadata.matchLoudness) {
+      setLibraryState(`Balancing ${metadata.name}…`);
+      loudnessGain = await getClipLoudnessGain(buffer, trimStart, trimEnd);
+      if (request.cancelled) return;
+      if (!isMatchClipLoudnessEnabled) loudnessGain = 1;
+    }
+    const clipVolume = metadata.volume * loudnessGain;
     const source = audioContext.createBufferSource();
     const outputGain = audioContext.createGain();
 
@@ -2486,16 +2539,16 @@ async function playImportedSound(item) {
     // that caused gain envelope compression / speed-up artifacts
     const now = audioContext.currentTime;
 
-    outputGain.gain.setValueAtTime(Math.max(0.0001, metadata.volume), now);
+    outputGain.gain.setValueAtTime(clipVolume, now);
     if (metadata.fadeIn > 0) {
-      outputGain.gain.setValueAtTime(0.0001, now);
-      outputGain.gain.linearRampToValueAtTime(Math.max(0.0001, metadata.volume), now + Math.min(metadata.fadeIn, playableDuration));
+      outputGain.gain.setValueAtTime(0, now);
+      outputGain.gain.linearRampToValueAtTime(clipVolume, now + Math.min(metadata.fadeIn, playableDuration));
     }
 
     if (!source.loop && metadata.fadeOut > 0) {
       const fadeStart = now + Math.max(0, playableDuration - Math.min(metadata.fadeOut, playableDuration));
-      outputGain.gain.setValueAtTime(Math.max(0.0001, metadata.volume), fadeStart);
-      outputGain.gain.linearRampToValueAtTime(0.0001, now + playableDuration);
+      outputGain.gain.setValueAtTime(clipVolume, fadeStart);
+      outputGain.gain.linearRampToValueAtTime(0, now + playableDuration);
     }
 
     source.connect(outputGain);
@@ -2508,8 +2561,9 @@ async function playImportedSound(item) {
     }
 
     nowPlaying.textContent = metadata.name;
+    if (isMatchClipLoudnessEnabled && metadata.matchLoudness) setLibraryState(`Playing ${metadata.name} with matched loudness.`);
   } catch (error) {
-    if (!request.cancelled) setLibraryState(`Could not play ${item.name}.`);
+    if (!request.cancelled) setLibraryState(`Could not play ${item.name}. ${mixerGraphFailed ? "Audio protection could not start. Restart Freqx and try again." : ""}`.trim());
   } finally {
     pendingSoundStarts.delete(request);
   }
@@ -2859,9 +2913,7 @@ async function applyLocalPlaybackDevice(options = {}) {
 }
 
 async function sendTestTone() {
-  if (!audioContext) {
-    await setupMixer({ requestMic: false });
-  }
+  await setupMixer({ requestMic: false, routeOutput: false });
 
   const now = audioContext.currentTime;
   const osc = audioContext.createOscillator();
@@ -2929,7 +2981,7 @@ function updateMixStateText() {
 }
 
 function updateMixerGains() {
-  if (!audioContext) {
+  if (!audioContext || !micGainNode || mixerGraphFailed) {
     return;
   }
 
@@ -2937,6 +2989,33 @@ function updateMixerGains() {
   micGainNode.gain.setTargetAtTime(Number(micGainSlider.value), now, desktopConfig.audio.gainRampSeconds);
   soundGainNode.gain.setTargetAtTime(Number(soundGainSlider.value), now, desktopConfig.audio.gainRampSeconds);
   masterGainNode.gain.setTargetAtTime(Number(masterGainSlider.value), now, desktopConfig.audio.gainRampSeconds);
+  updateVoicePriority();
+}
+
+function updateVoicePriorityUi() {
+  if (voicePriorityToggle) voicePriorityToggle.checked = isVoicePriorityEnabled;
+  if (voicePriorityStrength) {
+    voicePriorityStrength.value = selectedVoicePriorityStrength;
+    voicePriorityStrength.disabled = !isVoicePriorityEnabled;
+  }
+  if (matchClipLoudnessToggle) matchClipLoudnessToggle.checked = isMatchClipLoudnessEnabled;
+  if (!voicePriorityState) return;
+  const listening = isVoicePriorityEnabled && isMicCaptureEnabled && Boolean(micStream) && Number(micGainSlider.value) > 0;
+  const active = listening && voicePriorityActive;
+  voicePriorityState.dataset.active = String(active);
+  voicePriorityState.textContent = !isVoicePriorityEnabled ? "Voice priority off"
+    : !listening ? "Voice priority waiting for microphone"
+      : active ? "Lowering soundboard in calls" : "Listening for your voice";
+}
+
+function updateVoicePriority() {
+  const enabled = isVoicePriorityEnabled && isMicCaptureEnabled && Boolean(micStream) && Number(micGainSlider.value) > 0;
+  if (voicePriorityNode && audioContext && !mixerGraphFailed) {
+    voicePriorityNode.parameters.get("enabled").setValueAtTime(enabled ? 1 : 0, audioContext.currentTime);
+    voicePriorityNode.parameters.get("reductionDb").setValueAtTime(desktopConfig.audio.voicePriority.reductions[selectedVoicePriorityStrength], audioContext.currentTime);
+  }
+  if (!enabled) voicePriorityActive = false;
+  updateVoicePriorityUi();
 }
 
 function updateMicNoiseReduction() {
@@ -2983,6 +3062,7 @@ function updateLevelMeter(timestamp = 0) {
     return;
   }
   meterLastUpdateTime = timestamp;
+  updateMicLevelMeter();
 
   levelAnalyser.getFloatTimeDomainData(levelData);
 
@@ -3129,6 +3209,7 @@ function connectMicStreamToMixer(stream) {
   micSource?.disconnect();
   micSource = nextSource;
   micSource.connect(micGainNode);
+  micSource.connect(voicePriorityNode, 0, 1);
   const processed = stream !== micStream;
   // The processing service already applies its 80 Hz high-pass and compressor.
   micHighPassNode.frequency.value = processed ? 20 : desktopConfig.audio.equalizer.highPass.frequency;
@@ -3136,6 +3217,7 @@ function connectMicStreamToMixer(stream) {
   // The old hard gate/expander are bypassed; update on routing changes only.
   updateMicNoiseReduction();
   updateMicNoiseGate();
+  updateVoicePriority();
 }
 
 async function configureMicVoiceIsolation() {
@@ -3246,11 +3328,80 @@ async function setVoiceIsolationMode(mode) {
   await setVoiceIsolationEnabled(mode !== "off");
 }
 
-async function setupMixer(options = {}) {
-  const { requestMic = true } = options;
+function updateMicLevelMeter() {
+  if (!micLevelAnalyser || !micLevelData) return;
+  let power = 0;
+  if (micStream) {
+    micLevelAnalyser.getFloatTimeDomainData(micLevelData);
+    for (const sample of micLevelData) power += sample * sample;
+  }
+  const db = power > 0 ? 10 * Math.log10(power / micLevelData.length) : -Infinity;
+  const bounded = Math.max(-60, Math.min(0, db));
+  if (micLevelValue) micLevelValue.textContent = Number.isFinite(db) ? `${bounded.toFixed(1)} dB` : "-inf dB";
+  if (micLevelFill) micLevelFill.style.width = `${((bounded + 60) / 60 * 100).toFixed(1)}%`;
+  if (micLevelTrack) micLevelTrack.setAttribute("aria-valuenow", String(Math.round(bounded)));
+}
 
+async function ensureMixerGraph() {
+  if (!mixerGraphReady) {
+    mixerGraphReady = initializeMixerGraph().then(async () => {
+      // First playback waits for both safe DSP and the selected destinations.
+      // Later pad presses reuse this readiness without resetting audio sinks.
+      await applyOutputDevice();
+      await applyLocalPlaybackDevice({ silent: true });
+      updateMixerGains();
+      updateGainLabels();
+    }).catch(async (error) => {
+      mixerGraphFailed = true;
+      micToggleRevision += 1;
+      isMicCaptureEnabled = false;
+      stopMicCapture();
+      updateMixStateText();
+      updateToggleButtonLabels();
+      await Promise.allSettled([audioContext?.suspend(), mixOutContext?.suspend(), localOutContext?.suspend()]);
+      setRouteState("Audio protection could not start. Restart Freqx and try again.");
+      throw error;
+    });
+  }
+  await mixerGraphReady;
+}
+
+async function initializeMixerGraph() {
   if (!audioContext) {
     audioContext = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
+    await audioContext.audioWorklet.addModule(new URL("audio/mix-worklet.mjs", window.location.href).href);
+    const limiterOptions = { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 2, channelCountMode: "explicit", channelInterpretation: "speakers", outputChannelCount: [2], processorOptions: desktopConfig.audio.peakProtection };
+    micLimiterNode = new AudioWorkletNode(audioContext, "freqx-peak-limiter", limiterOptions);
+    micLevelAnalyser = audioContext.createAnalyser();
+    micLevelAnalyser.fftSize = desktopConfig.audio.analysers.level.fftSize;
+    micLevelData = new Float32Array(micLevelAnalyser.fftSize);
+    micLimiterNode.connect(micLevelAnalyser);
+    mixLimiterNode = new AudioWorkletNode(audioContext, "freqx-peak-limiter", limiterOptions);
+    localPlaybackLimiterNode = new AudioWorkletNode(audioContext, "freqx-peak-limiter", limiterOptions);
+    voicePriorityNode = new AudioWorkletNode(audioContext, "freqx-voice-priority", {
+      numberOfInputs: 2, numberOfOutputs: 1, channelCount: 2, channelCountMode: "explicit", channelInterpretation: "speakers", outputChannelCount: [2],
+      parameterData: { enabled: 0, reductionDb: desktopConfig.audio.voicePriority.reductions[selectedVoicePriorityStrength], thresholdDb: desktopConfig.audio.voicePriority.thresholdDb },
+      processorOptions: desktopConfig.audio.voicePriority
+    });
+    voicePriorityNode.port.onmessage = ({ data }) => {
+      if (data?.type !== "ducking") return;
+      voicePriorityActive = Boolean(data.active);
+      updateVoicePriorityUi();
+    };
+    for (const node of [micLimiterNode, mixLimiterNode, localPlaybackLimiterNode, voicePriorityNode]) {
+      node.addEventListener("processorerror", () => {
+        if (mixerGraphFailed) return;
+        mixerGraphFailed = true;
+        micToggleRevision += 1;
+        isMicCaptureEnabled = false;
+        stopAllSounds();
+        stopMicCapture();
+        updateMixStateText();
+        updateToggleButtonLabels();
+        void Promise.allSettled([audioContext.suspend(), mixOutContext?.suspend(), localOutContext?.suspend()]);
+        setRouteState("Audio protection stopped. Restart Freqx before playing audio.");
+      });
+    }
 
     micGainNode = audioContext.createGain();
     micHighPassNode = audioContext.createBiquadFilter();
@@ -3345,16 +3496,20 @@ async function setupMixer(options = {}) {
     micLowPassNode.connect(micFrequencyAnalyser);
     micLowPassNode.connect(micCompressorNode);
     micCompressorNode.connect(micGateGainNode);
-    micGateGainNode.connect(masterGainNode);
-    micGateGainNode.connect(micMonitorGainNode);
-    soundGainNode.connect(soundToMixGainNode);
+    micGateGainNode.connect(micLimiterNode);
+    micLimiterNode.connect(masterGainNode);
+    micLimiterNode.connect(micMonitorGainNode);
+    soundGainNode.connect(voicePriorityNode, 0, 0);
+    voicePriorityNode.connect(soundToMixGainNode);
     soundToMixGainNode.connect(masterGainNode);
     masterGainNode.connect(compressorNode);
-    compressorNode.connect(levelAnalyser);
-    compressorNode.connect(mixDestination);
+    compressorNode.connect(mixLimiterNode);
+    mixLimiterNode.connect(levelAnalyser);
+    mixLimiterNode.connect(mixDestination);
     soundGainNode.connect(appPlaybackGainNode);
     micMonitorGainNode.connect(audioContext.destination);
-    appPlaybackGainNode.connect(appPlaybackDestination);
+    appPlaybackGainNode.connect(localPlaybackLimiterNode);
+    localPlaybackLimiterNode.connect(appPlaybackDestination);
 
     mixOutContext = new AudioContext({ latencyHint: "interactive", sampleRate: 48000 });
     mixOutGainNode = mixOutContext.createGain();
@@ -3369,12 +3524,20 @@ async function setupMixer(options = {}) {
     bindLevelMeterVisibility();
     scheduleLevelMeter();
   }
+}
+
+async function setupMixer(options = {}) {
+  const { requestMic = true, routeOutput = true } = options;
+  const requestedMicGeneration = micCaptureGeneration;
+  await ensureMixerGraph();
+  if (mixerGraphFailed) throw new Error("Audio protection is unavailable.");
 
   if (audioContext.state !== "running") {
     await audioContext.resume();
   }
+  if (mixerGraphFailed) throw new Error("Audio protection is unavailable.");
 
-  if (requestMic && !micStream) {
+  if (requestMic && requestedMicGeneration === micCaptureGeneration && !micStream) {
     const selectedInputLabel = inputDeviceSelect.selectedOptions?.[0]?.textContent || "";
     const selectedInputDevice = getSelectedInputDevice();
     const selectedOutputDevice = getSelectedOutputDevice();
@@ -3432,11 +3595,13 @@ async function setupMixer(options = {}) {
     // Capture is already live while the model starts. Let a second Mic click
     // mute it immediately instead of queuing another enable request.
     isMicCaptureEnabled = true;
+    updateVoicePriority();
     updateMixStateText();
     updateToggleButtonLabels();
     await configureMicVoiceIsolation();
   }
 
+  if (mixerGraphFailed) throw new Error("Audio protection is unavailable.");
   if (mixOutContext && mixOutContext.state !== "running") {
     try {
       await mixOutContext.resume();
@@ -3444,6 +3609,7 @@ async function setupMixer(options = {}) {
     }
   }
 
+  if (mixerGraphFailed) throw new Error("Audio protection is unavailable.");
   if (localOutContext && localOutContext.state !== "running") {
     try {
       await localOutContext.resume();
@@ -3451,8 +3617,11 @@ async function setupMixer(options = {}) {
     }
   }
 
-  await applyOutputDevice();
-  await applyLocalPlaybackDevice({ silent: true });
+  if (mixerGraphFailed) throw new Error("Audio protection is unavailable.");
+  if (routeOutput) {
+    await applyOutputDevice();
+    await applyLocalPlaybackDevice({ silent: true });
+  }
 
   updateMixerGains();
   updateGainLabels();
@@ -3500,6 +3669,7 @@ function stopMicCapture() {
     micGateGainNode.gain.setTargetAtTime(micGateClosedGain, audioContext.currentTime, desktopConfig.audio.routeRampSeconds);
   }
   updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
+  updateVoicePriority();
 }
 
 function isTextEditingElement(element) {
@@ -3633,7 +3803,7 @@ async function setMicCaptureEnabled(enabled) {
 }
 
 async function setMixToOutputEnabled(enabled) {
-  if (!audioContext && enabled) {
+  if (enabled) {
     try {
       await setupMixer({ requestMic: false });
     } catch (error) {
@@ -3653,7 +3823,7 @@ async function setMixToOutputEnabled(enabled) {
 }
 
 async function setSoundPlaybackEnabled(enabled) {
-  if (!audioContext && enabled) {
+  if (enabled) {
     try {
       await setupMixer({ requestMic: false });
     } catch (error) {
@@ -3724,6 +3894,21 @@ async function switchMicInput() {
 
 toggleMicCaptureButton?.addEventListener("click", () => {
   setMicCaptureEnabled(!isMicCaptureEnabled);
+});
+voicePriorityToggle?.addEventListener("change", () => {
+  isVoicePriorityEnabled = voicePriorityToggle.checked;
+  updateVoicePriority();
+  saveMixerSettings();
+});
+voicePriorityStrength?.addEventListener("change", () => {
+  selectedVoicePriorityStrength = voicePriorityStrength.value;
+  updateVoicePriority();
+  saveMixerSettings();
+});
+matchClipLoudnessToggle?.addEventListener("change", () => {
+  isMatchClipLoudnessEnabled = matchClipLoudnessToggle.checked;
+  saveMixerSettings();
+  setLibraryState(isMatchClipLoudnessEnabled ? "Clip loudness matching applies the next time you play a sound." : "Clip loudness matching off.");
 });
 voiceIsolationToggle?.addEventListener("change", () => {
   void setVoiceIsolationEnabled(voiceIsolationToggle.checked);
@@ -3920,7 +4105,7 @@ async function previewDiscoverSound(id, onEnded) {
   stopDiscoverPreview();
   const generation = discoverPreviewGeneration;
   if (!isSoundPlaybackEnabled) throw new Error("Turn Hear on in the mixer to preview through your monitor.");
-  if (!audioContext) await setupMixer({ requestMic: false });
+  await setupMixer({ requestMic: false, routeOutput: false });
   if (generation !== discoverPreviewGeneration) return;
   const result = await window.soundmuncher.previewPublicSound(id);
   if (generation !== discoverPreviewGeneration) return;
@@ -3979,6 +4164,9 @@ async function initializeConfiguredApp() {
   isMicCaptureEnabled = defaults.micEnabled;
   isMixToOutputEnabled = defaults.mixEnabled;
   isSoundPlaybackEnabled = defaults.playbackEnabled;
+  isVoicePriorityEnabled = defaults.voicePriority;
+  selectedVoicePriorityStrength = defaults.voicePriorityStrength;
+  isMatchClipLoudnessEnabled = defaults.matchClipLoudness;
   soundToMixBoost = desktopConfig.audio.soundToMixBoost;
   micGateClosedGain = desktopConfig.audio.micGateClosedGain;
   importedAudioBufferCacheLimitBytes = desktopConfig.audio.bufferCacheBytes;
@@ -3991,6 +4179,7 @@ async function initializeConfiguredApp() {
   masterGainSlider.value = defaults.masterGain;
 
   loadMixerSettings();
+  updateVoicePriorityUi();
   updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
   loadLibraryMetadata();
   loadLibraryView();

@@ -24,6 +24,10 @@ use a -18 dB threshold, 12 dB knee and 2:1 ratio with no lookahead. Shared mixin
 limiting and gains preserve their defaults. JSON edits are explicit developer
 tuning changes.
 
+Microphone volume accepts 0–300%. Voice priority, clip loudness matching, and
+lookahead peak protection have dedicated tuning groups under `audio`; see
+[voice and clip balance](audio-balance.md) for signal routing and checks.
+
 Restart a development app after editing. Run the checks and rebuild the app to
 distribute a configuration change. JSON is not reloaded in a running audio graph.
 The schema checks required keys, types, ranges, and related values before freezing
