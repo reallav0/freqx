@@ -177,6 +177,16 @@ input.pad-volume-slider::-moz-range-thumb { width: 10px; height: 10px; border: 0
 .voice-priority-row .device-select { height: 29px; font-size: 12px; }
 .mix-assist-state { min-height: 16px; }
 .mix-assist-state[data-active="true"] { color: var(--accent); }
+.auto-ptt-controls { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.auto-ptt-controls .setting-toggle { gap: 8px; min-height: 28px; font-size: 12px; }
+.auto-ptt-controls .route-field { gap: 4px; }
+.auto-ptt-controls .route-field label, .auto-ptt-key-row label { color: var(--text-muted); font-size: 12px; }
+.auto-ptt-controls .device-select { height: 32px; min-width: 0; font-size: 12px; }
+.auto-ptt-controls .inline-control { gap: 8px; }
+.auto-ptt-controls .mixer-action { min-height: 32px; padding-inline: 8px; font-size: 11px; }
+.auto-ptt-key-row { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 8px; align-items: center; }
+#autoPttKey { font-family: var(--font-mono); }
+#autoPttState[data-state="error"] { color: var(--danger); }
 .sound-loudness-toggle, .sound-loudness-help { grid-column: 1 / -1; }
 .sound-loudness-help { margin-top: -8px; }
 .mixer-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; row-gap: 4px; min-width: 0; }

@@ -18,6 +18,8 @@ const { createCrashRecovery } = require("./runtime/crash-recovery.cjs");
 const { PublicLibrary } = require("./runtime/public-library.cjs");
 const { LoopbackService } = require('./runtime/loopback-reference.cjs');
 const { AudioLinkService } = require('./runtime/audio-link-service.cjs');
+const { AutoPttService } = require('./runtime/auto-ptt.cjs');
+const autoPttService = new AutoPttService({ appRoot: __dirname, tuning: desktopConfig.audio.autoPushToTalk });
 const { downloadAudioLink } = require('./runtime/audio-link.cjs');
 const loopbackService = new LoopbackService({ appRoot: __dirname });
 const publicLibrary = new PublicLibrary({ appRoot: __dirname, development: !isPackaged, tempRoot: () => path.join(app.getPath('userData'), 'library-import-tmp') });
@@ -171,6 +173,7 @@ function registerProcessCrashHandlers() {
 }
 
 function handleMainProcessCrash(type, error) {
+  autoPttService.stop();
   const report = recordCrashReport(createCrashReport(type, error));
   scheduleCrashRecovery(report);
 }
@@ -1353,9 +1356,9 @@ function createWindow(options = {}) {
   });
   const referenceOwner = mainWindow.webContents;
   referenceOwner.on('did-start-navigation', (event, url, inPlace, isMainFrame) => {
-    if (isMainFrame && !inPlace) { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); }
+    if (isMainFrame && !inPlace) { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); }
   });
-  referenceOwner.on('destroyed', () => { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); });
+  referenceOwner.on('destroyed', () => { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); });
 
   mainWindow.webContents.on("did-finish-load", () => {
     isShowingCrashScreen = isCrashScreenUrl(mainWindow.webContents.getURL());
@@ -1385,6 +1388,7 @@ function createWindow(options = {}) {
   });
 
   mainWindow.webContents.on("render-process-gone", (event, details) => {
+    autoPttService.stop();
     loopbackService.stopOwner(referenceOwner);
     audioLinkService.cancelOwner(referenceOwner);
     if (isQuitting || details?.reason === "clean-exit") {
@@ -1399,6 +1403,7 @@ function createWindow(options = {}) {
 
   let unresponsiveTimer = null;
   mainWindow.on("unresponsive", () => {
+    autoPttService.stop();
     const report = recordCrashReport(createCrashReport("renderer-unresponsive", null, {
       url: mainWindow?.webContents?.getURL?.() || ""
     }));
@@ -1412,6 +1417,7 @@ function createWindow(options = {}) {
   });
   mainWindow.on("closed", () => clearTimeout(unresponsiveTimer));
   mainWindow.on("session-end", () => {
+    autoPttService.stop();
     // Windows shutdown/logoff does not emit app.before-quit.
     isQuitting = true;
     loopbackService.stopAll();
@@ -1688,7 +1694,21 @@ async function importAudioFilePaths(filePaths) {
   return { imported, skipped, canceled: false };
 }
 
+function assertAutoPttSender(event) {
+  assertTrustedIpcSender(event);
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame
+    || stripUrlState(event.senderFrame.url) !== getRendererUrl('index.html')) {
+    throw new Error('Blocked automatic push-to-talk request.');
+  }
+}
+
 function registerAudioIpc() {
+  ipcMain.handle('auto-ptt:apps', event => { assertAutoPttSender(event); return autoPttService.listApps(); });
+  ipcMain.handle('auto-ptt:configure', (event, configuration) => { assertAutoPttSender(event); return autoPttService.configure(event.sender, configuration); });
+  ipcMain.handle('auto-ptt:begin', (event, input) => { assertAutoPttSender(event); return autoPttService.begin(event.sender, input); });
+  ipcMain.handle('auto-ptt:end', (event, id) => { assertAutoPttSender(event); return autoPttService.end(event.sender, id); });
+  ipcMain.on('auto-ptt:refresh', (event, ids) => { try { assertAutoPttSender(event); autoPttService.refresh(event.sender, ids); } catch {} });
+  ipcMain.on('auto-ptt:release', event => { try { assertAutoPttSender(event); void autoPttService.releaseAll(event.sender); } catch {} });
   const referenceSender = event => {
     assertTrustedIpcSender(event);
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || stripUrlState(event.senderFrame?.url) !== getRendererUrl('index.html')) throw new Error('Playback reference requires the main app frame.');
@@ -2180,6 +2200,7 @@ if (hasSingleInstanceLock) {
   });
 
   app.on("before-quit", () => {
+    autoPttService.stop();
     isQuitting = true;
     loopbackService.stopAll();
     audioLinkService.stopAll();
@@ -2187,6 +2208,7 @@ if (hasSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
+    autoPttService.stop();
     isQuitting = true;
     globalShortcut.unregisterAll();
     if (keyHook) {

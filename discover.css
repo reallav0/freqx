@@ -25,9 +25,10 @@
 .discover-feature .mixer-action { color:var(--text); background:var(--surface); border-color:var(--border-strong); font-size:13px; }
 .discover-controls { display:flex; gap:12px; align-items:center; }
 .discover-search { display:flex; flex:1; min-width:0; align-items:center; padding-left:12px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--text-muted); }
-.discover-search:focus-within { border-color:var(--border-strong); }
+.discover-search:focus-within { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
 .discover-search svg { flex-shrink:0; }
 .discover-search input { border:0; background:transparent; height:40px; font-size:14px; }
+.discover-search input:focus-visible { outline:none; }
 .discover-sort-label { display:flex; align-items:center; gap:9px; color:var(--text-muted); font-size:13px; }
 .discover-sort-label select { width:112px; height:40px; }
 .discover-categories { display:flex; flex-wrap:wrap; gap:7px; margin:13px 0 21px; }

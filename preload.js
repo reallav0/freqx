@@ -71,6 +71,13 @@ contextBridge.exposeInMainWorld("soundmuncher", {
   getAppSettings: () => ipcRenderer.invoke("app-settings:get"),
   setAppSettings: (updates) => ipcRenderer.invoke("app-settings:set", updates),
   registerGlobalKeybinds: (entries) => ipcRenderer.invoke("keybinds:register-global", entries),
+  listAutoPttApps: () => ipcRenderer.invoke('auto-ptt:apps'),
+  configureAutoPtt: configuration => ipcRenderer.invoke('auto-ptt:configure', configuration),
+  beginAutoPtt: input => ipcRenderer.invoke('auto-ptt:begin', input),
+  endAutoPtt: id => ipcRenderer.invoke('auto-ptt:end', id),
+  refreshAutoPtt: ids => ipcRenderer.send('auto-ptt:refresh', ids),
+  releaseAutoPtt: () => ipcRenderer.send('auto-ptt:release'),
+  onAutoPttState: handler => { const listener = (_, state) => handler(state); ipcRenderer.on('auto-ptt:state', listener); return () => ipcRenderer.removeListener('auto-ptt:state', listener); },
   onGlobalKeybindTriggered: (handler) => {
     const listener = (event, payload) => {
       handler(payload);

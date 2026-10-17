@@ -179,6 +179,26 @@
             <p id="matchClipLoudnessHelp" class="mix-assist-help">Balance quiet and loud clips. Your clip volume still fine-tunes the result.</p>
           </div>
 
+          <div class="auto-ptt-controls" aria-label="Automatic push-to-talk">
+            <label class="setting-toggle" for="autoPushToTalk">
+              <input id="autoPushToTalk" type="checkbox" aria-describedby="autoPttHelp" />
+              <span>Auto push-to-talk</span>
+            </label>
+            <div class="route-field">
+              <label for="autoPttTarget">Target app</label>
+              <div class="inline-control">
+                <select id="autoPttTarget" class="device-select"><option value="">Choose an app…</option></select>
+                <button id="refreshAutoPttApps" class="mixer-action compact-action" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="auto-ptt-key-row">
+              <label for="autoPttKey">Talk key</label>
+              <select id="autoPttKey" class="device-select" aria-describedby="autoPttHelp"></select>
+            </div>
+            <p id="autoPttHelp" class="mix-assist-help">Holds your talk key while clips play in the selected app. Match this key in your game's settings. Works while that app is focused.</p>
+            <p id="autoPttState" class="mix-assist-state" role="status">Auto push-to-talk off</p>
+          </div>
+
           <div class="route-panel">
             <div class="route-actions">
               <span class="panel-label">Audio routing</span>

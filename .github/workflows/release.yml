@@ -65,10 +65,7 @@ jobs:
       - name: Check whether this release is already published
         id: existing
         shell: pwsh
-        run: |
-          $json = gh release view $env:RELEASE_TAG --json isDraft 2>$null
-          $published = $LASTEXITCODE -eq 0 -and -not ($json | ConvertFrom-Json).isDraft
-          "published=$($published.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+        run: node scripts/release-state.cjs
       - if: steps.existing.outputs.published != 'true'
         run: npm ci
       - if: steps.existing.outputs.published != 'true'
@@ -92,11 +89,8 @@ jobs:
         if: steps.existing.outputs.published != 'true'
         shell: pwsh
         run: |
-          gh release view $env:RELEASE_TAG 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $env:RELEASE_TAG --verify-tag --draft --generate-notes --title "FreqX $env:RELEASE_TAG"
-            if ($LASTEXITCODE -ne 0) { throw 'Release creation failed.' }
-          }
+          node scripts/release-state.cjs --prepare
+          if ($LASTEXITCODE -ne 0) { throw 'Release preparation failed.' }
           $artifacts = Get-ChildItem dist -File | Where-Object { $_.Name -match '^(FreqX-.*\.exe(\.blockmap)?|latest\.yml|SBOM\.cdx\.json|SHA256SUMS\.txt)$' } | Select-Object -ExpandProperty FullName
           gh release upload $env:RELEASE_TAG @artifacts --clobber
           if ($LASTEXITCODE -ne 0) { throw 'Release artifact upload failed.' }

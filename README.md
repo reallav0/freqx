@@ -14,6 +14,7 @@ https://github.com/user-attachments/assets/40e06b0f-d9c8-447d-a0c6-7e8856d06956
 
 - **Find your next favorite sound.** Browse and preview the public library in Discover, then add sounds to your boards. Import your own audio files, too.
 - **Hit the moment.** Play from a pad or use keybinds while you're in a game or call. Pin favorites, search your collection, and stop every sound with one action.
+- **Play through push-to-talk.** Optional Auto push-to-talk holds your chosen talk key while soundboard clips play in a selected app. Choose the app and match its talk key in the mixer. It works only while that app is focused, releases when clips stop or focus changes, and leaves preview and test-tone playback alone.
 - **Shape every clip.** Adjust volume, trim, fades, and color. Choose overlap, restart, play once, or toggle loop to suit the sound.
 - **Keep your voice clear.** Choose Light (RNNoise), High quality (local DeepFilterNet3), or Off, with adjustable strength to reduce microphone background noise before your voice joins the mix. Soundboard clips bypass isolation, and microphone audio is not uploaded for processing.
 - **Control what everyone hears.** Balance your microphone, soundboard, and main output, and choose a separate output for hearing your own clips.
