@@ -178,6 +178,23 @@ input.pad-volume-slider::-moz-range-thumb { width: 10px; height: 10px; border: 0
 .mix-assist-state { min-height: 16px; }
 .mix-assist-state[data-active="true"] { color: var(--accent); }
 .auto-ptt-controls { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.ai-voice-controls { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.ai-voice-controls .setting-toggle { gap: 8px; min-height: 28px; font-size: 12px; }
+.ai-voice-controls .route-field { gap: 4px; }
+.ai-voice-controls .route-field label, .ai-voice-port { color: var(--text-muted); font-size: 12px; }
+.ai-voice-controls .device-select, .ai-voice-port .text-input { height: 32px; min-width: 0; font-size: 12px; }
+.ai-voice-controls .inline-control { gap: 8px; }
+.ai-voice-controls .mixer-action { min-height: 32px; padding-inline: 8px; font-size: 11px; }
+.ai-voice-pitch > span { font-size: 12px; }
+.ai-voice-setup { display: grid; gap: 8px; }
+.ai-voice-setup summary { color: var(--text-muted); font-size: 12px; cursor: pointer; }
+.ai-voice-setup summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.ai-voice-setup[open] summary { margin-bottom: 8px; color: var(--text); }
+.ai-voice-setup > p { margin-bottom: 8px; }
+.ai-voice-port { display: grid; grid-template-columns: minmax(0, 1fr) 88px; align-items: center; gap: 8px; }
+.ai-voice-setup-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ai-voice-setup-actions .brand-link { font-size: 11px; }
+#aiVoiceState[data-state="error"] { color: var(--danger); }
 .auto-ptt-controls .setting-toggle { gap: 8px; min-height: 28px; font-size: 12px; }
 .auto-ptt-controls .route-field { gap: 4px; }
 .auto-ptt-controls .route-field label, .auto-ptt-key-row label { color: var(--text-muted); font-size: 12px; }

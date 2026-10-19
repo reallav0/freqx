@@ -19,7 +19,7 @@ const checks = [];
 
 function fixture(options = {}) {
   const calls = {
-    nativeLoads: [], starts: 0, restarts: [], stops: [], recoveries: [], autoPttStops: 0,
+    nativeLoads: [], starts: 0, restarts: [], stops: [], recoveries: [], autoPttStops: 0, voiceOwnersStopped: [], voiceStops: 0,
     exits: [], quits: 0, windows: [], writes: [], sends: [], referenceRequests: [], updateConfigs: [], switches: [], hardwareDisabled: 0,
   };
   const timers = [];
@@ -149,6 +149,10 @@ function fixture(options = {}) {
       if (name === './runtime/auth-client.cjs') return { registerAuthIpc() {} };
       if (name === './runtime/auto-ptt.cjs') return { AutoPttService: class {
         stop() { calls.autoPttStops++; }
+      } };
+      if (name === './runtime/voice-conversion.cjs') return { VoiceConversionService: class {
+        stopOwner(owner) { calls.voiceOwnersStopped.push(owner); }
+        stopAll() { calls.voiceStops++; }
       } };
       if (name === './runtime/app-mode.cjs') return require('../runtime/app-mode.cjs');
       if (name === './runtime/public-library.cjs') return {
@@ -329,6 +333,24 @@ async function main() {
     assert.equal(subject.calls.restarts.length, 1);
     assert.equal(subject.window.visible, false);
     assert.deepEqual(subject.window.loaded, ['index.html']);
+  });
+
+  await check('voice conversion stops on renderer replacement, failure, shutdown and fatal main errors', async () => {
+    for (const event of ['navigation', 'destroyed', 'render-process-gone', 'unresponsive']) {
+      const subject = fixture(); await subject.ready();
+      const owner = subject.window.webContents;
+      if (event === 'navigation') owner.emit('did-start-navigation', {}, subject.window.url, false, true);
+      else if (event === 'unresponsive') subject.window.emit(event);
+      else owner.emit(event, {}, { reason: 'crashed' });
+      assert.deepEqual(subject.calls.voiceOwnersStopped, [owner], event);
+    }
+    for (const event of ['uncaughtException', 'unhandledRejection', 'before-quit', 'will-quit', 'session-end']) {
+      const subject = fixture(); await subject.ready();
+      if (event === 'session-end') subject.window.emit(event);
+      else if (event.endsWith('quit')) subject.app.emit(event);
+      else subject.process.emit(event, new Error('Fixture fatal main error'));
+      assert.equal(subject.calls.voiceStops, 1, event);
+    }
   });
 
   await check('a damaged native window cannot block recovery', async () => {

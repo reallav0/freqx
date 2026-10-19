@@ -20,6 +20,8 @@ const { LoopbackService } = require('./runtime/loopback-reference.cjs');
 const { AudioLinkService } = require('./runtime/audio-link-service.cjs');
 const { AutoPttService } = require('./runtime/auto-ptt.cjs');
 const autoPttService = new AutoPttService({ appRoot: __dirname, tuning: desktopConfig.audio.autoPushToTalk });
+const { VoiceConversionService, validPort: validVoiceEnginePort } = require('./runtime/voice-conversion.cjs');
+const voiceConversionService = new VoiceConversionService();
 const { downloadAudioLink } = require('./runtime/audio-link.cjs');
 const loopbackService = new LoopbackService({ appRoot: __dirname });
 const publicLibrary = new PublicLibrary({ appRoot: __dirname, development: !isPackaged, tempRoot: () => path.join(app.getPath('userData'), 'library-import-tmp') });
@@ -174,6 +176,7 @@ function registerProcessCrashHandlers() {
 
 function handleMainProcessCrash(type, error) {
   autoPttService.stop();
+  voiceConversionService.stopAll();
   const report = recordCrashReport(createCrashReport(type, error));
   scheduleCrashRecovery(report);
 }
@@ -1356,9 +1359,9 @@ function createWindow(options = {}) {
   });
   const referenceOwner = mainWindow.webContents;
   referenceOwner.on('did-start-navigation', (event, url, inPlace, isMainFrame) => {
-    if (isMainFrame && !inPlace) { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); }
+    if (isMainFrame && !inPlace) { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); voiceConversionService.stopOwner(referenceOwner); }
   });
-  referenceOwner.on('destroyed', () => { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); });
+  referenceOwner.on('destroyed', () => { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); voiceConversionService.stopOwner(referenceOwner); });
 
   mainWindow.webContents.on("did-finish-load", () => {
     isShowingCrashScreen = isCrashScreenUrl(mainWindow.webContents.getURL());
@@ -1389,6 +1392,7 @@ function createWindow(options = {}) {
 
   mainWindow.webContents.on("render-process-gone", (event, details) => {
     autoPttService.stop();
+    voiceConversionService.stopOwner(referenceOwner);
     loopbackService.stopOwner(referenceOwner);
     audioLinkService.cancelOwner(referenceOwner);
     if (isQuitting || details?.reason === "clean-exit") {
@@ -1404,6 +1408,7 @@ function createWindow(options = {}) {
   let unresponsiveTimer = null;
   mainWindow.on("unresponsive", () => {
     autoPttService.stop();
+    voiceConversionService.stopOwner(referenceOwner);
     const report = recordCrashReport(createCrashReport("renderer-unresponsive", null, {
       url: mainWindow?.webContents?.getURL?.() || ""
     }));
@@ -1418,6 +1423,7 @@ function createWindow(options = {}) {
   mainWindow.on("closed", () => clearTimeout(unresponsiveTimer));
   mainWindow.on("session-end", () => {
     autoPttService.stop();
+    voiceConversionService.stopAll();
     // Windows shutdown/logoff does not emit app.before-quit.
     isQuitting = true;
     loopbackService.stopAll();
@@ -1694,6 +1700,12 @@ async function importAudioFilePaths(filePaths) {
   return { imported, skipped, canceled: false };
 }
 
+function assertVoiceConversionSender(event) {
+  assertTrustedIpcSender(event);
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame
+    || stripUrlState(event.senderFrame.url) !== getRendererUrl('index.html')) throw new Error('Blocked voice conversion request.');
+}
+
 function assertAutoPttSender(event) {
   assertTrustedIpcSender(event);
   if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== event.sender.mainFrame
@@ -1717,6 +1729,23 @@ function registerAudioIpc() {
     assertTrustedIpcSender(event);
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || stripUrlState(event.senderFrame?.url) !== getRendererUrl('index.html')) throw new Error('Link import requires the main app frame.');
   };
+  ipcMain.handle('voice-conversion:list', (event, options) => { assertVoiceConversionSender(event); return voiceConversionService.list(options); });
+  ipcMain.handle('voice-conversion:start', (event, configuration) => { assertVoiceConversionSender(event); return voiceConversionService.start(event.sender, configuration); });
+  ipcMain.handle('voice-conversion:frame', (event, input) => { assertVoiceConversionSender(event); return voiceConversionService.frame(event.sender, input); });
+  ipcMain.on('voice-conversion:stop', (event, id) => {
+    try { assertVoiceConversionSender(event); if (id == null) voiceConversionService.stopOwner(event.sender); else voiceConversionService.stop(event.sender, id); } catch {}
+  });
+  ipcMain.handle('voice-conversion:setup', async (event, options) => {
+    assertVoiceConversionSender(event);
+    if (!validVoiceEnginePort(options?.port)) return { ok: false, error: 'Invalid voice engine port.' };
+    try { await shell.openExternal(`http://127.0.0.1:${options.port}/`); return { ok: true }; }
+    catch { return { ok: false, error: 'The local voice engine setup could not be opened.' }; }
+  });
+  ipcMain.handle('voice-conversion:guide', async event => {
+    assertVoiceConversionSender(event);
+    try { await shell.openExternal('https://github.com/w-okada/voice-changer'); return { ok: true }; }
+    catch { return { ok: false, error: 'The voice engine download guide could not be opened.' }; }
+  });
   ipcMain.handle('audio:import-link', async (event, url) => {
     linkSender(event);
     try {
@@ -2201,6 +2230,7 @@ if (hasSingleInstanceLock) {
 
   app.on("before-quit", () => {
     autoPttService.stop();
+    voiceConversionService.stopAll();
     isQuitting = true;
     loopbackService.stopAll();
     audioLinkService.stopAll();
@@ -2209,6 +2239,7 @@ if (hasSingleInstanceLock) {
 
   app.on("will-quit", () => {
     autoPttService.stop();
+    voiceConversionService.stopAll();
     isQuitting = true;
     globalShortcut.unregisterAll();
     if (keyHook) {
