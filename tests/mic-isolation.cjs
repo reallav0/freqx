@@ -69,7 +69,8 @@ function installFixtures() {
     construct(target, args) {
       const node = new target(...args);
       const entry = { node, context: args[0], name: args[1], messages: [], errors: [] };
-      node.port.addEventListener('message', event => entry.messages.push(event.data));
+      node.port.addEventListener('message', event => entry.messages.push(event.data?.type === 'input'
+        ? { type: 'input', sequence: event.data.sequence, sampleCount: event.data.samples?.length } : event.data));
       node.port.start();
       node.addEventListener('processorerror', event => entry.errors.push(event.message || 'processorerror'));
       stats.worklets.push(entry);
@@ -127,6 +128,7 @@ function installFixtures() {
   }));
   const noop = async () => ({ ok: true });
   stats.ptt = { begins: [], ends: [], refreshes: [], releases: 0, configurations: [] };
+  stats.conversion = { starts: [], stops: [], frames: 0, lists: 0, active: new Set() };
   window.soundmuncher = {
     appName: 'Freqx', websiteUrl: 'https://freqx.app',
     reportCrash: async report => { stats.crashes.push(report); return report; },
@@ -154,6 +156,28 @@ function installFixtures() {
     refreshAutoPtt: ids => stats.ptt.refreshes.push(ids),
     releaseAutoPtt: () => { stats.ptt.releases++; },
     onAutoPttState: handler => { stats.ptt.onState = handler; return () => {}; },
+    listVoiceConversionModels: async () => {
+      stats.conversion.lists++;
+      return { ok: true, voices: [{ id: '0', name: 'Fixture bright voice' }, { id: '1', name: 'Fixture deep voice' }] };
+    },
+    startVoiceConversion: async configuration => {
+      const id = `fixture-conversion-${stats.conversion.starts.length + 1}`;
+      stats.conversion.starts.push({ ...configuration, id });
+      if (stats.conversion.defer) await new Promise(resolve => { stats.conversion.finish = resolve; });
+      stats.conversion.active.add(id);
+      return { ok: true, id, sampleRate: 48000, blockSize: 7680 };
+    },
+    convertVoiceFrame: async input => {
+      stats.conversion.frames++;
+      if (stats.conversion.fail) return { ok: false, error: 'Fixture conversion stopped.' };
+      if (!stats.conversion.active.has(input.id)) return { ok: false, error: 'Session stopped.' };
+      stats.conversion.lastInput = input.samples;
+      const samples = new Float32Array(7680);
+      for (let i = 0; i < samples.length; i++) samples[i] = 0.04 * Math.sin(2 * Math.PI * 960 * ((input.sequence - 1) * samples.length + i) / 48000);
+      return { ok: true, id: input.id, sequence: input.sequence, samples, processingMs: 1 };
+    },
+    stopVoiceConversion: id => { stats.conversion.stops.push(id); if (id) stats.conversion.active.delete(id); else stats.conversion.active.clear(); },
+    openVoiceConversionSetup: noop, openVoiceConversionGuide: noop,
   };
 }
 
@@ -248,6 +272,57 @@ async function runMain() {
       const baseline = await evaluate(graphExpression);
       fs.writeFileSync(path.join(output, 'baseline-graph.json'), JSON.stringify(baseline, null, 2));
       assert('baseline mixer graph captured with protected output branches', baseline.edges.length === 13, baseline);
+    } else if (process.argv.includes('--voice-conversion')) {
+      assert('AI voice starts off without contacting an engine', await evaluate('!voiceConversionSettings.enabled && __micTest.conversion.starts.length===0 && __micTest.conversion.lists===0'));
+      await pause(150);
+      const baseline = await evaluate(graphExpression);
+      await evaluate(`(async()=>{await refreshVoiceConversionVoices();voiceConversionSettings.enabled=true;await configureMicVoiceConversion();})()`);
+      await until('voiceConversionStatus==="active" && __micTest.conversion.frames>=2','converted microphone audio');
+      assert('an installed voice starts the real audio-thread conversion stage', await evaluate('voiceConversionSession.node instanceof AudioWorkletNode && __micTest.conversion.starts.at(-1).voiceId==="0"'));
+      assert('clean microphone reaches voice detection and converter without a dry route to gain', await evaluate(`(()=>{const id=__micTest.id(micSource),converter=__micTest.id(voiceConversionSession.node);return __micTest.edges.some(e=>e[0]===id&&e[1]===converter)&&__micTest.edges.some(e=>e[0]===id&&e[1]===__micTest.id(voicePriorityNode))&&!__micTest.edges.some(e=>e[0]===id&&e[1]===__micTest.id(micGainNode));})()`));
+      await assertUnchanged('AI voice preserves soundboard and outgoing mix connections', baseline);
+      await evaluate(`(async()=>{await playImportedSound(importedLibraryItems[0]);})()`); await pause(400);
+      assert('soundboard playback never reaches conversion input', await evaluate('activeSoundNodes.size===1 && __micTest.conversion.lastInput.every(v=>Math.abs(v)<0.000001)'));
+      await evaluate('stopAllSounds()');
+      await evaluate(`(async()=>{await setSoundPlaybackEnabled(false);voiceConversionSettings.monitor=true;updateVoiceConversionMonitor();})()`); await pause(100);
+      assert('headphone voice preview works independently of clip Hear', await evaluate('!isSoundPlaybackEnabled && micMonitorGainNode.gain.value>0.9 && __micTest.edges.some(e=>e[0]===__micTest.id(micMonitorGainNode)&&e[1]===__micTest.id(localPlaybackLimiterNode))'));
+      await evaluate(`voicePitchSlider.value='-5';voicePitchSlider.dispatchEvent(new Event('input',{bubbles:true}));`);
+      await until('voiceConversionStatus==="active" && __micTest.conversion.starts.at(-1).pitch===-5','pitch change');
+      assert('pitch changes replace the session and keep the selected model', await evaluate('__micTest.conversion.stops.includes("fixture-conversion-1") && __micTest.conversion.starts.at(-1).voiceId==="0"'));
+      await evaluate(`aiVoiceSelect.value='1';aiVoiceSelect.dispatchEvent(new Event('change',{bubbles:true}));`);
+      await until('voiceConversionStatus==="active" && __micTest.conversion.starts.at(-1).voiceId==="1"','voice switch');
+      assert('voice switching uses the newly selected installed model', true);
+      await evaluate('__micTest.conversion.fail=true');
+      await until('voiceConversionFaulted && voiceConversionStatus==="error"','failed conversion');
+      await pause(120);
+      assert('engine failure mutes microphone without a natural-voice bypass', await evaluate('voiceConversionSession===null && micMonitorGainNode.gain.value<0.01 && !__micTest.edges.some(e=>e[0]===__micTest.id(micSource)&&e[1]===__micTest.id(micGainNode)) && aiVoiceState.textContent.includes("muted")'));
+      await evaluate(`voiceConversionSettings.enabled=false;configureMicVoiceConversion()`);
+      assert('explicit Off restores the ordinary microphone path', await evaluate('!voiceConversionFaulted && __micTest.edges.some(e=>e[0]===__micTest.id(micSource)&&e[1]===__micTest.id(micGainNode))'));
+      await evaluate(`__micTest.conversion.fail=false;__micTest.conversion.defer=true;voiceConversionSettings.enabled=true;void configureMicVoiceConversion();`);
+      await until('!!__micTest.conversion.finish','pending model start');
+      await evaluate(`(async()=>{voiceConversionSettings.enabled=false;await configureMicVoiceConversion();__micTest.conversion.finish();__micTest.conversion.defer=false;})()`); await pause(100);
+      assert('Off cancels pending startup and retires late session IDs', await evaluate('__micTest.conversion.active.size===0 && voiceConversionSession===null && voiceConversionStatus==="off"'));
+      await evaluate(`voiceConversionSettings.enabled=true;configureMicVoiceConversion()`);
+      await until('voiceConversionStatus==="active"','restart before mic switch');
+      const starts = await evaluate('__micTest.conversion.starts.length');
+      await evaluate(`inputDeviceSelect.value='fixture-mic-b';switchMicInput()`);
+      await until(`voiceConversionStatus==="active" && __micTest.conversion.starts.length>${starts}`,'new microphone conversion');
+      assert('microphone replacement releases the old conversion session', await evaluate('__micTest.conversion.active.size===1'));
+      await evaluate('setMicCaptureEnabled(false)');
+      await pause(50);
+      assert('Mic off closes conversion and headphone monitoring', await evaluate('__micTest.conversion.active.size===0 && voiceConversionSession===null && micMonitorGainNode.gain.value===0'), await evaluate('({active:__micTest.conversion.active.size,session:!!voiceConversionSession,gain:micMonitorGainNode.gain.value})'));
+      await evaluate('saveMixerSettings()');
+      const saved = await evaluate('JSON.parse(localStorage.getItem("soundmuncher:mixer-settings"))');
+      await createWindow(saved);
+      assert('voice selection, pitch, monitor, and enabled preference persist', await evaluate('voiceConversionSettings.enabled && voiceConversionSettings.voiceId==="1" && voiceConversionSettings.pitch===-5 && voiceConversionSettings.monitor'));
+      await evaluate('setMicCaptureEnabled(true)'); await until('voiceConversionStatus==="active"','restored conversion');
+      win.showInactive(); await pause(100);
+      await evaluate(`document.querySelector('.ai-voice-controls').scrollIntoView({block:'center'})`); await pause(150);
+      fs.writeFileSync(path.join(output,'ai-voice.png'),(await win.webContents.capturePage()).toPNG());
+      win.setSize(1000,760); await pause(100);
+      await evaluate(`document.querySelector('.ai-voice-controls').scrollIntoView({block:'center'})`); await pause(100);
+      fs.writeFileSync(path.join(output,'ai-voice-compact.png'),(await win.webContents.capturePage()).toPNG()); win.hide();
+      assert('AI voice runs without renderer or audio-thread errors', await evaluate('__micTest.crashes.length===0 && __micTest.worklets.every(w=>w.errors.length===0)'));
     } else if (process.argv.includes('--auto-ptt')) {
       assert('auto PTT starts off with no automatic key request', await evaluate('!autoPushToTalkToggle.checked && __micTest.ptt.begins.length===0'));
       await evaluate(`(async()=>{await refreshAutoPttApps();autoPttTargetSelect.value='TestGame.exe';autoPttTargetSelect.dispatchEvent(new Event('change',{bubbles:true}));autoPushToTalkToggle.checked=true;autoPushToTalkToggle.dispatchEvent(new Event('change',{bubbles:true}));await autoPttConfigurationReady;})()`);

@@ -14,7 +14,7 @@ function generate(directory, root) {
   for (const [filename, metadata] of Object.entries(audio.files)) bom.components.push({ type: 'file', name: `DeepFilterNet/${filename}`, version: audio.upstream.commit,
     hashes: [{ alg: 'SHA-256', content: metadata.sha256 }] });
   fs.writeFileSync(bomPath, JSON.stringify(bom, null, 2) + '\n');
-  const allowed = fs.readdirSync(directory).filter(name => /^(?:FreqX-(?:Setup|Portable)-\d+\.\d+\.\d+\.exe(?:\.blockmap)?|latest\.yml|SBOM\.cdx\.json)$/.test(name));
+  const allowed = fs.readdirSync(directory).filter(name => /^(?:FreqX-Setup-\d+\.\d+\.\d+\.exe(?:\.blockmap)?|latest\.yml|SBOM\.cdx\.json)$/.test(name));
   if (!allowed.includes(`FreqX-Setup-${pkg.version}.exe`) || !allowed.includes('latest.yml')) throw new Error('Installer/updater metadata is missing.');
   const sums = allowed.sort().map(name => `${createHash('sha256').update(fs.readFileSync(path.join(directory, name))).digest('hex')}  ${name}`).join('\n') + '\n';
   fs.writeFileSync(path.join(directory, 'SHA256SUMS.txt'), sums);

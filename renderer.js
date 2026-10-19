@@ -241,6 +241,14 @@ const autoPttKeySelect = document.getElementById("autoPttKey");
 const refreshAutoPttAppsButton = document.getElementById("refreshAutoPttApps");
 const autoPttState = document.getElementById("autoPttState");
 const autoPttHelp = document.getElementById("autoPttHelp");
+const aiVoiceToggle = document.getElementById("aiVoiceToggle");
+const aiVoiceSelect = document.getElementById("aiVoiceSelect");
+const refreshAiVoicesButton = document.getElementById("refreshAiVoices");
+const voicePitchSlider = document.getElementById("voicePitch");
+const voicePitchValue = document.getElementById("voicePitchValue");
+const monitorAiVoiceToggle = document.getElementById("monitorAiVoice");
+const aiVoicePortInput = document.getElementById("aiVoicePort");
+const aiVoiceState = document.getElementById("aiVoiceState");
 const inputDeviceSelect = document.getElementById("inputDevice");
 const outputDeviceSelect = document.getElementById("outputDevice");
 const localPlaybackDeviceSelect = document.getElementById("localPlaybackDevice");
@@ -363,6 +371,17 @@ const autoPttKeyCodes = [
   ...Array.from({ length: 24 }, (_, index) => `F${index + 1}`),
   "Space", "Mouse4", "Mouse5"
 ];
+let voiceConversionSettings = { enabled: false, port: 18000, voiceId: "", pitch: 0, monitor: false };
+let voiceConversionVoices = [];
+let voiceConversionSession = null;
+let voiceConversionPending = null;
+let voiceConversionGeneration = 0;
+let voiceConversionListGeneration = 0;
+let voiceConversionPitchTimer = null;
+let voiceConversionFaulted = false;
+let voiceConversionStatus = "off";
+let voiceConversionMessage = "";
+let voiceConversionListLoading = false;
 let micStream;
 let micTrackEndedListener;
 let micSource;
@@ -685,6 +704,12 @@ function loadMixerSettings() {
     if (autoPttKeyCodes.includes(settings?.autoPttKey)) selectedAutoPttKey = settings.autoPttKey;
     if (typeof settings?.autoPttTarget === "string" && settings.autoPttTarget.length <= 260
       && !/[\u0000-\u001f\\/]/.test(settings.autoPttTarget)) selectedAutoPttTarget = settings.autoPttTarget;
+    const conversion = settings?.voiceConversion;
+    if (typeof conversion?.enabled === "boolean") voiceConversionSettings.enabled = conversion.enabled;
+    if (Number.isInteger(conversion?.port) && conversion.port >= 1024 && conversion.port <= 65535) voiceConversionSettings.port = conversion.port;
+    if (typeof conversion?.voiceId === "string" && conversion.voiceId.length <= 256) voiceConversionSettings.voiceId = conversion.voiceId;
+    if (Number.isFinite(conversion?.pitch)) voiceConversionSettings.pitch = Math.round(Math.min(12, Math.max(-12, conversion.pitch)));
+    if (typeof conversion?.monitor === "boolean") voiceConversionSettings.monitor = conversion.monitor;
 
     if (typeof settings?.voiceIsolation === "boolean") {
       isVoiceIsolationEnabled = settings.voiceIsolation;
@@ -725,6 +750,7 @@ function saveMixerSettings() {
       autoPushToTalk: isAutoPushToTalkEnabled,
       autoPttKey: selectedAutoPttKey,
       autoPttTarget: selectedAutoPttTarget,
+      voiceConversion: { ...voiceConversionSettings },
       voiceIsolation: isVoiceIsolationEnabled,
       voiceIsolationMode: selectedVoiceIsolationMode,
       voiceIsolationStrength: selectedVoiceIsolationStrength,
@@ -3466,13 +3492,189 @@ async function refreshReferenceDevices() {
   }
 }
 
+function updateVoiceConversionUi(status = voiceConversionStatus, message = voiceConversionMessage) {
+  voiceConversionStatus = status;
+  voiceConversionMessage = message;
+  if (aiVoiceToggle) aiVoiceToggle.checked = voiceConversionSettings.enabled;
+  if (voicePitchSlider) {
+    voicePitchSlider.value = String(voiceConversionSettings.pitch);
+    updateRangeFill(voicePitchSlider);
+  }
+  if (voicePitchValue) voicePitchValue.textContent = `${voiceConversionSettings.pitch > 0 ? "+" : ""}${voiceConversionSettings.pitch}`;
+  if (monitorAiVoiceToggle) {
+    monitorAiVoiceToggle.checked = voiceConversionSettings.monitor;
+    monitorAiVoiceToggle.disabled = !voiceConversionSettings.enabled;
+  }
+  if (aiVoicePortInput && document.activeElement !== aiVoicePortInput) aiVoicePortInput.value = String(voiceConversionSettings.port);
+  if (refreshAiVoicesButton) {
+    refreshAiVoicesButton.disabled = voiceConversionListLoading;
+    refreshAiVoicesButton.textContent = voiceConversionListLoading ? "Refreshing…" : "Refresh";
+  }
+  if (aiVoiceState) {
+    aiVoiceState.dataset.state = status;
+    aiVoiceState.dataset.active = String(status === "active");
+    const labels = {
+      off: "AI voice off",
+      waiting: "AI voice waiting for microphone",
+      preparing: "Preparing AI voice · microphone muted",
+      active: "AI voice active · local conversion",
+      error: "AI voice unavailable · microphone muted. Turn AI voice off to use your natural voice."
+    };
+    aiVoiceState.textContent = message || labels[status] || labels.off;
+  }
+}
+
+function renderVoiceConversionVoices() {
+  if (!aiVoiceSelect) return;
+  aiVoiceSelect.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = voiceConversionVoices.length ? "Choose a voice" : "No RVC voices loaded";
+  aiVoiceSelect.appendChild(placeholder);
+  const voices = [...voiceConversionVoices];
+  if (voiceConversionSettings.voiceId && !voices.some(voice => voice.id === voiceConversionSettings.voiceId)) {
+    voices.unshift({ id: voiceConversionSettings.voiceId, name: "Saved voice (refresh to check)" });
+  }
+  for (const voice of voices) {
+    const option = document.createElement("option");
+    option.value = voice.id;
+    option.textContent = voice.name;
+    aiVoiceSelect.appendChild(option);
+  }
+  aiVoiceSelect.value = voiceConversionSettings.voiceId;
+}
+
+async function refreshVoiceConversionVoices({ quiet = false } = {}) {
+  const generation = ++voiceConversionListGeneration;
+  voiceConversionListLoading = true;
+  updateVoiceConversionUi();
+  try {
+    if (typeof window.soundmuncher?.listVoiceConversionModels !== "function") throw new Error("AI voice is unavailable in this build.");
+    const result = await window.soundmuncher.listVoiceConversionModels({ port: voiceConversionSettings.port });
+    if (generation !== voiceConversionListGeneration) return;
+    if (!result?.ok) throw new Error(result?.error || "Start the local RVC engine and refresh again.");
+    voiceConversionVoices = (Array.isArray(result.voices) ? result.voices : []).filter(voice => typeof voice?.id === "string" && typeof voice.name === "string");
+    if (!voiceConversionSettings.voiceId && voiceConversionVoices.length) {
+      voiceConversionSettings.voiceId = voiceConversionVoices[0].id;
+      saveMixerSettings();
+    }
+    renderVoiceConversionVoices();
+    if (!quiet) setLibraryState(voiceConversionVoices.length ? `${voiceConversionVoices.length} local RVC voice(s) available.` : "Load an RVC voice in the local engine, then refresh.");
+  } catch (error) {
+    if (generation === voiceConversionListGeneration && !quiet) setLibraryState(error?.message || "Could not refresh local voices.");
+    throw error;
+  } finally {
+    if (generation === voiceConversionListGeneration) {
+      voiceConversionListLoading = false;
+      updateVoiceConversionUi();
+    }
+  }
+}
+
+function refreshEnabledVoiceConversionName() {
+  if (!voiceConversionSettings.enabled || voiceConversionListLoading
+    || voiceConversionVoices.some(voice => voice.id === voiceConversionSettings.voiceId)) return;
+  void refreshVoiceConversionVoices({ quiet: true }).catch(() => {});
+}
+
+function updateVoiceConversionMonitor() {
+  if (!audioContext || !micMonitorGainNode) return;
+  const hear = voiceConversionSettings.enabled && voiceConversionSettings.monitor && voiceConversionStatus === "active" && !voiceConversionFaulted;
+  micMonitorGainNode.gain.setTargetAtTime(hear ? 1 : 0, audioContext.currentTime, desktopConfig.audio.routeRampSeconds);
+}
+
+function stopMicVoiceConversion() {
+  voiceConversionGeneration += 1;
+  clearTimeout(voiceConversionPitchTimer);
+  voiceConversionPitchTimer = null;
+  const pending = voiceConversionPending;
+  voiceConversionPending = null;
+  pending?.abort();
+  voiceConversionSession?.close();
+  voiceConversionSession = null;
+  if (pending) {
+    try { window.soundmuncher?.stopVoiceConversion?.(); } catch {}
+  }
+  if (audioContext && micMonitorGainNode) micMonitorGainNode.gain.setValueAtTime(0, audioContext.currentTime);
+}
+
+async function configureMicVoiceConversion() {
+  stopMicVoiceConversion();
+  const generation = voiceConversionGeneration;
+  const source = micSource;
+  if (source) {
+    source.disconnect();
+    source.connect(voicePriorityNode, 0, 1);
+  }
+  if (!voiceConversionSettings.enabled) {
+    voiceConversionFaulted = false;
+    if (source) source.connect(micGainNode);
+    updateVoiceConversionUi("off", "");
+    return;
+  }
+  if (voiceConversionFaulted) { updateVoiceConversionUi("error"); return; }
+  if (!source || !micStream) {
+    updateVoiceConversionUi("waiting", "");
+    refreshEnabledVoiceConversionName();
+    return;
+  }
+  updateVoiceConversionUi("preparing", "");
+  const pending = new AbortController();
+  voiceConversionPending = pending;
+  try {
+    if (!window.FreqxVoiceConversion) throw new Error("AI voice is unavailable in this build.");
+    if (!voiceConversionSettings.voiceId) await refreshVoiceConversionVoices({ quiet: true });
+    if (pending.signal.aborted || generation !== voiceConversionGeneration || source !== micSource) return;
+    if (!voiceConversionSettings.voiceId) throw new Error("Load an RVC voice in the local engine, then refresh.");
+    const session = await window.FreqxVoiceConversion.create(audioContext, {
+      bridge: window.soundmuncher,
+      port: voiceConversionSettings.port,
+      voiceId: voiceConversionSettings.voiceId,
+      pitch: voiceConversionSettings.pitch,
+      signal: pending.signal,
+      onReady: () => {
+        if (generation !== voiceConversionGeneration) return;
+        updateVoiceConversionUi("active", "");
+        updateVoiceConversionMonitor();
+      },
+      onDiagnostics: diagnostics => {
+        if (generation !== voiceConversionGeneration || voiceConversionStatus !== "active") return;
+        updateVoiceConversionUi("active", `AI voice active · conversion ${Math.round(diagnostics.processingMs)} ms`);
+      },
+      onError: error => {
+        if (generation !== voiceConversionGeneration) return;
+        voiceConversionFaulted = true;
+        voiceConversionSession = null;
+        updateVoiceConversionUi("error", `${error.message} Microphone muted. Turn AI voice off to use your natural voice.`);
+        updateVoiceConversionMonitor();
+      }
+    });
+    if (pending.signal.aborted || generation !== voiceConversionGeneration || source !== micSource) { session.close(); return; }
+    voiceConversionSession = session;
+    source.connect(session.node);
+    session.node.connect(micGainNode);
+    refreshEnabledVoiceConversionName();
+  } catch (error) {
+    if (pending.signal.aborted || generation !== voiceConversionGeneration) return;
+    voiceConversionSession?.close();
+    voiceConversionSession = null;
+    voiceConversionFaulted = true;
+    updateVoiceConversionUi("error", `${error?.message || "AI voice could not start."} Microphone muted. Turn AI voice off to use your natural voice.`);
+    updateVoiceConversionMonitor();
+  } finally {
+    if (voiceConversionPending === pending) voiceConversionPending = null;
+  }
+}
+
 function connectMicStreamToMixer(stream) {
   // Keep this connection upstream of micGainNode. Never route soundboard/master here.
   const nextSource = audioContext.createMediaStreamSource(stream);
   micSource?.disconnect();
   micSource = nextSource;
-  micSource.connect(micGainNode);
   micSource.connect(voicePriorityNode, 0, 1);
+  if (window.FreqxVoiceConversion) void configureMicVoiceConversion();
+  else if (typeof voiceConversionSettings !== "undefined" && voiceConversionSettings.enabled) updateVoiceConversionUi("error", "AI voice is unavailable. Microphone muted; turn AI voice off to use your natural voice.");
+  else micSource.connect(micGainNode);
   const processed = stream !== micStream;
   // The processing service already applies its 80 Hz high-pass and compressor.
   micHighPassNode.frequency.value = processed ? 20 : desktopConfig.audio.equalizer.highPass.frequency;
@@ -3770,7 +3972,7 @@ async function initializeMixerGraph() {
     mixLimiterNode.connect(levelAnalyser);
     mixLimiterNode.connect(mixDestination);
     soundGainNode.connect(appPlaybackGainNode);
-    micMonitorGainNode.connect(audioContext.destination);
+    micMonitorGainNode.connect(localPlaybackLimiterNode);
     appPlaybackGainNode.connect(localPlaybackLimiterNode);
     localPlaybackLimiterNode.connect(appPlaybackDestination);
 
@@ -3909,6 +4111,10 @@ async function ensureDeviceLabels() {
 }
 
 function stopMicCapture() {
+  if (typeof stopMicVoiceConversion === "function") {
+    stopMicVoiceConversion();
+    if (!voiceConversionFaulted) updateVoiceConversionUi(voiceConversionSettings.enabled ? "waiting" : "off", "");
+  }
   micCaptureGeneration += 1;
   micIsolationGeneration += 1;
   micIsolationPending?.abort();
@@ -4173,6 +4379,67 @@ matchClipLoudnessToggle?.addEventListener("change", () => {
   isMatchClipLoudnessEnabled = matchClipLoudnessToggle.checked;
   saveMixerSettings();
   setLibraryState(isMatchClipLoudnessEnabled ? "Clip loudness matching applies the next time you play a sound." : "Clip loudness matching off.");
+});
+aiVoiceToggle?.addEventListener("change", () => {
+  voiceConversionSettings.enabled = aiVoiceToggle.checked;
+  if (!voiceConversionSettings.enabled) voiceConversionFaulted = false;
+  saveMixerSettings();
+  void configureMicVoiceConversion();
+});
+aiVoiceSelect?.addEventListener("change", () => {
+  voiceConversionSettings.voiceId = aiVoiceSelect.value;
+  saveMixerSettings();
+  if (voiceConversionSettings.enabled) void configureMicVoiceConversion();
+});
+refreshAiVoicesButton?.addEventListener("click", () => {
+  const previousVoice = voiceConversionSettings.voiceId;
+  refreshVoiceConversionVoices().then(() => {
+    if (previousVoice !== voiceConversionSettings.voiceId && voiceConversionSettings.enabled) void configureMicVoiceConversion();
+  }).catch(() => {});
+});
+voicePitchSlider?.addEventListener("input", () => {
+  voiceConversionSettings.pitch = Math.round(clampNumber(voicePitchSlider.value, -12, 12, 0));
+  saveMixerSettings();
+  updateVoiceConversionUi();
+  if (!voiceConversionSettings.enabled || voiceConversionFaulted) return;
+  stopMicVoiceConversion();
+  if (micSource) {
+    micSource.disconnect();
+    micSource.connect(voicePriorityNode, 0, 1);
+  }
+  updateVoiceConversionUi("preparing", "Applying pitch · microphone muted");
+  voiceConversionPitchTimer = setTimeout(() => {
+    voiceConversionPitchTimer = null;
+    void configureMicVoiceConversion();
+  }, 150);
+});
+monitorAiVoiceToggle?.addEventListener("change", () => {
+  voiceConversionSettings.monitor = monitorAiVoiceToggle.checked;
+  saveMixerSettings();
+  updateVoiceConversionMonitor();
+});
+aiVoicePortInput?.addEventListener("change", () => {
+  const port = Number(aiVoicePortInput.value);
+  const valid = Number.isInteger(port) && port >= 1024 && port <= 65535;
+  aiVoicePortInput.setCustomValidity(valid ? "" : "Enter a port from 1024 to 65535.");
+  aiVoicePortInput.setAttribute("aria-invalid", String(!valid));
+  if (!valid) { aiVoicePortInput.reportValidity(); return; }
+  voiceConversionSettings.port = port;
+  voiceConversionVoices = [];
+  voiceConversionListGeneration += 1;
+  renderVoiceConversionVoices();
+  saveMixerSettings();
+  if (voiceConversionSettings.enabled) void configureMicVoiceConversion();
+  void refreshVoiceConversionVoices().catch(() => {});
+});
+document.getElementById("openAiVoiceSetup")?.addEventListener("click", async () => {
+  try {
+    const result = await window.soundmuncher?.openVoiceConversionSetup?.({ port: voiceConversionSettings.port });
+    if (!result?.ok) throw new Error(result?.error || "Start the local RVC engine first.");
+  } catch (error) { setLibraryState(error?.message || "Could not open local engine setup."); }
+});
+document.getElementById("openAiVoiceGuide")?.addEventListener("click", () => {
+  Promise.resolve(window.soundmuncher?.openVoiceConversionGuide?.()).catch(() => setLibraryState("Could not open the engine download guide."));
 });
 autoPushToTalkToggle?.addEventListener("change", () => {
   isAutoPushToTalkEnabled = autoPushToTalkToggle.checked;
@@ -4462,6 +4729,9 @@ async function initializeConfiguredApp() {
   masterGainSlider.value = defaults.masterGain;
 
   loadMixerSettings();
+  renderVoiceConversionVoices();
+  updateVoiceConversionUi();
+  refreshEnabledVoiceConversionName();
   updateVoicePriorityUi();
   updateVoiceIsolationUi(isVoiceIsolationEnabled ? "waiting" : "off");
   loadLibraryMetadata();

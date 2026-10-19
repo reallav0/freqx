@@ -1,7 +1,7 @@
 # Windows releases and updates
 
 The existing electron-builder configuration is retained. `npm run dist` builds
-NSIS and portable Windows executables without publishing from a workstation.
+the NSIS Windows setup executable without publishing from a workstation.
 Production changes pushed or merged to `main` automatically trigger GitHub Actions
 to build and upload the release; no manual executable uploads are needed. Feature
 branch pushes and local edits do not publish releases.
@@ -34,8 +34,10 @@ version bump and publish only after it merges; the supplied direct-push workflow
 fails closed rather than bypassing branch protection. Configure those permissions
 before enabling automatic releases.
 
-Release artifacts: FreqX-Setup-X.Y.Z.exe, portable executable, NSIS blockmap,
-latest.yml, SHA256SUMS.txt and CycloneDX SBOM. The SBOM covers production npm
+Release assets: FreqX-Setup-X.Y.Z.exe, its NSIS blockmap, and latest.yml for
+in-app updates. Portable executables are no longer built or uploaded.
+SHA256SUMS.txt and the CycloneDX SBOM are generated inside CI and are not
+uploaded as release assets. The SBOM covers production npm
 dependencies plus Electron and hash-pinned native audio model/WASM assets; it is
 not a claim to enumerate every library linked into Electron's executable.
 GitHub provenance attestations are produced for public repositories. Private
@@ -47,7 +49,7 @@ electron-updater uses the fixed GitHub repository in trusted package build
 configuration. Startup checks do not block audio startup. Installed Windows builds
 download updates, show progress, validate SHA-512 and offer Restart and install.
 No automatic installation on normal quit is enabled. Renderer IPC accepts no feed
-URL, installer path or update metadata. Development/portable builds update manually.
+URL, installer path or update metadata. Development builds update manually.
 Invalid/missing checksums block installation, and errors leave FreqX usable.
 
 **No Windows code-signing certificate exists in this workspace.** The actual
@@ -61,7 +63,7 @@ and least privilege. A trusted Windows signing certificate and publisher checks
 are recommended before broad distribution/automatic update rollout. Do not set
 an invented publisher name or disable an existing signature failure to install.
 
-Local validation built the Windows installer, portable executable and updater
+Local validation previously built the Windows installer and updater
 metadata, generated SBOM/checksums, and passed updater corruption/failure tests.
 No GitHub release has been published by this task. End-to-end update installation
 requires two installed, published versions in a staging repository plus explicit
