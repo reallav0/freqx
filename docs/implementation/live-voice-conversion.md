@@ -1,12 +1,25 @@
-# Live AI voice conversion
+# Live voice changer
 
-**AI voice** in the Mixer converts microphone audio using a separately running,
+**Voice changer** sits directly below the Mixer's volume sliders. Its default
+**Built-in presets** mode includes **Anime girl**, **Deep man**, **Robot**,
+**Helium**, **Monster**, and **Radio**. Select a preset and turn on Voice changer.
+These are pitch and tone effects that work offline with no engine, models, or
+downloads. They change your own voice; they do not reproduce a trained AI voice.
+Pitch adjusts each preset's default pitch by -12 to +12 semitones, with a total
+shift limited to -18 to +18. Hear myself previews the effect through your chosen
+headphone output. Turn the feature off to return to your natural microphone.
+
+The section defaults off but always lists the six bundled presets. Untouched
+settings from the previous release also open the built-in list. Previously
+configured RVC voices retain their selected mode and model.
+
+For AI model voices, select **AI voices (RVC)**. This optional mode uses a separately running,
 local [VCClient / w-okada voice changer](https://github.com/w-okada/voice-changer)
 with RVC support. Freqx lists the RVC voices actually installed in that engine.
-Anime-style, feminine, and deep masculine voices require suitable voice models;
-Freqx does not bundle a voice engine or character models.
+Its character voices require suitable trained models; Freqx does not bundle an
+AI engine or character models.
 
-## Setup
+## Optional AI engine setup
 
 1. Download an RVC-compatible Windows edition from the voice changer's official
    download links. Choose an edition that explicitly supports RVC: edition
@@ -16,10 +29,10 @@ Freqx does not bundle a voice engine or character models.
    downloads, and any hardware-specific inference requirements.
 3. Stop audio capture/playback in the engine. Freqx supplies the microphone audio
    and handles output routing itself; the engine must remain running.
-4. Open Freqx's Mixer, expand **AI voice > Setup**, and match the engine port
+4. Open Freqx's Mixer, choose **Voice changer > AI voices (RVC)**, expand **Setup**, and match the engine port
    (default **18000**). **Open engine setup** opens the engine's local interface;
    **Engine download** opens its official repository.
-5. Press **Refresh**, select an installed voice, and enable **AI voice**. Adjust
+5. Press **Refresh**, select an installed voice, and enable **Voice changer**. Adjust
    **Pitch** between -12 and +12 semitones. Enable **Hear myself (headphones)**
    to preview the converted microphone through your local listening output.
 
@@ -30,13 +43,13 @@ Explicitly pressing Refresh still queries installed voices while the feature is 
 
 **Preparing** mutes the microphone while the model initializes. If the engine
 stops, falls behind, or returns invalid audio, the microphone remains muted and
-the Mixer explains the error. Turn **AI voice off** to use your natural voice;
+the Mixer explains the error. Turn **Voice changer off** to use your natural voice;
 turn it back on to retry conversion. Soundboard clips keep playing independently.
 
 ## Audio and performance
 
 ```text
-Microphone -> isolation / echo cancellation -> AI voice -> microphone gain / EQ
+Microphone -> isolation / echo cancellation -> voice effect -> microphone gain / EQ
            -> compression / peak protection -> outgoing mix
 Soundboard ---------------------------------> outgoing mix
 ```
@@ -47,7 +60,16 @@ and the combined mix are never sent into the voice engine. **Hear myself** is
 independent of the soundboard's Hear control and uses the selected local output
 with peak protection. Use headphones to avoid acoustic feedback.
 
-Conversion uses mono 48 kHz audio in 7,680-sample blocks (160 ms). Capture buffering,
+Built-in presets process mono 48 kHz audio on the audio thread, without IPC or
+network requests. Pitch-shifted presets use two overlapping variable-delay
+grains over a 75 ms window; the audible delay varies within that window. Robot
+uses ring modulation; Radio uses band filtering and soft saturation. Gain and
+peak protection follow all effects. This independently implemented delay-based
+approach follows the same general DSP principle described by
+[Tone.js PitchShift](https://tonejs.github.io/docs/15.1.22/classes/PitchShift.html);
+no Tone.js code or package is bundled.
+
+Optional AI conversion uses mono 48 kHz audio in 7,680-sample blocks (160 ms). Capture buffering,
 model context, inference, transport, and audio devices all contribute to latency.
 The Mixer's conversion time measures one engine request; it is not total
 microphone-to-call latency. Some hardware/model combinations cannot keep up.
@@ -65,7 +87,13 @@ and PCM transport are covered by fixtures rather than a live 1.x engine.
 
 ## Integration details
 
-`runtime/voice-conversion.cjs` talks only to literal `127.0.0.1` on a validated
+`audio/voice-presets.js` loads the bundled `audio/voice-presets-worklet.mjs` once
+per context, handles cancellation and processor errors, and provides the six
+preset definitions. The worklet reuses a bounded delay buffer, sanitizes input,
+limits output, and stops silently when disconnected. Neither preset selection
+nor processing contacts the optional AI engine.
+
+For optional AI mode, `runtime/voice-conversion.cjs` talks only to literal `127.0.0.1` on a validated
 integer port (1024-65535), through main-process IPC restricted to the main
 soundboard frame. It rejects redirects and bounds request duration and response
 size. Renderer networking and Content Security Policy do not change.
@@ -91,6 +119,8 @@ engine and its model-download behavior are managed separately.
 ```powershell
 npm.cmd run test:voice-conversion
 npm.cmd run test:voice-conversion-desktop
+npm.cmd run test:voice-presets
+npm.cmd run test:voice-presets-desktop
 
 # Optional: start your local engine and install at least two RVC voices first.
 npm.cmd run test:voice-conversion-live -- --port 18000 --voices 0,2

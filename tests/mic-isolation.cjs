@@ -96,7 +96,7 @@ function installFixtures() {
       source.start();
       await context.resume();
       const stream = destination.stream;
-      stats.captures.push({ constraints, stream, context, source });
+      stats.captures.push({ constraints, stream, context, source, destination });
       for (const track of stream.getTracks()) {
         let echoCancellation = Boolean(constraints.audio.echoCancellation);
         const settings = track.getSettings.bind(track);
@@ -267,11 +267,84 @@ async function runMain() {
   }
   try {
     await app.whenReady();
-    await createWindow({ voiceIsolation: false });
+    await createWindow({ voiceIsolation: false, ...(process.argv.includes('--voice-conversion') ? { voiceConversion: { mode: 'rvc' } } : {}) });
     if (process.argv.includes('--baseline')) {
       const baseline = await evaluate(graphExpression);
       fs.writeFileSync(path.join(output, 'baseline-graph.json'), JSON.stringify(baseline, null, 2));
       assert('baseline mixer graph captured with protected output branches', baseline.edges.length === 13, baseline);
+    } else if (process.argv.includes('--voice-presets')) {
+      assert('fresh launch shows all six built-in presets with Anime girl selected and effects off', await evaluate(`voiceConversionSettings.mode==='builtin' && !voiceConversionSettings.enabled && !aiVoiceToggle.checked && aiVoiceSelect.value==='anime' && Array.from(aiVoiceSelect.options).map(o=>o.textContent).join('|')==='Anime girl|Deep man|Robot|Helium|Monster|Radio'`));
+      assert('built-in mode hides engine setup and places presets above balance controls', await evaluate(`aiVoiceSetup.hidden && refreshAiVoicesButton.hidden && document.querySelector('.ai-voice-controls').nextElementSibling.classList.contains('mix-assist-controls')`));
+      await pause(150);
+      const baseline = await evaluate(graphExpression);
+      await evaluate(`aiVoiceToggle.checked=true;aiVoiceToggle.dispatchEvent(new Event('change',{bubbles:true}));`);
+      await until('voiceConversionStatus==="active" && !!voiceConversionSession','built-in worklet startup');
+      assert('built-in preset runs in a real audio worklet with clean sidechain and no dry bypass', await evaluate(`(()=>{const id=__micTest.id(micSource),effect=__micTest.id(voiceConversionSession.node);return voiceConversionSession.node instanceof AudioWorkletNode && __micTest.edges.some(e=>e[0]===id&&e[1]===effect)&&__micTest.edges.some(e=>e[0]===id&&e[1]===__micTest.id(voicePriorityNode))&&!__micTest.edges.some(e=>e[0]===id&&e[1]===__micTest.id(micGainNode));})()`));
+      await assertUnchanged('built-in effects preserve soundboard and outgoing mix connections', baseline);
+      await evaluate(`(()=>{const capture=__micTest.captures.at(-1);window.__presetOsc=capture.context.createOscillator();__presetOsc.frequency.value=220;const gain=capture.context.createGain();gain.gain.value=.08;__presetOsc.connect(gain).connect(capture.destination);__presetOsc.start();window.__presetAnalyser=audioContext.createAnalyser();__presetAnalyser.fftSize=8192;voiceConversionSession.node.connect(__presetAnalyser);window.__measurePreset=()=>{const data=new Float32Array(__presetAnalyser.fftSize);__presetAnalyser.getFloatTimeDomainData(data);const bins=new Float32Array(__presetAnalyser.frequencyBinCount);__presetAnalyser.getFloatFrequencyData(bins);let peak=0;for(let i=1;i<bins.length;i++)if(bins[i]>bins[peak])peak=i;return {rms:Math.sqrt(data.reduce((s,v)=>s+v*v,0)/data.length),frequency:peak*audioContext.sampleRate/__presetAnalyser.fftSize};};})()`);
+      await until('__measurePreset().rms>0.005','processed synthetic microphone');
+      await pause(350);
+      const anime = await evaluate('__measurePreset()');
+      assert('Anime girl changes the synthetic microphone pitch', anime.rms > .005 && anime.frequency > 250, anime);
+      await evaluate(`window.__oldPreset=voiceConversionSession;aiVoiceSelect.value='deep';aiVoiceSelect.dispatchEvent(new Event('change',{bubbles:true}));`);
+      await until('voiceConversionStatus==="active" && voiceConversionSession!==__oldPreset','Deep man switch');
+      await evaluate('voiceConversionSession.node.connect(__presetAnalyser)'); await pause(450);
+      const deep = await evaluate('__measurePreset()');
+      assert('Deep man replaces the previous effect and lowers microphone pitch', deep.rms > .005 && deep.frequency < 200 && await evaluate('!__micTest.edges.some(e=>e[0]===__micTest.id(__oldPreset.node))'), deep);
+      for (const preset of ['robot','helium','monster','radio']) {
+        await evaluate(`window.__oldPreset=voiceConversionSession;aiVoiceSelect.value='${preset}';aiVoiceSelect.dispatchEvent(new Event('change',{bubbles:true}));`);
+        await until('voiceConversionStatus==="active" && voiceConversionSession!==__oldPreset',`${preset} preset switch`);
+      }
+      assert('every built-in selection starts without engine traffic', await evaluate(`voiceConversionSettings.presetId==='radio' && __micTest.conversion.lists===0 && __micTest.conversion.starts.length===0 && __micTest.conversion.frames===0 && __micTest.conversion.stops.length===0`));
+      await evaluate(`(async()=>{await setSoundPlaybackEnabled(false);monitorAiVoiceToggle.checked=true;monitorAiVoiceToggle.dispatchEvent(new Event('change',{bubbles:true}));})()`); await pause(100);
+      assert('preset headphone preview is independent of clip Hear', await evaluate('!isSoundPlaybackEnabled && micMonitorGainNode.gain.value>.9'));
+      await evaluate(`voicePitchSlider.value='-3';voicePitchSlider.dispatchEvent(new Event('input',{bubbles:true}));`);
+      await until('voiceConversionStatus==="active" && voiceConversionPending===null && voiceConversionPitchTimer===null','preset pitch adjustment');
+      assert('preset pitch adjustment persists as an offset', await evaluate('voiceConversionSettings.pitch===-3 && JSON.parse(localStorage.getItem("soundmuncher:mixer-settings")).voiceConversion.pitch===-3'));
+      await evaluate(`aiVoiceToggle.checked=false;aiVoiceToggle.dispatchEvent(new Event('change',{bubbles:true}));`);
+      await until('voiceConversionSession===null && micMonitorGainNode.gain.value===0','preset Off audio automation');
+      assert('Off restores natural microphone routing and closes headphone preview', await evaluate('voiceConversionSession===null && micMonitorGainNode.gain.value===0 && __micTest.edges.some(e=>e[0]===__micTest.id(micSource)&&e[1]===__micTest.id(micGainNode))'));
+      await evaluate(`window.__nativePresets=FreqxVoicePresets;window.FreqxVoicePresets={...__nativePresets,create:async(...args)=>{const session=await __nativePresets.create(...args);window.__latePreset=session;await new Promise(resolve=>{window.__finishPreset=resolve;});return session;}};aiVoiceToggle.checked=true;aiVoiceToggle.dispatchEvent(new Event('change',{bubbles:true}));`);
+      await until('typeof __finishPreset==="function"','deferred preset startup');
+      await evaluate(`aiVoiceToggle.checked=false;aiVoiceToggle.dispatchEvent(new Event('change',{bubbles:true}));__finishPreset();window.FreqxVoicePresets=__nativePresets;void 0;`); await pause(100);
+      assert('Off during startup discards a late preset without reconnecting it', await evaluate('voiceConversionSession===null && voiceConversionStatus==="off" && !__micTest.edges.some(e=>e[0]===__micTest.id(__latePreset.node))'));
+      await evaluate(`aiVoiceToggle.checked=true;aiVoiceToggle.dispatchEvent(new Event('change',{bubbles:true}));`);
+      await until('voiceConversionStatus==="active" && !!voiceConversionSession','preset restart');
+      await evaluate(`window.__oldPreset=voiceConversionSession;inputDeviceSelect.value='fixture-mic-b';switchMicInput()`);
+      await until('voiceConversionStatus==="active" && voiceConversionSession!==__oldPreset','replacement microphone effect');
+      assert('microphone replacement closes the previous preset and keeps the selected effect', await evaluate('voiceConversionSettings.presetId==="radio" && !__micTest.edges.some(e=>e[0]===__micTest.id(__oldPreset.node))'));
+      await evaluate('setMicCaptureEnabled(false)'); await pause(50);
+      assert('Mic off closes built-in processing and monitoring', await evaluate('voiceConversionSession===null && micMonitorGainNode.gain.value===0'));
+      await evaluate('saveMixerSettings()');
+      const saved = await evaluate('JSON.parse(localStorage.getItem("soundmuncher:mixer-settings"))');
+      await createWindow(saved);
+      assert('built-in mode, preset, pitch and preview preference restore', await evaluate('voiceConversionSettings.mode==="builtin" && voiceConversionSettings.presetId==="radio" && voiceConversionSettings.enabled && voiceConversionSettings.pitch===-3 && voiceConversionSettings.monitor && aiVoiceSelect.value==="radio"'));
+      await evaluate('setMicCaptureEnabled(true)'); await until('voiceConversionStatus==="active"','restored built-in effect');
+      assert('restored built-in effects still make zero engine requests', await evaluate('__micTest.conversion.lists===0 && __micTest.conversion.starts.length===0 && __micTest.conversion.stops.length===0'));
+      win.showInactive();
+      for (const width of [1000,900]) {
+        win.setSize(width,760); await pause(150);
+        await evaluate(`document.querySelector('.mixer').scrollTop=0`); await pause(150);
+        fs.writeFileSync(path.join(output,`voice-presets-${width}.png`),(await win.webContents.capturePage()).toPNG());
+        assert(`preset controls and active status are visible at ${width}px`, await evaluate(`(()=>{const field=aiVoiceSelect.getBoundingClientRect(),status=aiVoiceState.getBoundingClientRect(),panel=document.querySelector('.mixer').getBoundingClientRect();return field.top>=panel.top&&status.bottom<=panel.bottom&&field.right<=panel.right;})()`));
+      }
+      win.hide();
+      assert('built-in flow finishes without renderer or audio-thread errors', await evaluate('__micTest.crashes.length===0 && __micTest.worklets.every(w=>w.errors.length===0)'));
+      await createWindow({voiceIsolation:false,voiceConversion:{enabled:false,voiceId:'',port:18000,pitch:0,monitor:false}});
+      assert('untouched legacy off settings upgrade to visible built-in choices without engine requests', await evaluate('voiceConversionSettings.mode==="builtin" && !voiceConversionSettings.enabled && aiVoiceSelect.options.length===6 && aiVoiceSelect.value==="anime" && __micTest.conversion.lists===0 && __micTest.conversion.starts.length===0'));
+      await createWindow({voiceIsolation:false,voiceConversion:{enabled:true,voiceId:'1',port:18000,pitch:0,monitor:false}});
+      await until('voiceConversionStatus==="active"','legacy AI settings migration');
+      assert('legacy AI preferences migrate to RVC and retain engine controls and voice', await evaluate('voiceConversionSettings.mode==="rvc" && voiceConversionSettings.voiceId==="1" && !aiVoiceSetup.hidden && !refreshAiVoicesButton.hidden && __micTest.conversion.starts.at(-1).voiceId==="1"'));
+      await evaluate('__micTest.conversion.fail=true');
+      await until('voiceConversionFaulted && voiceConversionStatus==="error"','RVC engine failure before mode switch');
+      await evaluate(`voiceChangerMode.value='builtin';voiceChangerMode.dispatchEvent(new Event('change',{bubbles:true}));`);
+      await until('voiceConversionStatus==="active" && !!voiceConversionSession','built-in recovery from RVC failure');
+      assert('switching from failed RVC to a built-in preset restores effects without a toggle cycle or dry bypass', await evaluate('!voiceConversionFaulted && voiceConversionSettings.enabled && voiceConversionSettings.mode==="builtin" && __micTest.conversion.active.size===0 && !__micTest.edges.some(e=>e[0]===__micTest.id(micSource)&&e[1]===__micTest.id(micGainNode))'));
+      await evaluate(`__micTest.conversion.fail=false;__micTest.conversion.defer=true;voiceChangerMode.value='rvc';voiceChangerMode.dispatchEvent(new Event('change',{bubbles:true}));`);
+      await until('typeof __micTest.conversion.finish==="function"','pending RVC mode startup');
+      await evaluate(`voiceChangerMode.value='builtin';voiceChangerMode.dispatchEvent(new Event('change',{bubbles:true}));__micTest.conversion.finish();__micTest.conversion.defer=false;`);
+      await until('voiceConversionStatus==="active" && voiceConversionSettings.mode==="builtin"','built-in startup after pending RVC'); await pause(100);
+      assert('switching to built-in cancels pending RVC and retires its late engine session', await evaluate('__micTest.conversion.active.size===0 && !!voiceConversionSession && !voiceConversionFaulted && __micTest.worklets.find(w=>w.node===voiceConversionSession.node).name==="freqx-voice-presets"'));
     } else if (process.argv.includes('--voice-conversion')) {
       assert('AI voice starts off without contacting an engine', await evaluate('!voiceConversionSettings.enabled && __micTest.conversion.starts.length===0 && __micTest.conversion.lists===0'));
       await pause(150);

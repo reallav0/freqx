@@ -12,6 +12,22 @@ const root = path.resolve(__dirname, '..');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function main() {
+  const checkVoicePresets = process.argv.includes('--voice-presets');
+  const presetSmokeSource = `(async () => {
+    const options = Array.from(document.getElementById('aiVoiceSelect').options, option => option.textContent);
+    const mode = voiceConversionSettings.mode;
+    document.getElementById('aiVoiceToggle').checked = true;
+    document.getElementById('aiVoiceToggle').dispatchEvent(new Event('change', { bubbles: true }));
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline && (voiceConversionStatus !== 'active' || !voiceConversionSession)) {
+      if (voiceConversionFaulted) throw new Error(aiVoiceState.textContent);
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    const result = { options, mode, active: voiceConversionStatus === 'active', worklet: voiceConversionSession?.node instanceof AudioWorkletNode };
+    document.getElementById('aiVoiceToggle').checked = false;
+    document.getElementById('aiVoiceToggle').dispatchEvent(new Event('change', { bubbles: true }));
+    return result;
+  })()`;
   const argument = process.argv.indexOf('--exe');
   const devArgument = process.argv.indexOf('--dev-script');
   const developmentScript = devArgument < 0 ? null : process.argv[devArgument + 1];
@@ -118,6 +134,13 @@ async function main() {
       LoopbackService.prototype.list = async () => [];
       LoopbackService.prototype.start = async () => { throw new Error('Native capture disabled in startup smoke test.'); };
       const failures = [];
+      let voiceEngineRequests = 0;
+      if (${checkVoicePresets}) {
+        const { VoiceConversionService } = require('./runtime/voice-conversion.cjs');
+        for (const name of ['list', 'start', 'frame']) VoiceConversionService.prototype[name] = async () => {
+          voiceEngineRequests++; throw new Error('Built-in preset requested the optional AI engine.');
+        };
+      }
       process.on('uncaughtException', error => failures.push(error.stack));
       process.on('unhandledRejection', error => failures.push(error?.stack || String(error)));
       const originalLoad = BrowserWindow.prototype.loadFile;
@@ -148,6 +171,10 @@ async function main() {
             if (${Boolean(apiBase)}) {
               state.catalog = await window.webContents.executeJavaScript('window.soundmuncher.getPublicLibrary()');
             }
+            if (${checkVoicePresets}) {
+              state.voicePresets = await window.webContents.executeJavaScript(${JSON.stringify(presetSmokeSource)});
+              state.voiceEngineRequests = voiceEngineRequests;
+            }
             clearInterval(timer);
             await new Promise(resolve => setTimeout(resolve, 500));
             fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({ ...state, failures, packaged: app.isPackaged, defaultApp: process.defaultApp === true, profile: app.getPath('userData'), hidden: !window.isVisible(), metadataHasBuild: !!require('./package.json').build }));
@@ -177,6 +204,14 @@ async function main() {
     assert.equal(report.initialized, true);
     assert.equal(report.hidden, true);
     assert.deepEqual(report.failures, []);
+    if (checkVoicePresets) {
+      assert.deepEqual(report.voicePresets.options, ['Anime girl', 'Deep man', 'Robot', 'Helium', 'Monster', 'Radio']);
+      assert.equal(report.voicePresets.mode, 'builtin');
+      assert.equal(report.voicePresets.active, true);
+      assert.equal(report.voicePresets.worklet, true);
+      assert.equal(report.voiceEngineRequests, 0);
+      console.log('PASS packaged presets appear and run through production main/preload/renderer without an AI engine.');
+    }
     if (apiBase) {
       assert.equal(report.catalog?.source, 'remote', 'Actual main process must retrieve the API catalog rather than fallback.');
       assert.ok(report.catalog.sounds.length > 0);

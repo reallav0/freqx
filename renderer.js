@@ -242,7 +242,10 @@ const refreshAutoPttAppsButton = document.getElementById("refreshAutoPttApps");
 const autoPttState = document.getElementById("autoPttState");
 const autoPttHelp = document.getElementById("autoPttHelp");
 const aiVoiceToggle = document.getElementById("aiVoiceToggle");
+const voiceChangerMode = document.getElementById("voiceChangerMode");
 const aiVoiceSelect = document.getElementById("aiVoiceSelect");
+const aiVoiceHelp = document.getElementById("aiVoiceHelp");
+const aiVoiceSetup = document.getElementById("aiVoiceSetup");
 const refreshAiVoicesButton = document.getElementById("refreshAiVoices");
 const voicePitchSlider = document.getElementById("voicePitch");
 const voicePitchValue = document.getElementById("voicePitchValue");
@@ -371,7 +374,7 @@ const autoPttKeyCodes = [
   ...Array.from({ length: 24 }, (_, index) => `F${index + 1}`),
   "Space", "Mouse4", "Mouse5"
 ];
-let voiceConversionSettings = { enabled: false, port: 18000, voiceId: "", pitch: 0, monitor: false };
+let voiceConversionSettings = { enabled: false, mode: "builtin", presetId: "anime", port: 18000, voiceId: "", pitch: 0, monitor: false };
 let voiceConversionVoices = [];
 let voiceConversionSession = null;
 let voiceConversionPending = null;
@@ -705,6 +708,11 @@ function loadMixerSettings() {
     if (typeof settings?.autoPttTarget === "string" && settings.autoPttTarget.length <= 260
       && !/[\u0000-\u001f\\/]/.test(settings.autoPttTarget)) selectedAutoPttTarget = settings.autoPttTarget;
     const conversion = settings?.voiceConversion;
+    if (conversion && typeof conversion === "object") {
+      voiceConversionSettings.mode = ["builtin", "rvc"].includes(conversion.mode) ? conversion.mode
+        : conversion.enabled === true || (typeof conversion.voiceId === "string" && conversion.voiceId.trim()) ? "rvc" : "builtin";
+    }
+    if (window.FreqxVoicePresets?.presets?.some(preset => preset.id === conversion?.presetId)) voiceConversionSettings.presetId = conversion.presetId;
     if (typeof conversion?.enabled === "boolean") voiceConversionSettings.enabled = conversion.enabled;
     if (Number.isInteger(conversion?.port) && conversion.port >= 1024 && conversion.port <= 65535) voiceConversionSettings.port = conversion.port;
     if (typeof conversion?.voiceId === "string" && conversion.voiceId.length <= 256) voiceConversionSettings.voiceId = conversion.voiceId;
@@ -3495,7 +3503,13 @@ async function refreshReferenceDevices() {
 function updateVoiceConversionUi(status = voiceConversionStatus, message = voiceConversionMessage) {
   voiceConversionStatus = status;
   voiceConversionMessage = message;
+  const builtin = voiceConversionSettings.mode === "builtin";
   if (aiVoiceToggle) aiVoiceToggle.checked = voiceConversionSettings.enabled;
+  if (voiceChangerMode) voiceChangerMode.value = voiceConversionSettings.mode;
+  if (aiVoiceSetup) aiVoiceSetup.hidden = builtin;
+  if (aiVoiceHelp) aiVoiceHelp.textContent = builtin
+    ? "Microphone only. Pitch fine-tunes the preset."
+    : "Convert your microphone with a local RVC voice. Live conversion adds delay. Soundboard clips stay unchanged.";
   if (voicePitchSlider) {
     voicePitchSlider.value = String(voiceConversionSettings.pitch);
     updateRangeFill(voicePitchSlider);
@@ -3507,6 +3521,7 @@ function updateVoiceConversionUi(status = voiceConversionStatus, message = voice
   }
   if (aiVoicePortInput && document.activeElement !== aiVoicePortInput) aiVoicePortInput.value = String(voiceConversionSettings.port);
   if (refreshAiVoicesButton) {
+    refreshAiVoicesButton.hidden = builtin;
     refreshAiVoicesButton.disabled = voiceConversionListLoading;
     refreshAiVoicesButton.textContent = voiceConversionListLoading ? "Refreshing…" : "Refresh";
   }
@@ -3514,11 +3529,11 @@ function updateVoiceConversionUi(status = voiceConversionStatus, message = voice
     aiVoiceState.dataset.state = status;
     aiVoiceState.dataset.active = String(status === "active");
     const labels = {
-      off: "AI voice off",
-      waiting: "AI voice waiting for microphone",
-      preparing: "Preparing AI voice · microphone muted",
-      active: "AI voice active · local conversion",
-      error: "AI voice unavailable · microphone muted. Turn AI voice off to use your natural voice."
+      off: "Voice changer off",
+      waiting: "Voice changer waiting for microphone",
+      preparing: "Preparing voice · microphone muted",
+      active: builtin ? "Voice changer active · built-in preset" : "AI voice active · local conversion",
+      error: "Voice changer unavailable · microphone muted. Turn Voice changer off to use your natural voice."
     };
     aiVoiceState.textContent = message || labels[status] || labels.off;
   }
@@ -3527,6 +3542,16 @@ function updateVoiceConversionUi(status = voiceConversionStatus, message = voice
 function renderVoiceConversionVoices() {
   if (!aiVoiceSelect) return;
   aiVoiceSelect.replaceChildren();
+  if (voiceConversionSettings.mode === "builtin") {
+    for (const preset of window.FreqxVoicePresets?.presets || []) {
+      const option = document.createElement("option");
+      option.value = preset.id;
+      option.textContent = preset.name;
+      aiVoiceSelect.appendChild(option);
+    }
+    aiVoiceSelect.value = voiceConversionSettings.presetId;
+    return;
+  }
   const placeholder = document.createElement("option");
   placeholder.value = "";
   placeholder.textContent = voiceConversionVoices.length ? "Choose a voice" : "No RVC voices loaded";
@@ -3545,6 +3570,7 @@ function renderVoiceConversionVoices() {
 }
 
 async function refreshVoiceConversionVoices({ quiet = false } = {}) {
+  if (voiceConversionSettings.mode !== "rvc") return;
   const generation = ++voiceConversionListGeneration;
   voiceConversionListLoading = true;
   updateVoiceConversionUi();
@@ -3572,7 +3598,7 @@ async function refreshVoiceConversionVoices({ quiet = false } = {}) {
 }
 
 function refreshEnabledVoiceConversionName() {
-  if (!voiceConversionSettings.enabled || voiceConversionListLoading
+  if (voiceConversionSettings.mode !== "rvc" || !voiceConversionSettings.enabled || voiceConversionListLoading
     || voiceConversionVoices.some(voice => voice.id === voiceConversionSettings.voiceId)) return;
   void refreshVoiceConversionVoices({ quiet: true }).catch(() => {});
 }
@@ -3592,7 +3618,7 @@ function stopMicVoiceConversion() {
   pending?.abort();
   voiceConversionSession?.close();
   voiceConversionSession = null;
-  if (pending) {
+  if (pending?.voiceMode === "rvc") {
     try { window.soundmuncher?.stopVoiceConversion?.(); } catch {}
   }
   if (audioContext && micMonitorGainNode) micMonitorGainNode.gain.setValueAtTime(0, audioContext.currentTime);
@@ -3620,16 +3646,20 @@ async function configureMicVoiceConversion() {
   }
   updateVoiceConversionUi("preparing", "");
   const pending = new AbortController();
+  pending.voiceMode = voiceConversionSettings.mode;
   voiceConversionPending = pending;
   try {
-    if (!window.FreqxVoiceConversion) throw new Error("AI voice is unavailable in this build.");
-    if (!voiceConversionSettings.voiceId) await refreshVoiceConversionVoices({ quiet: true });
+    const builtin = voiceConversionSettings.mode === "builtin";
+    const processor = builtin ? window.FreqxVoicePresets : window.FreqxVoiceConversion;
+    if (!processor) throw new Error("The selected voice effect is unavailable in this build.");
+    if (!builtin && !voiceConversionSettings.voiceId) await refreshVoiceConversionVoices({ quiet: true });
     if (pending.signal.aborted || generation !== voiceConversionGeneration || source !== micSource) return;
-    if (!voiceConversionSettings.voiceId) throw new Error("Load an RVC voice in the local engine, then refresh.");
-    const session = await window.FreqxVoiceConversion.create(audioContext, {
+    if (!builtin && !voiceConversionSettings.voiceId) throw new Error("Load an RVC voice in the local engine, then refresh.");
+    const session = await processor.create(audioContext, {
       bridge: window.soundmuncher,
       port: voiceConversionSettings.port,
       voiceId: voiceConversionSettings.voiceId,
+      presetId: voiceConversionSettings.presetId,
       pitch: voiceConversionSettings.pitch,
       signal: pending.signal,
       onReady: () => {
@@ -3645,11 +3675,11 @@ async function configureMicVoiceConversion() {
         if (generation !== voiceConversionGeneration) return;
         voiceConversionFaulted = true;
         voiceConversionSession = null;
-        updateVoiceConversionUi("error", `${error.message} Microphone muted. Turn AI voice off to use your natural voice.`);
+        updateVoiceConversionUi("error", `${error.message} Microphone muted. Turn Voice changer off to use your natural voice.`);
         updateVoiceConversionMonitor();
       }
     });
-    if (pending.signal.aborted || generation !== voiceConversionGeneration || source !== micSource) { session.close(); return; }
+    if (pending.signal.aborted || generation !== voiceConversionGeneration || source !== micSource || voiceConversionFaulted) { session.close(); return; }
     voiceConversionSession = session;
     source.connect(session.node);
     session.node.connect(micGainNode);
@@ -3659,7 +3689,7 @@ async function configureMicVoiceConversion() {
     voiceConversionSession?.close();
     voiceConversionSession = null;
     voiceConversionFaulted = true;
-    updateVoiceConversionUi("error", `${error?.message || "AI voice could not start."} Microphone muted. Turn AI voice off to use your natural voice.`);
+    updateVoiceConversionUi("error", `${error?.message || "Voice changer could not start."} Microphone muted. Turn Voice changer off to use your natural voice.`);
     updateVoiceConversionMonitor();
   } finally {
     if (voiceConversionPending === pending) voiceConversionPending = null;
@@ -3672,8 +3702,8 @@ function connectMicStreamToMixer(stream) {
   micSource?.disconnect();
   micSource = nextSource;
   micSource.connect(voicePriorityNode, 0, 1);
-  if (window.FreqxVoiceConversion) void configureMicVoiceConversion();
-  else if (typeof voiceConversionSettings !== "undefined" && voiceConversionSettings.enabled) updateVoiceConversionUi("error", "AI voice is unavailable. Microphone muted; turn AI voice off to use your natural voice.");
+  if (window.FreqxVoiceConversion || window.FreqxVoicePresets) void configureMicVoiceConversion();
+  else if (typeof voiceConversionSettings !== "undefined" && voiceConversionSettings.enabled) updateVoiceConversionUi("error", "Voice changer is unavailable. Microphone muted; turn Voice changer off to use your natural voice.");
   else micSource.connect(micGainNode);
   const processed = stream !== micStream;
   // The processing service already applies its 80 Hz high-pass and compressor.
@@ -4386,8 +4416,22 @@ aiVoiceToggle?.addEventListener("change", () => {
   saveMixerSettings();
   void configureMicVoiceConversion();
 });
+voiceChangerMode?.addEventListener("change", () => {
+  voiceConversionSettings.mode = voiceChangerMode.value === "rvc" ? "rvc" : "builtin";
+  voiceConversionFaulted = false;
+  voiceConversionListGeneration += 1;
+  voiceConversionListLoading = false;
+  renderVoiceConversionVoices();
+  updateVoiceConversionUi(voiceConversionSettings.enabled ? "preparing" : "off", "");
+  saveMixerSettings();
+  void configureMicVoiceConversion();
+});
 aiVoiceSelect?.addEventListener("change", () => {
-  voiceConversionSettings.voiceId = aiVoiceSelect.value;
+  if (voiceConversionSettings.mode === "builtin") {
+    voiceConversionSettings.presetId = aiVoiceSelect.value;
+    voiceConversionFaulted = false;
+  }
+  else voiceConversionSettings.voiceId = aiVoiceSelect.value;
   saveMixerSettings();
   if (voiceConversionSettings.enabled) void configureMicVoiceConversion();
 });
@@ -4419,6 +4463,7 @@ monitorAiVoiceToggle?.addEventListener("change", () => {
   updateVoiceConversionMonitor();
 });
 aiVoicePortInput?.addEventListener("change", () => {
+  if (voiceConversionSettings.mode !== "rvc") return;
   const port = Number(aiVoicePortInput.value);
   const valid = Number.isInteger(port) && port >= 1024 && port <= 65535;
   aiVoicePortInput.setCustomValidity(valid ? "" : "Enter a port from 1024 to 65535.");

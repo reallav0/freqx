@@ -178,9 +178,9 @@ input.pad-volume-slider::-moz-range-thumb { width: 10px; height: 10px; border: 0
 .mix-assist-state { min-height: 16px; }
 .mix-assist-state[data-active="true"] { color: var(--accent); }
 .auto-ptt-controls { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.ai-voice-controls { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.ai-voice-controls { display: grid; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .ai-voice-controls .setting-toggle { gap: 8px; min-height: 28px; font-size: 12px; }
-.ai-voice-controls .route-field { gap: 4px; }
+.ai-voice-controls .route-field { grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 8px; }
 .ai-voice-controls .route-field label, .ai-voice-port { color: var(--text-muted); font-size: 12px; }
 .ai-voice-controls .device-select, .ai-voice-port .text-input { height: 32px; min-width: 0; font-size: 12px; }
 .ai-voice-controls .inline-control { gap: 8px; }

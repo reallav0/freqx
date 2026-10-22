@@ -150,6 +150,47 @@
             </label>
           </div>
 
+          <div class="ai-voice-controls" aria-label="Voice changer">
+            <label class="setting-toggle" for="aiVoiceToggle">
+              <input id="aiVoiceToggle" type="checkbox" aria-describedby="aiVoiceHelp aiVoiceState" />
+              <span>Voice changer</span>
+            </label>
+            <div class="route-field">
+              <label for="voiceChangerMode">Mode</label>
+              <select id="voiceChangerMode" class="device-select">
+                <option value="builtin">Built-in presets</option>
+                <option value="rvc">AI voices (RVC)</option>
+              </select>
+            </div>
+            <div class="route-field">
+              <label for="aiVoiceSelect">Voice</label>
+              <div class="inline-control">
+                <select id="aiVoiceSelect" class="device-select"><option value="anime">Anime girl</option></select>
+                <button id="refreshAiVoices" hidden class="mixer-action compact-action" type="button">Refresh</button>
+              </div>
+            </div>
+            <label class="mixer-control ai-voice-pitch" for="voicePitch">
+              <span>Pitch</span>
+              <input id="voicePitch" type="range" min="-12" max="12" step="1" value="0" />
+              <output id="voicePitchValue">0</output>
+            </label>
+            <label class="setting-toggle" for="monitorAiVoice">
+              <input id="monitorAiVoice" type="checkbox" aria-describedby="aiVoiceHelp" />
+              <span>Hear myself (headphones)</span>
+            </label>
+            <p id="aiVoiceHelp" class="mix-assist-help">Microphone only. Pitch fine-tunes the preset.</p>
+            <p id="aiVoiceState" class="mix-assist-state" role="status">Voice changer off</p>
+            <details id="aiVoiceSetup" class="ai-voice-setup" hidden>
+              <summary>Setup</summary>
+              <p class="mix-assist-help">Start a compatible local VCClient engine and load an RVC voice, then refresh the voice list.</p>
+              <label class="ai-voice-port" for="aiVoicePort"><span>Local engine port</span><input id="aiVoicePort" class="text-input" type="number" min="1024" max="65535" step="1" value="18000" /></label>
+              <div class="ai-voice-setup-actions">
+                <button id="openAiVoiceSetup" class="mixer-action compact-action" type="button">Open engine setup</button>
+                <button id="openAiVoiceGuide" class="brand-link" type="button">Engine download ↗</button>
+              </div>
+            </details>
+          </div>
+
           <div class="mix-assist-controls" aria-label="Voice and clip balance">
             <p id="micBoostHelp" class="mix-assist-help">Voice boost up to 300%, after isolation, with peak protection.</p>
             <div class="mic-level">
@@ -177,40 +218,6 @@
               <span>Match clip loudness</span>
             </label>
             <p id="matchClipLoudnessHelp" class="mix-assist-help">Balance quiet and loud clips. Your clip volume still fine-tunes the result.</p>
-          </div>
-
-          <div class="ai-voice-controls" aria-label="AI voice conversion">
-            <label class="setting-toggle" for="aiVoiceToggle">
-              <input id="aiVoiceToggle" type="checkbox" aria-describedby="aiVoiceHelp aiVoiceState" />
-              <span>AI voice</span>
-            </label>
-            <div class="route-field">
-              <label for="aiVoiceSelect">Voice</label>
-              <div class="inline-control">
-                <select id="aiVoiceSelect" class="device-select"><option value="">No voices loaded</option></select>
-                <button id="refreshAiVoices" class="mixer-action compact-action" type="button">Refresh</button>
-              </div>
-            </div>
-            <label class="mixer-control ai-voice-pitch" for="voicePitch">
-              <span>Pitch</span>
-              <input id="voicePitch" type="range" min="-12" max="12" step="1" value="0" />
-              <output id="voicePitchValue">0</output>
-            </label>
-            <label class="setting-toggle" for="monitorAiVoice">
-              <input id="monitorAiVoice" type="checkbox" aria-describedby="aiVoiceHelp" />
-              <span>Hear myself (headphones)</span>
-            </label>
-            <p id="aiVoiceHelp" class="mix-assist-help">Convert your microphone with a local RVC voice. Live conversion adds delay. Soundboard clips stay unchanged.</p>
-            <p id="aiVoiceState" class="mix-assist-state" role="status">AI voice off</p>
-            <details class="ai-voice-setup">
-              <summary>Setup</summary>
-              <p class="mix-assist-help">Start a compatible local VCClient engine and load an RVC voice, then refresh the voice list.</p>
-              <label class="ai-voice-port" for="aiVoicePort"><span>Local engine port</span><input id="aiVoicePort" class="text-input" type="number" min="1024" max="65535" step="1" value="18000" /></label>
-              <div class="ai-voice-setup-actions">
-                <button id="openAiVoiceSetup" class="mixer-action compact-action" type="button">Open engine setup</button>
-                <button id="openAiVoiceGuide" class="brand-link" type="button">Engine download ↗</button>
-              </div>
-            </details>
           </div>
 
           <div class="auto-ptt-controls" aria-label="Automatic push-to-talk">
@@ -602,6 +609,7 @@
     <script src="audio/mic-isolation.js"></script>
     <script src="audio/loudness.js"></script>
     <script src="audio/voice-conversion.js"></script>
+    <script src="audio/voice-presets.js"></script>
     <script src="runtime/catalog-id.js"></script>
     <script src="discover.js"></script>
     <script src="renderer.js"></script>
