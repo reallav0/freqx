@@ -42,6 +42,14 @@ contextBridge.exposeInMainWorld("soundmuncher", {
   startReference: endpointId => ipcRenderer.invoke('audio:reference-start', endpointId),
   stopReference: id => ipcRenderer.invoke('audio:reference-stop', id),
   cancelReference: () => ipcRenderer.invoke('audio:reference-cancel'),
+  listReplaySources: () => ipcRenderer.invoke('replay:sources'),
+  startReplayCapture: source => ipcRenderer.invoke('replay:start', source),
+  stopReplayCapture: id => ipcRenderer.invoke('replay:stop', id),
+  cancelReplayCapture: () => ipcRenderer.invoke('replay:cancel'),
+  ackReplayCapture: (id, sequence) => ipcRenderer.send('replay:ack', id, sequence),
+  onReplayCaptureData: handler => { const listener = (_event, packet) => handler(packet); ipcRenderer.on('replay:data', listener); return () => ipcRenderer.removeListener('replay:data', listener); },
+  saveReplayClip: input => ipcRenderer.invoke('replay:save', input),
+  exportReplayClip: input => ipcRenderer.invoke('replay:export', input),
   onReferenceData: handler => {
     const listener = (event, packet) => {
       try { handler(packet); } finally { if (packet?.type === 'pcm') ipcRenderer.send('audio:reference-ack', packet.id); }

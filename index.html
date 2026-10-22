@@ -10,6 +10,7 @@
     <title>freqx</title>
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="discover.css" />
+    <link rel="stylesheet" href="replay.css" />
   </head>
   <body>
     <main class="app-shell">
@@ -54,6 +55,7 @@
           <div class="library-tabs" role="tablist" aria-label="Library navigation">
             <button id="soundboardTab" class="library-tab" type="button" role="tab" aria-selected="true" aria-controls="soundboardPage">Soundboard</button>
             <button id="discoverTab" class="library-tab" type="button" role="tab" aria-selected="false" aria-controls="discoverPage" tabindex="-1">Discover <span aria-hidden="true">↗</span></button>
+            <button id="replayTab" class="library-tab" type="button" role="tab" aria-selected="false" aria-controls="replayPage" tabindex="-1">Replay <span id="replayTabBadge" class="replay-tab-badge" hidden>Recording</span></button>
           </div>
         <section id="soundboardPage" class="library" role="tabpanel" aria-labelledby="soundboardTab">
           <div class="library-header">
@@ -104,6 +106,62 @@
           <div id="discoverEmpty" class="discover-empty" hidden><span class="empty-glyph" aria-hidden="true">⌁</span><h2 id="discoverEmptyTitle">A little quiet here.</h2><p id="discoverEmptyCopy">Check back for new sounds.</p><button id="discoverReset" class="mixer-action" type="button" hidden>Reset filters</button><button id="discoverRetry" class="mixer-action" type="button" hidden>Try again</button></div>
           <p id="discoverFeedback" class="discover-feedback" role="status"></p>
           <div class="discover-footnote"><span>Preview in your headphones. Add it. Make it yours.</span><button id="discoverWebsite" class="brand-link" type="button">Browse on website ↗</button><span id="discoverSource">FREQX ORIGINALS</span></div>
+        </section>
+        <section id="replayPage" class="replay-page" role="tabpanel" aria-labelledby="replayTab" hidden>
+          <div class="replay-heading">
+            <div><h1 class="dot-heading">Instant replay</h1><p class="routing-tip">Keep the moment. Make it a sound.</p></div>
+            <span id="replayRecordState" class="replay-record-state" role="status"><i aria-hidden="true"></i> Buffer off</span>
+          </div>
+          <div class="replay-capture-panel">
+            <div class="replay-source-row">
+              <label class="route-field" for="replaySource"><span>Record from</span><select id="replaySource" class="device-select"><option value="">Choose a recording source</option></select></label>
+              <button id="refreshReplaySources" class="mixer-action icon-action" type="button" title="Refresh capture sources" aria-label="Refresh capture sources">↻</button>
+              <label class="route-field replay-buffer-field" for="replayBuffer"><span>Keep the last</span><select id="replayBuffer" class="device-select"><option value="15">15 seconds</option><option value="30" selected>30 seconds</option><option value="60">60 seconds</option></select></label>
+            </div>
+            <div class="replay-capture-actions">
+              <button id="replayStart" class="mixer-action" type="button"><span class="replay-record-dot" aria-hidden="true"></span>Start buffer</button>
+              <button id="replayCapture" class="mixer-action primary-action" type="button" disabled>Capture last 30s</button>
+              <span id="replayBuffered" class="replay-buffered">0.0 / 30s</span>
+              <div id="replayInputMeter" class="replay-input-meter" role="meter" aria-label="Recording input level" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"><i></i></div>
+            </div>
+            <p id="replayCaptureHelp" class="replay-help">Recording starts only when you press Start. The rolling buffer stays in memory.</p>
+          </div>
+          <div class="replay-editor-heading"><h2>Your clip</h2><span id="replayClipDuration">No capture yet</span></div>
+          <div id="replayWaveform" class="replay-waveform">
+            <canvas id="replayWaveCanvas" role="img" aria-label="Captured audio waveform" aria-describedby="replayWaveHelp"></canvas>
+            <div id="replayWaveEmpty" class="replay-wave-empty"><span class="replay-empty-glyph" aria-hidden="true">⌁</span><strong>Catch something worth replaying.</strong><span>Start a buffer, then capture a moment.</span></div>
+            <span id="replaySelectionLabel" class="replay-selection-label" hidden></span>
+          </div>
+          <div class="replay-time-ruler" aria-hidden="true"><span>0:00</span><span id="replayRulerMiddle">—</span><span id="replayRulerEnd">—</span></div>
+          <p id="replayWaveHelp" class="replay-help">Drag across the waveform to select. Use In and Out for precise cuts.</p>
+          <div class="replay-transport">
+            <button id="replayPlay" class="mixer-action" type="button" disabled>▶ <span>Play selection</span></button>
+            <button id="replayStopPreview" class="mixer-action icon-action" type="button" title="Stop local preview" aria-label="Stop local preview" disabled>■</button>
+            <label class="sr-only" for="replaySeek">Preview position in seconds</label><input id="replaySeek" type="range" min="0" max="0" step="0.01" value="0" disabled />
+            <output id="replayPosition" for="replaySeek">0:00.0</output>
+          </div>
+          <div class="replay-edit-row">
+            <label for="replayIn">In <input id="replayIn" class="text-input" type="number" min="0" max="0" step="0.01" value="0" disabled /><span>s</span></label>
+            <label for="replayOut">Out <input id="replayOut" class="text-input" type="number" min="0" max="0" step="0.01" value="0" disabled /><span>s</span></label>
+            <button id="replayTrim" class="mixer-action compact-action" type="button" disabled>Keep selection</button>
+            <button id="replayCut" class="mixer-action compact-action" type="button" disabled>Cut selection</button>
+          </div>
+          <div class="replay-edit-tools">
+            <div class="replay-history"><button id="replayUndo" class="mixer-action compact-action" type="button" disabled>↶ Undo</button><button id="replayRedo" class="mixer-action compact-action" type="button" disabled>↷ Redo</button><button id="replayReset" class="brand-link" type="button" disabled>Reset clip</button></div>
+            <span class="replay-local-note">Preview · headphones only</span>
+          </div>
+          <div class="replay-effects">
+            <label class="mixer-control" for="replayGain"><span>Clip volume</span><input id="replayGain" type="range" min="0" max="3" step="0.01" value="1" disabled /><output id="replayGainValue">100%</output></label>
+            <label class="route-field" for="replayFadeIn"><span>Fade in · seconds</span><input id="replayFadeIn" class="text-input" type="number" min="0" max="60" step="0.05" value="0" disabled /></label>
+            <label class="route-field" for="replayFadeOut"><span>Fade out · seconds</span><input id="replayFadeOut" class="text-input" type="number" min="0" max="60" step="0.05" value="0" disabled /></label>
+          </div>
+          <div class="replay-save-panel">
+            <label class="route-field" for="replayName"><span>Clip name</span><input id="replayName" class="text-input" type="text" maxlength="96" placeholder="Give this moment a name" value="Replay" /></label>
+            <label class="route-field" for="replayBoard"><span>Save to board</span><select id="replayBoard" class="device-select"></select></label>
+            <button id="replaySave" class="mixer-action primary-action" type="button" disabled>Save to soundboard</button>
+            <button id="replayExport" class="mixer-action" type="button" disabled>Export WAV</button>
+          </div>
+          <p id="replayFeedback" class="replay-feedback" role="status"></p>
         </section>
         </section>
 
@@ -610,8 +668,10 @@
     <script src="audio/loudness.js"></script>
     <script src="audio/voice-conversion.js"></script>
     <script src="audio/voice-presets.js"></script>
+    <script src="audio/replay-audio.js"></script>
     <script src="runtime/catalog-id.js"></script>
     <script src="discover.js"></script>
+    <script src="replay.js"></script>
     <script src="renderer.js"></script>
     <script src="account.js"></script>
   </body>

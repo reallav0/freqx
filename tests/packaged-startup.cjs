@@ -13,6 +13,41 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function main() {
   const checkVoicePresets = process.argv.includes('--voice-presets');
+  const checkReplay = process.argv.includes('--replay');
+  const replaySmokeSource = `(async () => {
+    const element = id => document.getElementById(id);
+    const until = async predicate => {
+      const deadline = Date.now() + 10000;
+      while (!predicate()) {
+        if (Date.now() > deadline) throw new Error('Replay smoke timed out: ' + element('replayFeedback').textContent);
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    };
+    element('replayTab').click();
+    await until(() => Array.from(element('replaySource').options).some(option => option.value === 'mix:') && !element('replaySource').disabled);
+    element('replaySource').value = 'mix:';
+    element('replaySource').dispatchEvent(new Event('change', { bubbles: true }));
+    element('replayBuffer').value = '15';
+    element('replayStart').click();
+    await until(() => !element('replayCapture').disabled);
+    const recording = !element('replayTabBadge').hidden;
+    await new Promise(resolve => setTimeout(resolve, 400));
+    element('replayCapture').click();
+    await until(() => !element('replayPlay').disabled);
+    element('replayStart').click();
+    await until(() => element('replayTabBadge').hidden);
+    const beforeTrim = Number(element('replayOut').value);
+    element('replayIn').value = '0.05';
+    element('replayIn').dispatchEvent(new Event('change', { bubbles: true }));
+    element('replayTrim').click();
+    const duration = Number(element('replayOut').value);
+    element('replayName').value = 'Replay smoke';
+    const board = element('replayBoard').value;
+    element('replaySave').click();
+    await until(() => element('replayFeedback').textContent.includes('Saved Replay smoke'));
+    const item = importedLibraryItems.find(item => getSoundMetadata(item).name === 'Replay smoke');
+    return { recording, beforeTrim, duration, board, metadata: item && getSoundMetadata(item), item, stopped: element('replayTabBadge').hidden };
+  })()`;
   const presetSmokeSource = `(async () => {
     const options = Array.from(document.getElementById('aiVoiceSelect').options, option => option.textContent);
     const mode = voiceConversionSettings.mode;
@@ -134,6 +169,14 @@ async function main() {
       LoopbackService.prototype.list = async () => [];
       LoopbackService.prototype.start = async () => { throw new Error('Native capture disabled in startup smoke test.'); };
       const failures = [];
+      let replayNativeStarts = 0;
+      if (${checkReplay}) {
+        const { ReplayCaptureService } = require('./runtime/replay-capture.cjs');
+        ReplayCaptureService.prototype.list = async () => ({ ok: true, processCaptureSupported: true, sources: [] });
+        ReplayCaptureService.prototype.start = async () => {
+          replayNativeStarts++; throw new Error('Native Replay capture disabled in startup smoke test.');
+        };
+      }
       let voiceEngineRequests = 0;
       if (${checkVoicePresets}) {
         const { VoiceConversionService } = require('./runtime/voice-conversion.cjs');
@@ -175,6 +218,15 @@ async function main() {
               state.voicePresets = await window.webContents.executeJavaScript(${JSON.stringify(presetSmokeSource)});
               state.voiceEngineRequests = voiceEngineRequests;
             }
+            if (${checkReplay}) {
+              state.replay = await window.webContents.executeJavaScript(${JSON.stringify(replaySmokeSource)});
+              state.replay.nativeStarts = replayNativeStarts;
+              const savedPath = state.replay.item?.path;
+              if (!savedPath || !path.resolve(savedPath).startsWith(profile + path.sep)) throw new Error('Replay must save inside the isolated profile.');
+              const bytes = fs.readFileSync(savedPath);
+              require('./runtime/replay-capture.cjs').validateReplayWav(bytes);
+              state.replay.bytes = bytes.length;
+            }
             clearInterval(timer);
             await new Promise(resolve => setTimeout(resolve, 500));
             fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({ ...state, failures, packaged: app.isPackaged, defaultApp: process.defaultApp === true, profile: app.getPath('userData'), hidden: !window.isVisible(), metadataHasBuild: !!require('./package.json').build }));
@@ -211,6 +263,16 @@ async function main() {
       assert.equal(report.voicePresets.worklet, true);
       assert.equal(report.voiceEngineRequests, 0);
       console.log('PASS packaged presets appear and run through production main/preload/renderer without an AI engine.');
+    }
+    if (checkReplay) {
+      assert.equal(report.replay.recording, true);
+      assert.equal(report.replay.stopped, true);
+      assert.equal(report.replay.nativeStarts, 0);
+      assert.ok(report.replay.duration > .01 && report.replay.duration < report.replay.beforeTrim);
+      assert.equal(report.replay.metadata.name, 'Replay smoke');
+      assert.equal(report.replay.metadata.board, report.replay.board);
+      assert.ok(report.replay.bytes > 44 + 480 * 4);
+      console.log('PASS packaged Replay records the synthetic mix, trims and saves a valid WAV through production main/preload/renderer.');
     }
     if (apiBase) {
       assert.equal(report.catalog?.source, 'remote', 'Actual main process must retrieve the API catalog rather than fallback.');
