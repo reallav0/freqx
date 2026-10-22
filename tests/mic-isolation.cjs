@@ -179,6 +179,7 @@ function installFixtures() {
     stopVoiceConversion: id => { stats.conversion.stops.push(id); if (id) stats.conversion.active.delete(id); else stats.conversion.active.clear(); },
     openVoiceConversionSetup: noop, openVoiceConversionGuide: noop,
   };
+  if (fixture.replay) require('./replay-desktop.cjs').install(stats, output);
 }
 
 async function runMain() {
@@ -217,7 +218,7 @@ async function runMain() {
     throw new Error(`Timed out waiting for ${description}`);
   }
   async function createWindow(settings = {}) {
-    fs.writeFileSync(path.join(output, 'fixture.json'), JSON.stringify({ settings }));
+    fs.writeFileSync(path.join(output, 'fixture.json'), JSON.stringify({ settings, replay: process.argv.includes('--replay') }));
     if (win && !win.isDestroyed()) win.destroy();
     win = new BrowserWindow({ show: false, width: 1200, height: 760, webPreferences: {
       preload: __filename, contextIsolation: false, sandbox: false, nodeIntegration: false,
@@ -268,7 +269,9 @@ async function runMain() {
   try {
     await app.whenReady();
     await createWindow({ voiceIsolation: false, ...(process.argv.includes('--voice-conversion') ? { voiceConversion: { mode: 'rvc' } } : {}) });
-    if (process.argv.includes('--baseline')) {
+    if (process.argv.includes('--replay')) {
+      await require('./replay-desktop.cjs').run({ evaluate, until, assert, pause, getWindow: () => win, output });
+    } else if (process.argv.includes('--baseline')) {
       const baseline = await evaluate(graphExpression);
       fs.writeFileSync(path.join(output, 'baseline-graph.json'), JSON.stringify(baseline, null, 2));
       assert('baseline mixer graph captured with protected output branches', baseline.edges.length === 13, baseline);

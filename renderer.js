@@ -455,6 +455,10 @@ let discoverPreviewSource = null;
 let discoverPreviewGain = null;
 let discoverPreviewGeneration = 0;
 let discoverPreviewEnded;
+let replayUi;
+let replayPreviewSource = null;
+let replayPreviewGeneration = 0;
+let replayPreviewEnded;
 let importedLibraryItems = [];
 const stopKeybindId = "__soundmuncher_stop_all__";
 const keybindStorageKey = "soundmuncher:keybinds";
@@ -1049,6 +1053,7 @@ function renderBoardControls() {
   if (soundSortSelect) {
     soundSortSelect.value = soundSortMode;
   }
+  if (typeof replayUi !== "undefined") replayUi?.refreshBoards();
 }
 
 function getVisibleLibraryItems() {
@@ -2749,6 +2754,7 @@ function stopAllSounds() {
   for (const request of pendingSoundStarts) request.cancelled = true;
   pendingSoundStarts.clear();
   discoverUi?.stopPreview();
+  if (typeof replayUi !== "undefined") replayUi?.stopPreview();
   if (activeSoundNodes.size === 0) {
     nowPlaying.textContent = "Ready";
     return;
@@ -4729,6 +4735,124 @@ async function importDiscoverSound(sound, targetBoard) {
   for (const item of result.imported) result.metadata[item.path] = { ...result.metadata[item.path], name: sound.title, catalogId: sound.id, board: boardName };
   await completeAudioImport(result, "", { successMessage: `Added ${sound.title} to ${boardName}.` });
 }
+
+async function getReplaySources() {
+  let native = { sources: [] }, error = "Desktop capture is unavailable in this build. You can record a microphone or the Freqx mix.";
+  if (typeof window.soundmuncher?.listReplaySources === "function") {
+    try {
+      native = await window.soundmuncher.listReplaySources();
+      error = native?.ok ? "" : native?.error || "Desktop capture sources are unavailable.";
+      if (native?.ok && !native.processCaptureSupported) error = "Desktop and app capture require Windows build 20348 or later. Choose a playback device, microphone, or Freqx mix.";
+    } catch (failure) { error = failure?.message || "Could not list desktop capture sources."; }
+  }
+  const sources = [];
+  const order = ["desktop", "application", "device"];
+  const nativeSources = (native?.sources || []).filter(item => order.includes(item.kind)).sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
+  for (const item of nativeSources) {
+    if (item.kind === "desktop") sources.push({ ...item, label: "Desktop · all apps" });
+    else if (item.kind === "application") sources.push({ ...item, label: `App · ${item.label}` });
+    else if (item.kind === "device") sources.push({ ...item, label: `Playback device · ${item.label}` });
+  }
+  sources.push({ kind: "microphone", id: "", label: "Microphone · current input" });
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  for (const device of devices) {
+    if (device.kind === "audioinput" && device.deviceId && !["default", "communications"].includes(device.deviceId)) {
+      sources.push({ kind: "microphone", id: device.deviceId, label: `Microphone · ${device.label || "Audio input"}` });
+    }
+  }
+  sources.push({ kind: "mix", id: "", label: "Freqx mix · voice + soundboard" });
+  return { sources, error };
+}
+
+async function getReplayStream(source) {
+  await ensureMixerGraph();
+  if (source.kind === "mix") {
+    if (audioContext.state !== "running") await audioContext.resume();
+    return mixDestination.stream.clone();
+  }
+  if (source.kind !== "microphone") throw new Error("Choose a microphone or the Freqx mix.");
+  if ((!source.id || source.id === selectedInputDeviceId) && micStream?.getAudioTracks().some(track => track.readyState === "live")) return micStream.clone();
+  const deviceId = source.id || selectedInputDeviceId;
+  return navigator.mediaDevices.getUserMedia({ audio: {
+    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+    sampleRate: { ideal: 48000 }, channelCount: { ideal: 1 },
+    echoCancellation: false, noiseSuppression: false, autoGainControl: false
+  }, video: false });
+}
+
+function stopReplayPreview() {
+  replayPreviewGeneration++;
+  const callback = replayPreviewEnded;
+  replayPreviewEnded = null;
+  if (replayPreviewSource) {
+    replayPreviewSource.onended = null;
+    try { replayPreviewSource.stop(); } catch {}
+    replayPreviewSource.disconnect(); replayPreviewSource = null;
+  }
+  callback?.();
+}
+
+async function previewReplayClip(clip, { start, end, onEnded }) {
+  stopReplayPreview();
+  const generation = replayPreviewGeneration;
+  await ensureMixerGraph();
+  await audioContext.resume(); await localOutContext?.resume();
+  if (generation !== replayPreviewGeneration) return { stop() {}, position: () => start };
+  const buffer = audioContext.createBuffer(clip.channels.length, clip.channels[0].length, clip.sampleRate);
+  clip.channels.forEach((channel, index) => buffer.copyToChannel(channel, index));
+  const source = audioContext.createBufferSource(); source.buffer = buffer;
+  // Explicit Replay audition bypasses clip Hear, reaches only the protected local monitor.
+  source.connect(localPlaybackLimiterNode);
+  replayPreviewSource = source; replayPreviewEnded = onEnded;
+  const began = audioContext.currentTime;
+  source.onended = () => { if (replayPreviewSource === source) stopReplayPreview(); };
+  try { source.start(0, start, end - start); }
+  catch (error) { stopReplayPreview(); throw error; }
+  return { stop() { if (replayPreviewSource === source) stopReplayPreview(); }, position: () => Math.min(end, start + audioContext.currentTime - began) };
+}
+
+async function saveReplayToBoard({ name, board, bytes }) {
+  if (!boards.includes(board)) throw new Error("Choose an available board and try again.");
+  if (typeof window.soundmuncher?.saveReplayClip !== "function") throw new Error("Replay saving is unavailable in this build.");
+  const result = await window.soundmuncher.saveReplayClip({ name, bytes });
+  if (!result?.ok || !result.imported?.length) throw new Error(result?.error || "Could not save this replay.");
+  const destination = boards.includes(board) ? board : defaultBoardName;
+  result.metadata ||= {};
+  for (const item of result.imported) result.metadata[item.path] = { ...result.metadata[item.path], name, board: destination };
+  await completeAudioImport(result, "", { successMessage: `Added ${name} to ${destination}.` });
+  return result;
+}
+
+function initializeReplay() {
+  replayUi = window.FreqxReplayUi?.init({
+    getSources: getReplaySources, getStream: getReplayStream,
+    getBoards: () => ({ boards: [...boards], preferred: boards.includes(selectedBoard) ? selectedBoard : defaultBoardName }),
+    preview: previewReplayClip, stopPreview: stopReplayPreview, save: saveReplayToBoard,
+    export: input => {
+      if (typeof window.soundmuncher?.exportReplayClip !== "function") throw new Error("Replay export is unavailable in this build.");
+      return window.soundmuncher.exportReplayClip(input);
+    }
+  });
+  const names = ["soundboard", "discover", "replay"], tabs = names.map(name => document.getElementById(`${name}Tab`));
+  if (tabs.some(tab => !tab)) return;
+  const show = name => {
+    discoverUi?.show(name === "discover");
+    if (name === "replay") replayUi?.show(); else replayUi?.hide();
+    names.forEach((candidate, index) => {
+      document.getElementById(`${candidate}Page`).hidden = candidate !== name;
+      tabs[index].setAttribute("aria-selected", String(candidate === name)); tabs[index].tabIndex = candidate === name ? 0 : -1;
+    });
+  };
+  tabs.forEach((tab, index) => {
+    tab.addEventListener("click", event => { event.stopImmediatePropagation(); show(names[index]); }, true);
+    tab.addEventListener("keydown", event => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? 2 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      show(names[next]); tabs[next].focus();
+    }, true);
+  });
+}
 window.addEventListener('freqx-cloud-preview', event => {
   previewDiscoverSound(event.detail.id, () => {}).catch(() => setLibraryState('Cloud preview is unavailable.'));
 });
@@ -4822,6 +4946,7 @@ async function initializeConfiguredApp() {
     const metadata = getSoundMetadata(item); return metadata.catalogId === id && metadata.board === board;
   })
   });
+  initializeReplay();
 
   await initializeApp();
 }

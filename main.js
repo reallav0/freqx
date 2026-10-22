@@ -24,6 +24,8 @@ const { VoiceConversionService, validPort: validVoiceEnginePort } = require('./r
 const voiceConversionService = new VoiceConversionService();
 const { downloadAudioLink } = require('./runtime/audio-link.cjs');
 const loopbackService = new LoopbackService({ appRoot: __dirname });
+const { ReplayCaptureService, validateReplayWav } = require('./runtime/replay-capture.cjs');
+const replayCaptureService = new ReplayCaptureService({ appRoot: __dirname });
 const publicLibrary = new PublicLibrary({ appRoot: __dirname, development: !isPackaged, tempRoot: () => path.join(app.getPath('userData'), 'library-import-tmp') });
 const audioLinkService = new AudioLinkService({ download: (url, options) => downloadAudioLink(url, { ...options, toolsCache: path.join(app.getPath('userData'), 'link-tools') }), BrowserWindow, session, appRoot: __dirname,
   tempRoot: () => path.join(app.getPath('userData'), 'audio-link-tmp'),
@@ -175,6 +177,7 @@ function registerProcessCrashHandlers() {
 }
 
 function handleMainProcessCrash(type, error) {
+  replayCaptureService.stopAll();
   autoPttService.stop();
   voiceConversionService.stopAll();
   const report = recordCrashReport(createCrashReport(type, error));
@@ -1359,9 +1362,9 @@ function createWindow(options = {}) {
   });
   const referenceOwner = mainWindow.webContents;
   referenceOwner.on('did-start-navigation', (event, url, inPlace, isMainFrame) => {
-    if (isMainFrame && !inPlace) { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); voiceConversionService.stopOwner(referenceOwner); }
+    if (isMainFrame && !inPlace) { loopbackService.stopOwner(referenceOwner); replayCaptureService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); voiceConversionService.stopOwner(referenceOwner); }
   });
-  referenceOwner.on('destroyed', () => { loopbackService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); voiceConversionService.stopOwner(referenceOwner); });
+  referenceOwner.on('destroyed', () => { loopbackService.stopOwner(referenceOwner); replayCaptureService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); voiceConversionService.stopOwner(referenceOwner); });
 
   mainWindow.webContents.on("did-finish-load", () => {
     isShowingCrashScreen = isCrashScreenUrl(mainWindow.webContents.getURL());
@@ -1391,6 +1394,7 @@ function createWindow(options = {}) {
   });
 
   mainWindow.webContents.on("render-process-gone", (event, details) => {
+    replayCaptureService.stopOwner(referenceOwner);
     autoPttService.stop();
     voiceConversionService.stopOwner(referenceOwner);
     loopbackService.stopOwner(referenceOwner);
@@ -1407,6 +1411,7 @@ function createWindow(options = {}) {
 
   let unresponsiveTimer = null;
   mainWindow.on("unresponsive", () => {
+    replayCaptureService.stopOwner(referenceOwner);
     autoPttService.stop();
     voiceConversionService.stopOwner(referenceOwner);
     const report = recordCrashReport(createCrashReport("renderer-unresponsive", null, {
@@ -1422,6 +1427,7 @@ function createWindow(options = {}) {
   });
   mainWindow.on("closed", () => clearTimeout(unresponsiveTimer));
   mainWindow.on("session-end", () => {
+    replayCaptureService.stopAll();
     autoPttService.stop();
     voiceConversionService.stopAll();
     // Windows shutdown/logoff does not emit app.before-quit.
@@ -1761,6 +1767,38 @@ function registerAudioIpc() {
   ipcMain.handle('audio:reference-stop', (event, id) => { referenceSender(event); loopbackService.stop(event.sender, id); });
   ipcMain.handle('audio:reference-cancel', event => { referenceSender(event); loopbackService.stopOwner(event.sender); });
   ipcMain.on('audio:reference-ack', (event, id) => { try { referenceSender(event); loopbackService.ack(event.sender, id); } catch {} });
+  ipcMain.handle('replay:sources', event => { referenceSender(event); return replayCaptureService.list(); });
+  ipcMain.handle('replay:start', (event, source) => { referenceSender(event); return replayCaptureService.start(event.sender, source); });
+  ipcMain.handle('replay:stop', (event, id) => { referenceSender(event); replayCaptureService.stop(event.sender, id); return { ok: true }; });
+  ipcMain.handle('replay:cancel', event => { referenceSender(event); replayCaptureService.stopOwner(event.sender); return { ok: true }; });
+  ipcMain.on('replay:ack', (event, id, sequence) => { try { referenceSender(event); replayCaptureService.ack(event.sender, id, sequence); } catch {} });
+  let replayWriting = false;
+  const writeReplay = async (event, input, exporting) => {
+    referenceSender(event);
+    if (replayWriting) return { ok: false, error: 'A replay is already being saved.' };
+    replayWriting = true; let reservation;
+    try {
+      const bytes = validateReplayWav(input?.bytes);
+      if (typeof input?.name !== 'string' || input.name.length > 96 || !input.name.trim()) throw new Error('Name your replay before saving.');
+      const filename = input.name.trim().replace(/[^a-z0-9-_ ]/gi, '_') + '.wav';
+      if (exporting) {
+        const result = await dialog.showSaveDialog(mainWindow, { title: 'Export replay audio', defaultPath: filename, filters: [{ name: 'WAV audio', extensions: ['wav'] }] });
+        if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+        if (event.sender.isDestroyed()) throw new Error('Replay export canceled.');
+        await fs.promises.writeFile(result.filePath, bytes);
+        return { ok: true, filePath: result.filePath };
+      }
+      reservation = await reserveLibraryDestination(getLibraryDirectory(), filename);
+      if (event.sender.isDestroyed()) throw new Error('Replay save canceled.');
+      await reservation.handle.writeFile(bytes); await reservation.handle.close();
+      return { ok: true, imported: [toLibraryItem(reservation.destinationPath)] };
+    } catch (error) {
+      if (reservation) { await reservation.handle.close().catch(() => {}); await fs.promises.unlink(reservation.destinationPath).catch(() => {}); }
+      return { ok: false, error: String(error?.message || 'Replay could not be saved.').slice(0, 240) };
+    } finally { replayWriting = false; }
+  };
+  ipcMain.handle('replay:save', (event, input) => writeReplay(event, input, false));
+  ipcMain.handle('replay:export', (event, input) => writeReplay(event, input, true));
   const catalog = new PlatformLibrary({ getClient: () => authProtocolHandler.client(), fallback: publicLibrary, development: !isPackaged });
   ipcMain.handle("library:catalog", async (event, options) => {
     assertTrustedIpcSender(event);
@@ -2229,6 +2267,7 @@ if (hasSingleInstanceLock) {
   });
 
   app.on("before-quit", () => {
+    replayCaptureService.stopAll();
     autoPttService.stop();
     voiceConversionService.stopAll();
     isQuitting = true;
@@ -2238,6 +2277,7 @@ if (hasSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
+    replayCaptureService.stopAll();
     autoPttService.stop();
     voiceConversionService.stopAll();
     isQuitting = true;
