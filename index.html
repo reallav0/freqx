@@ -633,6 +633,20 @@
         </div>
       </section>
     </div>
+    <dialog id="updateNotice" class="update-notice" aria-labelledby="updateNoticeTitle" aria-describedby="updateNoticeBody updateNoticeStatus" aria-modal="true">
+      <p class="update-notice-kicker"><i aria-hidden="true"></i> FREQX / UPDATE</p>
+      <div>
+        <h2 id="updateNoticeTitle">A new version is available.</h2>
+        <p id="updateNoticeBody" class="update-notice-body"></p>
+      </div>
+      <div class="update-notice-versions" aria-label="Update versions"><span><small>Current</small><b id="updateNoticeCurrent"></b></span><span aria-hidden="true">→</span><span><small>New version</small><b id="updateNoticeLatest"></b></span></div>
+      <div id="updateNoticeDownload" class="update-notice-download">
+        <div><span id="updateNoticePhase">Downloading in the background</span><output id="updateNoticePercent"></output></div>
+        <progress id="updateNoticeProgress" max="100" aria-label="Update download progress"></progress>
+      </div>
+      <p id="updateNoticeStatus" class="update-notice-status" role="status"></p>
+      <div class="update-notice-actions"><button id="updateNoticeLater" class="mixer-action" type="button" autofocus>Later</button><button id="updateNoticeAction" class="mixer-action primary-action" type="button" disabled>Downloading…</button></div>
+    </dialog>
     <section id="crashScreen" class="crash-screen" aria-labelledby="crashTitle" aria-live="assertive" hidden>
       <div class="crash-panel" role="alertdialog" aria-modal="true">
         <div class="crash-kicker">Application error</div>
@@ -672,6 +686,7 @@
     <script src="runtime/catalog-id.js"></script>
     <script src="discover.js"></script>
     <script src="replay.js"></script>
+    <script src="update-notice.js"></script>
     <script src="renderer.js"></script>
     <script src="account.js"></script>
   </body>

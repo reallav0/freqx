@@ -1,6 +1,8 @@
 // Starts the actual release executable and production main/preload/renderer.
 // Pause before main.js to isolate its profile, registry and audio hardware.
-// Usage: node tests/packaged-startup.cjs [--exe dist/FreqX-Portable-1.8.0.exe]
+// Usage: node tests/packaged-startup.cjs [--exe dist/win-unpacked/freqx.exe]
+// Optional live update check/download (never runs the installer): --updates
+// Offline production update popup/verification/confirmation smoke: --update-notice
 // Local stack: --dev-script dev --api-base http://127.0.0.1:3000 --expect-sound ID
 'use strict';
 const assert = require('node:assert/strict');
@@ -14,6 +16,47 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function main() {
   const checkVoicePresets = process.argv.includes('--voice-presets');
   const checkReplay = process.argv.includes('--replay');
+  const checkUpdates = process.argv.includes('--updates');
+  const checkUpdateNotice = process.argv.includes('--update-notice');
+  if (checkUpdates && checkUpdateNotice) throw new Error('Run live updates and the offline popup smoke separately.');
+  const noticeSnapshotSource = expected => `(async () => {
+    const deadline = Date.now() + 5000;
+    let state;
+    do {
+      state = await window.soundmuncher.updateStatus();
+      const action = document.getElementById('updateNoticeAction');
+      const painted = ${JSON.stringify(expected)} === 'downloaded' ? action?.textContent === 'Restart and install' && !action.disabled
+        : ${JSON.stringify(expected)} === 'downloading' ? document.getElementById('updateNoticePercent')?.textContent === '37%' : true;
+      if (state.status === ${JSON.stringify(expected)} && document.getElementById('updateNotice')?.open && painted) {
+        return { status: state.status, open: true, title: document.getElementById('updateNoticeTitle').textContent,
+          percent: document.getElementById('updateNoticePercent').textContent, action: document.getElementById('updateNoticeAction').textContent,
+          disabled: document.getElementById('updateNoticeAction').disabled };
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    } while (Date.now() < deadline);
+    throw new Error('Expected update popup phase: ' + ${JSON.stringify(expected)} + '; actual: ' + JSON.stringify(state));
+  })()`;
+  const noticeActionSource = confirming => `(async () => {
+    const button = document.getElementById('updateNoticeAction'), status = document.getElementById('updateNoticeStatus');
+    button.click();
+    const deadline = Date.now() + 5000;
+    while (!${confirming ? '/restarting/i' : '/cancel/i'}.test(status.textContent)) {
+      if (Date.now() > deadline) throw new Error('Update popup action timed out: ' + status.textContent);
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    return { text: status.textContent, open: document.getElementById('updateNotice').open, disabled: button.disabled };
+  })()`;
+  const updateSmokeSource = `(async () => {
+    const deadline = Date.now() + 180000;
+    let state;
+    do {
+      state = await window.soundmuncher.updateStatus();
+      if (['downloaded', 'none', 'error', 'unsupported'].includes(state.status)) break;
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return { ...state, installVisible: !document.getElementById('installUpdate').hidden, text: document.getElementById('updateState').textContent };
+  })()`;
   const replaySmokeSource = `(async () => {
     const element = id => document.getElementById(id);
     const until = async predicate => {
@@ -67,6 +110,7 @@ async function main() {
   const devArgument = process.argv.indexOf('--dev-script');
   const developmentScript = devArgument < 0 ? null : process.argv[devArgument + 1];
   if (developmentScript !== null && !['dev', 'start'].includes(developmentScript)) throw new Error('Use --dev-script dev or start.');
+  if ((checkUpdates || checkUpdateNotice) && developmentScript) throw new Error('Update smoke checks require a packaged Windows executable.');
   const apiArgument = process.argv.indexOf('--api-base');
   const apiBase = apiArgument < 0 ? null : process.argv[apiArgument + 1];
   if (apiBase !== null) {
@@ -88,6 +132,8 @@ async function main() {
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.PORTABLE_EXECUTABLE_FILE;
   delete env.PORTABLE_EXECUTABLE_DIR;
+  // A slow startup can reach the automatic update timer in any smoke mode.
+  env.LOCALAPPDATA = path.join(directory, 'update-cache');
   if (apiBase) { env.FREQX_API_BASE_URL = apiBase; delete env.FREQX_LIBRARY_BUNDLED; }
   const log = fs.openSync(path.join(directory, 'electron.log'), 'a');
   const flags = [`--inspect-brk=127.0.0.1:${port}`, '--hidden', '--use-fake-device-for-media-stream'];
@@ -101,7 +147,7 @@ async function main() {
   child.on('error', error => { spawnError = error; });
   let socket;
   let command;
-  const deadline = Date.now() + 40000;
+  const deadline = Date.now() + (checkUpdates ? 210000 : 40000);
   const reportPath = path.join(directory, 'report.json');
   try {
     let endpoint;
@@ -145,7 +191,7 @@ async function main() {
       ${developmentScript ? `const require = process.getBuiltinModule('module').createRequire(${JSON.stringify(path.join(root, 'main.js'))});` : ''}
       const fs = require('node:fs');
       const path = require('node:path');
-      const { app, BrowserWindow } = require('electron');
+      const { app, BrowserWindow, dialog } = require('electron');
       const directory = ${JSON.stringify(directory)};
       const profile = path.join(directory, ${JSON.stringify(developmentScript ? 'freqx-dev' : 'profile')});
       fs.mkdirSync(profile, { recursive: true });
@@ -169,6 +215,33 @@ async function main() {
       LoopbackService.prototype.list = async () => [];
       LoopbackService.prototype.start = async () => { throw new Error('Native capture disabled in startup smoke test.'); };
       const failures = [];
+      let updateDownload, updateConfirmation = 1;
+      let noticeUpdater;
+      const updateEvents = [], updateErrors = [], updateInstallRequests = [], updatePrompts = [];
+      if (${checkUpdates || checkUpdateNotice}) {
+        const { autoUpdater } = require('electron-updater');
+        if (${checkUpdateNotice}) {
+          noticeUpdater = autoUpdater;
+          autoUpdater.checkForUpdates = async () => ({});
+        }
+        // Exercise detection, download, verification and production install IPC,
+        // while leaving the installed application and its normal cache untouched.
+        autoUpdater.quitAndInstall = (...args) => updateInstallRequests.push(args);
+        for (const name of ['checking-for-update', 'update-available', 'download-progress', 'update-downloaded', 'update-not-available']) {
+          autoUpdater.on(name, info => {
+            if (name !== 'download-progress' || updateEvents.at(-1) !== name) updateEvents.push(name);
+            if (name === 'update-downloaded') updateDownload = info;
+          });
+        }
+        autoUpdater.on('error', error => updateErrors.push({ code: error.code, message: error.message }));
+        const originalMessageBox = dialog.showMessageBox;
+        dialog.showMessageBox = async (...args) => {
+          const options = args.at(-1);
+          if (options.buttons?.[0] !== 'Restart and install') return originalMessageBox.apply(dialog, args);
+          updatePrompts.push({ defaultId: options.defaultId, cancelId: options.cancelId, response: updateConfirmation });
+          return { response: updateConfirmation };
+        };
+      }
       let replayNativeStarts = 0;
       if (${checkReplay}) {
         const { ReplayCaptureService } = require('./runtime/replay-capture.cjs');
@@ -227,11 +300,52 @@ async function main() {
               require('./runtime/replay-capture.cjs').validateReplayWav(bytes);
               state.replay.bytes = bytes.length;
             }
+            if (${checkUpdates}) {
+              state.update = await window.webContents.executeJavaScript(${JSON.stringify(updateSmokeSource)});
+              if (state.update.status === 'downloaded') {
+                const file = updateDownload?.downloadedFile;
+                if (!file || !path.resolve(file).startsWith(path.join(directory, 'update-cache') + path.sep)) throw new Error('Update escaped its isolated cache.');
+                await require('./runtime/update-client.cjs').verifyDownload(updateDownload);
+                state.update.bytes = fs.statSync(file).size;
+                state.update.canceled = await window.webContents.executeJavaScript('window.soundmuncher.installUpdate()');
+                if (updateInstallRequests.length) throw new Error('Cancel launched an installer.');
+                updateConfirmation = 0;
+                state.update.confirmed = await window.webContents.executeJavaScript('window.soundmuncher.installUpdate()');
+              }
+              Object.assign(state.update, { events: updateEvents, errors: updateErrors, installRequests: updateInstallRequests, prompts: updatePrompts });
+            }
+            if (${checkUpdateNotice}) {
+              // A fresh isolated profile opens the setup walkthrough. Finish
+              // that dialog before expecting the queued update notice to open.
+              await window.webContents.executeJavaScript("document.getElementById('closeWalkthrough').click()");
+              const version = (Number(app.getVersion().split('.')[0]) + 1) + '.0.0';
+              const filename = 'FreqX-Setup-' + version + '.exe';
+              const downloadedFile = path.join(directory, filename);
+              const bytes = Buffer.from('Inert installer fixture. Never executed.');
+              fs.writeFileSync(downloadedFile, bytes);
+              const info = { version, downloadedFile, files: [{ url: filename, sha512: require('node:crypto').createHash('sha512').update(bytes).digest('base64') }] };
+              noticeUpdater.emit('update-available', info);
+              state.updateNotice = { version, available: await window.webContents.executeJavaScript(${JSON.stringify(noticeSnapshotSource('available'))}) };
+              noticeUpdater.emit('download-progress', { percent: 37 });
+              state.updateNotice.downloading = await window.webContents.executeJavaScript(${JSON.stringify(noticeSnapshotSource('downloading'))});
+              noticeUpdater.emit('update-downloaded', info);
+              state.updateNotice.downloaded = await window.webContents.executeJavaScript(${JSON.stringify(noticeSnapshotSource('downloaded'))});
+              state.updateNotice.canceled = await window.webContents.executeJavaScript(${JSON.stringify(noticeActionSource(false))});
+              if (updateInstallRequests.length) throw new Error('Cancel launched an installer.');
+              updateConfirmation = 0;
+              state.updateNotice.confirmed = await window.webContents.executeJavaScript(${JSON.stringify(noticeActionSource(true))});
+              Object.assign(state.updateNotice, { errors: updateErrors, installRequests: updateInstallRequests, prompts: updatePrompts });
+            }
             clearInterval(timer);
             await new Promise(resolve => setTimeout(resolve, 500));
             fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({ ...state, failures, packaged: app.isPackaged, defaultApp: process.defaultApp === true, profile: app.getPath('userData'), hidden: !window.isVisible(), metadataHasBuild: !!require('./package.json').build }));
             app.quit();
-          } catch (error) { failures.push(error.message); }
+          } catch (error) {
+            failures.push(error.stack || error.message);
+            clearInterval(timer);
+            fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({ failures }));
+            app.quit();
+          }
           finally { evaluating = false; }
         }, 100);
       });
@@ -247,6 +361,7 @@ async function main() {
       await pause(100);
     }
     const report = JSON.parse(fs.readFileSync(reportPath));
+    assert.deepEqual(report.failures, []);
     assert.equal(report.defaultApp, Boolean(developmentScript));
     assert.equal(report.packaged && !report.defaultApp, !developmentScript);
     assert.equal(report.metadataHasBuild, Boolean(developmentScript));
@@ -255,7 +370,6 @@ async function main() {
     assert.equal(report.silent, true);
     assert.equal(report.initialized, true);
     assert.equal(report.hidden, true);
-    assert.deepEqual(report.failures, []);
     if (checkVoicePresets) {
       assert.deepEqual(report.voicePresets.options, ['Anime girl', 'Deep man', 'Robot', 'Helium', 'Monster', 'Radio']);
       assert.equal(report.voicePresets.mode, 'builtin');
@@ -273,6 +387,39 @@ async function main() {
       assert.equal(report.replay.metadata.board, report.replay.board);
       assert.ok(report.replay.bytes > 44 + 480 * 4);
       console.log('PASS packaged Replay records the synthetic mix, trims and saves a valid WAV through production main/preload/renderer.');
+    }
+    if (checkUpdates) {
+      assert.equal(report.update.status, 'downloaded', JSON.stringify(report.update));
+      assert.equal(report.update.installVisible, true);
+      assert.match(report.update.text, /verified.*restart/i);
+      assert.ok(report.update.bytes > 0);
+      assert.deepEqual(report.update.errors, []);
+      assert.ok(report.update.events.includes('checking-for-update'));
+      assert.ok(report.update.events.includes('update-available'));
+      assert.ok(report.update.events.includes('update-downloaded'));
+      assert.equal(report.update.canceled.ok, false);
+      assert.equal(report.update.confirmed.ok, true);
+      assert.deepEqual(report.update.installRequests, [[false, true]]);
+      assert.deepEqual(report.update.prompts.map(prompt => prompt.response), [1, 0]);
+      assert.ok(report.update.prompts.every(prompt => prompt.defaultId === 1 && prompt.cancelId === 1));
+      console.log(`PASS automatic update ${report.update.currentVersion} -> ${report.update.latestVersion}: real download (${report.update.bytes} bytes), checksum and restart prompt. Installer execution intercepted.`);
+    }
+    if (checkUpdateNotice) {
+      for (const phase of ['available', 'downloading', 'downloaded']) {
+        assert.equal(report.updateNotice[phase].open, true);
+        assert.ok(report.updateNotice[phase].title.includes(report.updateNotice.version));
+      }
+      assert.equal(report.updateNotice.available.disabled, true);
+      assert.equal(report.updateNotice.downloading.percent, '37%');
+      assert.equal(report.updateNotice.downloaded.action, 'Restart and install');
+      assert.equal(report.updateNotice.downloaded.disabled, false);
+      assert.equal(report.updateNotice.canceled.open, true);
+      assert.equal(report.updateNotice.canceled.disabled, false);
+      assert.equal(report.updateNotice.confirmed.disabled, true);
+      assert.deepEqual(report.updateNotice.errors, []);
+      assert.deepEqual(report.updateNotice.installRequests, [[false, true]]);
+      assert.deepEqual(report.updateNotice.prompts.map(prompt => prompt.response), [1, 0]);
+      console.log('PASS packaged update popup crosses production main/preload/renderer: available, progress, checksum verification, restart/cancel confirmation. Installer execution intercepted.');
     }
     if (apiBase) {
       assert.equal(report.catalog?.source, 'remote', 'Actual main process must retrieve the API catalog rather than fallback.');

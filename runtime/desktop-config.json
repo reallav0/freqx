@@ -297,6 +297,7 @@
       "releaseType": "release"
     },
     "startupDelayMs": 5000,
+    "checkIntervalMs": 21600000,
     "requestTimeoutMs": 12000,
     "installerBytes": 536870912,
     "releaseResponseBytes": 1048576

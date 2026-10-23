@@ -183,7 +183,7 @@ function fixture(options = {}) {
       if (name === './runtime/audio-link.cjs') return { downloadAudioLink() { throw new Error('Unexpected link download in recovery fixture'); } };
       if (name === './runtime/update-client.cjs') return { createUpdateClient: options => {
         calls.updateConfigs.push(options.config);
-        return { check: async () => ({ ok: false }), status: () => ({ status: 'idle' }), install: () => ({ ok: false }) };
+        return { startChecks: () => () => {}, check: async () => ({ ok: false }), status: () => ({ status: 'idle' }), install: () => ({ ok: false }) };
       } };
       if (name === 'electron-updater') return { autoUpdater: {} };
       if (name === 'fs' || name === 'node:fs') return fakeFs;

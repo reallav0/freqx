@@ -8,6 +8,7 @@ const { createUpdateClient } = require('./runtime/update-client.cjs');
 const { config: desktopConfig } = require('./runtime/desktop-config.cjs');
 const updateConfiguration = desktopConfig.updater.feed;
 let updateClient;
+let stopUpdateChecks = () => {};
 const { execFile } = require("child_process");
 const fs = require("fs");
 const https = require("https");
@@ -177,6 +178,7 @@ function registerProcessCrashHandlers() {
 }
 
 function handleMainProcessCrash(type, error) {
+  stopUpdateChecks();
   replayCaptureService.stopAll();
   autoPttService.stop();
   voiceConversionService.stopAll();
@@ -1427,6 +1429,7 @@ function createWindow(options = {}) {
   });
   mainWindow.on("closed", () => clearTimeout(unresponsiveTimer));
   mainWindow.on("session-end", () => {
+    stopUpdateChecks();
     replayCaptureService.stopAll();
     autoPttService.stop();
     voiceConversionService.stopAll();
@@ -2252,7 +2255,7 @@ if (hasSingleInstanceLock) {
     createWindow({ forceShow: pendingProtocolUrls.length > 0 });
     updateClient = createUpdateClient({ app, getWindow: () => mainWindow, config: updateConfiguration,
       updater: isPackaged ? require('electron-updater').autoUpdater : null, portable: Boolean(process.env.PORTABLE_EXECUTABLE_DIR) });
-    if (isPackaged) setTimeout(() => updateClient.check(), desktopConfig.updater.startupDelayMs).unref();
+    stopUpdateChecks = updateClient.startChecks();
     startPendingProtocolImports();
 
     app.on("activate", () => {
@@ -2267,6 +2270,7 @@ if (hasSingleInstanceLock) {
   });
 
   app.on("before-quit", () => {
+    stopUpdateChecks();
     replayCaptureService.stopAll();
     autoPttService.stop();
     voiceConversionService.stopAll();
@@ -2277,6 +2281,7 @@ if (hasSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
+    stopUpdateChecks();
     replayCaptureService.stopAll();
     autoPttService.stop();
     voiceConversionService.stopAll();

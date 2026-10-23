@@ -30,6 +30,7 @@ jobs:
       - run: npm run test:voice-presets-desktop
       - run: npm run test:voice-conversion-desktop
       - run: npm run test:replay-desktop
+      - run: npm run test:update-notice-desktop
       - run: npm run test:echo
       - run: npm run test:reference-desktop
       - run: npm run test:public-library
@@ -37,7 +38,7 @@ jobs:
       - name: Packaging validation
         run: npm run pack
       - name: Production packaged startup regression
-        run: node tests/packaged-startup.cjs --voice-presets --replay
+        run: node tests/packaged-startup.cjs --voice-presets --replay --update-notice
       - name: Packaged Discover regression
         run: node tests/discover-library.cjs --app-root dist/win-unpacked/resources/app.asar
       - name: Packaged microphone regression
@@ -46,6 +47,8 @@ jobs:
         run: node tests/mic-isolation.cjs --voice-presets --app-root dist/win-unpacked/resources/app.asar
       - name: Packaged Instant Replay regression
         run: node tests/replay-desktop.cjs --app-root dist/win-unpacked/resources/app.asar
+      - name: Packaged update popup regression
+        run: node tests/update-notice-desktop.cjs --app-root dist/win-unpacked/resources/app.asar
       - name: Packaged voice security regression
         run: node tests/voice-isolation-security.cjs --app-root dist/win-unpacked/resources/app.asar
       - name: Packaged playback reference regression

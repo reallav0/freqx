@@ -29,6 +29,7 @@ test('canonical config uses mic-only isolation tuning and preserves shared deskt
   assert.equal(config.audio.reference.targetSeconds, 0.015);
   assert.equal(config.audio.bufferCacheBytes, 256 * 1024 * 1024);
   assert.equal(config.updater.startupDelayMs, 5000);
+  assert.equal(config.updater.checkIntervalMs, 6 * 60 * 60 * 1000);
   const { planRestart } = require('../runtime/recovery-policy.cjs');
   assert.deepEqual([0, 1, 2].map(index => planRestart({ version: 1, restarts: Array(index).fill(1000) }, 2000).delayMs), [1000, 2000, 4000]);
   assert.equal(planRestart({ version: 1, restarts: [1000, 1100, 1200] }, 2000).allowed, false);
@@ -54,6 +55,7 @@ test('malformed keys, types, ranges and unsafe endpoint tuning fail closed', () 
     value => { value.audio.reference.targetSeconds = value.audio.reference.capacitySeconds; },
     value => { value.audio.aec.queueSamples = 1500; }, value => { value.audio.analysers.frequency.fftSize = 4095; },
     value => { value.auth.requestTimeoutMs = 0; }, value => { value.auth.favoritesBatchSize = 101; },
+    value => { value.updater.checkIntervalMs = 0; }, value => { value.updater.checkIntervalMs = 86400001; },
     value => { value.network.apiBaseUrl = 'http://api.freqx.app'; }, value => { value.network.apiBaseUrl = 'https://user:password@api.freqx.app'; },
     value => { value.network.allowedAudioHosts = ['audio.freqx.app/path']; }, value => { value.catalog.catalogFile = '../credentials.json'; },
     value => { value.catalog.catalogUrl = 'https://untrusted.example/catalog.json'; },

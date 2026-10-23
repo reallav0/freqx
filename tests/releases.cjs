@@ -110,3 +110,131 @@ test('updater uses trusted configuration, blocks unverified installation and con
   }
   assert.equal(client.install().ok, false); assert.equal(installs, 0);
 });
+
+test('background download failure is contained without delaying Check and a verified retry installs only once', { skip: process.platform !== 'win32', timeout: 5000 }, async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'freqx-update-retry-'));
+  try {
+    const filename = path.join(directory, 'FreqX-Setup-2.0.9.exe'), bytes = Buffer.from('isolated installer fixture');
+    await fs.writeFile(filename, bytes);
+    const info = { version: '2.0.9', downloadedFile: filename, files: [{ url: path.basename(filename), sha512: createHash('sha512').update(bytes).digest('base64') }] };
+    const updater = new EventEmitter(), states = []; let installs = 0, rejectDownload, verified;
+    updater.setFeedURL = () => {}; updater.quitAndInstall = (...args) => { assert.deepEqual(args, [false, true]); installs++; };
+    updater.checkForUpdates = async () => {
+      updater.emit('checking-for-update'); updater.emit('update-available', info);
+      return { downloadPromise: new Promise((resolve, reject) => { rejectDownload = reject; }) };
+    };
+    const client = createUpdateClient({ app: { isPackaged: true, getVersion: () => '2.0.8' },
+      getWindow: () => ({ isDestroyed: () => false, webContents: { send: (channel, state) => { states.push(state); if (state.status === 'downloaded') verified?.(); } } }),
+      updater, config: { provider: 'github', owner: 'reallav0', repo: 'freqx' } });
+    assert.equal((await client.check()).status, 'available', 'Check must resolve while the download is still pending');
+    assert.equal(client.install().ok, false);
+    // Real electron-updater returns downloadPromise separately from its check.
+    // The rejection must be observed even without an accompanying error event.
+    rejectDownload(new Error('Fixture download failed with private details'));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(client.status().status, 'error'); assert.equal(states.at(-1).status, 'error');
+    assert.ok(!JSON.stringify(client.status()).includes('private details'));
+    assert.equal(client.install().ok, false); assert.equal(installs, 0);
+    updater.checkForUpdates = async () => {
+      updater.emit('checking-for-update'); updater.emit('update-available', info);
+      setImmediate(() => updater.emit('update-downloaded', info));
+      return { downloadPromise: Promise.resolve([filename]) };
+    };
+    const downloaded = new Promise(resolve => { verified = resolve; });
+    assert.equal((await client.check()).ok, true);
+    await downloaded;
+    assert.equal(client.status().status, 'downloaded'); assert.equal(updater.autoInstallOnAppQuit, false);
+    assert.equal(client.install().ok, true); assert.equal(client.install().ok, false); assert.equal(installs, 1);
+  } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+test('late checksum verification cannot authorize installation after a newer failure', async () => {
+  const vm = require('node:vm'), { createRequire } = require('node:module');
+  const filename = path.join(__dirname, '../runtime/update-client.cjs'), source = await fs.readFile(filename, 'utf8'), localRequire = createRequire(filename);
+  const bytes = Buffer.from('gated verified installer'), sha512 = createHash('sha512').update(bytes).digest('base64');
+  for (const failure of ['error', 'new-download']) {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const isolatedFs = { promises: { lstat: async () => ({ size: bytes.length, isFile: () => true, isSymbolicLink: () => false }) },
+      createReadStream: async function* () { await gate; yield bytes; } };
+    const loaded = { exports: {} };
+    vm.runInNewContext(source, { module: loaded, Buffer, URL, process: { platform: 'win32' },
+      require: name => name === 'node:fs' ? isolatedFs : localRequire(name) });
+    const updater = new EventEmitter(); let installs = 0;
+    updater.setFeedURL = () => {}; updater.quitAndInstall = () => { installs++; };
+    const client = loaded.exports.createUpdateClient({ app: { isPackaged: true, getVersion: () => '2.0.8' }, getWindow: () => null,
+      updater, config: { provider: 'github', owner: 'reallav0', repo: 'freqx' } });
+    updater.emit('update-downloaded', { version: '2.0.9', downloadedFile: path.join(os.tmpdir(), 'FreqX-Setup-2.0.9.exe'), files: [{ url: 'FreqX-Setup-2.0.9.exe', sha512 }] });
+    await new Promise(resolve => setImmediate(resolve));
+    if (failure === 'error') updater.emit('error', new Error('Newer update failed.'));
+    else {
+      updater.emit('update-available', { version: '2.0.10' });
+      updater.emit('update-downloaded', { version: '2.0.10', downloadedFile: path.join(os.tmpdir(), 'FreqX-Setup-2.0.10.exe'), files: [] });
+    }
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(client.status().status, 'error');
+    release(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(client.status().status, 'error', `${failure}: stale verification must not replace the newer error`);
+    assert.equal(client.install().ok, false); assert.equal(installs, 0);
+  }
+});
+
+test('automatic checks run at startup and periodically, preserve active downloads, retry failures and stop cleanly', { skip: process.platform !== 'win32' }, async () => {
+  const tasks = new Set(), updater = new EventEmitter(); let checks = 0, fail = false;
+  const timers = {
+    setTimeout(callback, delay) { const timer = { callback, delay, unref() {} }; tasks.add(timer); return timer; },
+    clearTimeout(timer) { tasks.delete(timer); }
+  };
+  updater.setFeedURL = () => {};
+  updater.checkForUpdates = async () => {
+    checks++; updater.emit('checking-for-update');
+    if (fail) throw new Error('Offline');
+    updater.emit('update-not-available'); return {};
+  };
+  const client = createUpdateClient({ app: { isPackaged: true, getVersion: () => '2.0.8' }, getWindow: () => null,
+    updater, config: { provider: 'github', owner: 'reallav0', repo: 'freqx' } });
+  const runNext = async delay => {
+    const timer = tasks.values().next().value; assert.equal(timer.delay, delay);
+    tasks.delete(timer); timer.callback(); await new Promise(resolve => setImmediate(resolve));
+  };
+  const startup = 5000, interval = 6 * 60 * 60 * 1000;
+  const stop = client.startChecks(timers); assert.equal(checks, 0);
+  await runNext(startup); assert.equal(checks, 1);
+  await runNext(interval); assert.equal(checks, 2);
+  updater.emit('update-available', { version: '2.0.9' });
+  await runNext(interval); assert.equal(checks, 2, 'periodic checks cannot invalidate an available update');
+  updater.emit('download-progress', { percent: 50 });
+  await runNext(interval); assert.equal(checks, 2, 'periodic checks cannot restart an active download');
+  updater.emit('error', new Error('Download interrupted')); fail = true;
+  await runNext(interval); assert.equal(checks, 3); assert.equal(client.status().status, 'error');
+  fail = false; await runNext(interval); assert.equal(checks, 4); assert.equal(client.status().status, 'none');
+  stop(); stop(); assert.equal(tasks.size, 0);
+  const stopAgain = client.startChecks(timers); client.startChecks(timers);
+  assert.equal(tasks.size, 1, 'starting twice replaces the previous schedule');
+  stopAgain(); assert.equal(tasks.size, 1, 'an older stop handle cannot cancel a newer schedule');
+  client.startChecks(timers)(); assert.equal(tasks.size, 0);
+});
+
+test('automatic checks do not create timers in source or portable builds', () => {
+  const timers = { setTimeout() { throw new Error('Unsupported updates must stay idle.'); }, clearTimeout() {} };
+  for (const options of [{ isPackaged: false, portable: false }, { isPackaged: true, portable: true }]) {
+    const client = createUpdateClient({ app: { isPackaged: options.isPackaged, getVersion: () => '2.0.8' },
+      getWindow: () => null, updater: null, portable: options.portable });
+    const stop = client.startChecks(timers); stop();
+    assert.equal(client.status().status, 'idle');
+  }
+});
+
+test('a closing renderer cannot crash the updater or discard its latest state', { skip: process.platform !== 'win32' }, async () => {
+  const updater = new EventEmitter(); let closed = false, deliveries = 0;
+  updater.setFeedURL = () => {};
+  updater.checkForUpdates = async () => { updater.emit('checking-for-update'); updater.emit('update-not-available'); return {}; };
+  const client = createUpdateClient({ app: { isPackaged: true, getVersion: () => '2.0.8' },
+    getWindow: () => ({ isDestroyed: () => false, webContents: { isDestroyed: () => closed,
+      send() { deliveries++; throw new Error('Renderer closed before delivery.'); } } }),
+    updater, config: { provider: 'github', owner: 'reallav0', repo: 'freqx' } });
+  assert.equal((await client.check()).status, 'none'); assert.equal(deliveries, 2);
+  closed = true; updater.emit('update-available', { version: '2.0.9' });
+  assert.equal(client.status().status, 'available'); assert.equal(client.status().latestVersion, '2.0.9');
+  assert.equal(deliveries, 2, 'destroyed contents are never sent more notifications');
+});

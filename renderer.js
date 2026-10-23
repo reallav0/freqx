@@ -482,6 +482,9 @@ let preferVirtualOutputOnce = false;
 let showFavoritesOnly = false;
 let appPreferences;
 let latestUpdateUrl = "";
+let updateNoticeUi;
+let updateStateRevision = 0;
+let latestUpdateState = null;
 let activeWalkthroughStep = 0;
 let walkthroughActionMessage = "";
 
@@ -1157,6 +1160,7 @@ async function checkForUpdates() {
     }
     return;
   }
+  updateNoticeUi?.requestCheck();
 
   if (checkUpdatesButton) {
     checkUpdatesButton.disabled = true;
@@ -1165,16 +1169,18 @@ async function checkForUpdates() {
   if (updateState) {
     updateState.textContent = "Checking GitHub for updates...";
   }
+  const requestedUpdateRevision = updateStateRevision;
 
   try {
     const result = await window.soundmuncher.checkForUpdates();
-    if (result?.status) { showUpdateState(result); return; }
+    if (requestedUpdateRevision !== updateStateRevision) return { ok: latestUpdateState?.status !== 'error', ...latestUpdateState };
+    if (result?.status) { showUpdateState(result); return result; }
 
     if (!result?.ok) {
       if (updateState) {
         updateState.textContent = result?.message || "Could not check GitHub for updates.";
       }
-      return;
+      return result;
     }
 
     const currentVersion = result.currentVersion ? `v${result.currentVersion}` : "current version";
@@ -1192,9 +1198,13 @@ async function checkForUpdates() {
       updateState.textContent = `freqx is up to date (${currentVersion}).`;
     }
   } catch (error) {
+    if (requestedUpdateRevision !== updateStateRevision) return { ok: latestUpdateState?.status !== 'error', ...latestUpdateState };
     if (updateState) {
       updateState.textContent = "Could not check GitHub for updates.";
     }
+    const result = { ok: false, status: 'error', message: 'Could not check GitHub for updates.' };
+    updateNoticeUi?.update(result);
+    return result;
   } finally {
     if (checkUpdatesButton) {
       checkUpdatesButton.disabled = false;
@@ -1203,15 +1213,35 @@ async function checkForUpdates() {
 }
 
 function showUpdateState(state) {
+  if (!state || typeof state !== 'object') return;
+  updateStateRevision++; latestUpdateState = { ...state };
   const messages = { idle: 'Updates are checked after startup.', checking: 'Checking for updates...', none: 'FreqX is up to date.',
     available: `FreqX ${state.latestVersion || ''} is available. Downloading...`, downloading: `Downloading update: ${Math.round(state.percent || 0)}%`,
     downloaded: 'Update verified. Restart when you are ready to install.', error: state.message || 'Update service is unavailable.', unsupported: state.message };
   if (updateState) updateState.textContent = messages[state.status] || 'Update status unavailable.';
   const install = document.getElementById('installUpdate'); if (install) install.hidden = state.status !== 'downloaded';
   setUpdatePageButton('');
+  updateNoticeUi?.update(state);
 }
+updateNoticeUi = window.FreqxUpdateNotice?.init({
+  retry: checkForUpdates,
+  install: () => window.soundmuncher.installUpdate(),
+  prepareManualOpen: () => {
+    if (!settingsOverlay || settingsOverlay.hidden) return null;
+    const focused = document.activeElement;
+    closeSettings();
+    return () => {
+      if (document.querySelector('.modal-overlay:not([hidden])')) return;
+      openSettings();
+      if (focused?.isConnected) focused.focus();
+    };
+  }
+});
 window.soundmuncher?.onUpdateState?.(showUpdateState);
-window.soundmuncher?.updateStatus?.().then(showUpdateState).catch(() => {});
+const initialUpdateRevision = updateStateRevision;
+window.soundmuncher?.updateStatus?.().then(state => {
+  if (updateStateRevision === initialUpdateRevision) showUpdateState(state);
+}).catch(() => {});
 document.getElementById('installUpdate')?.addEventListener('click', async () => {
   const result = await window.soundmuncher.installUpdate();
   if (!result.ok && updateState) updateState.textContent = result.message || 'Update installation is unavailable.';

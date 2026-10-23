@@ -18,38 +18,71 @@ async function verifyDownload(info) {
   if (bytes !== stat.size || !timingSafeEqual(digest.digest(), Buffer.from(entry.sha512, 'base64'))) throw new Error('Update checksum failed.');
 }
 function createUpdateClient({ app, getWindow, updater, config, portable = false }) {
-  let state = { status: 'idle', currentVersion: app.getVersion() }; let checking; let ready = false;
+  let state = { status: 'idle', currentVersion: app.getVersion() }; let checking; let ready = false; let verificationGeneration = 0;
+  let stopChecks = () => {};
   const supported = isPackagedApp(app) && process.platform === 'win32' && !portable;
   const notify = next => {
     state = { ...state, ...next }; const window = getWindow();
-    if (window && !window.isDestroyed()) window.webContents.send('app:update-state', state);
+    if (window && !window.isDestroyed() && !window.webContents.isDestroyed?.()) {
+      // A renderer can close between the lifecycle check and IPC delivery. The
+      // replacement renderer retrieves the retained state through updateStatus.
+      try { window.webContents.send('app:update-state', state); } catch {}
+    }
   };
+  const invalidate = () => { ready = false; return ++verificationGeneration; };
+  const failed = () => { invalidate(); notify({ status: 'error', message: 'Update service is unavailable. Try again later.' }); };
   if (supported) {
     if (config?.provider !== 'github' || !/^[A-Za-z0-9_.-]+$/.test(config.owner || '') || !/^[A-Za-z0-9_.-]+$/.test(config.repo || '')) throw new Error('Invalid trusted update configuration.');
     updater.setFeedURL({ provider: 'github', owner: config.owner, repo: config.repo, private: false, releaseType: 'release' });
     updater.autoDownload = true; updater.autoInstallOnAppQuit = false; updater.allowPrerelease = false; updater.allowDowngrade = false; updater.logger = null;
-    updater.on('checking-for-update', () => notify({ status: 'checking' }));
-    updater.on('update-not-available', () => notify({ status: 'none', updateAvailable: false }));
+    updater.on('checking-for-update', () => { invalidate(); notify({ status: 'checking' }); });
+    updater.on('update-not-available', () => { invalidate(); notify({ status: 'none', updateAvailable: false }); });
     updater.on('update-available', info => {
-      if (!/^\d+\.\d+\.\d+$/.test(info.version)) { ready = false; notify({ status: 'error', message: 'Invalid release version.' }); return; }
-      ready = false; notify({ status: 'available', updateAvailable: true, latestVersion: info.version });
+      invalidate();
+      if (!/^\d+\.\d+\.\d+$/.test(info.version)) { notify({ status: 'error', message: 'Invalid release version.' }); return; }
+      notify({ status: 'available', updateAvailable: true, latestVersion: info.version });
     });
     updater.on('download-progress', progress => notify({ status: 'downloading', percent: Math.min(100, Math.max(0, Number(progress.percent) || 0)) }));
     updater.on('update-downloaded', info => {
-      ready = false;
-      verifyDownload(info).then(() => { ready = true; notify({ status: 'downloaded', latestVersion: info.version, message: 'Update verified. Restart to install.' }); })
-        .catch(() => notify({ status: 'error', message: 'Update verification failed. Installation is blocked.' }));
+      const generation = invalidate();
+      verifyDownload(info).then(() => {
+        if (generation !== verificationGeneration) return;
+        ready = true; notify({ status: 'downloaded', latestVersion: info.version, message: 'Update verified. Restart to install.' });
+      }).catch(() => {
+        if (generation === verificationGeneration) notify({ status: 'error', message: 'Update verification failed. Installation is blocked.' });
+      });
     });
-    updater.on('error', () => { ready = false; notify({ status: 'error', message: 'Update service is unavailable. Try again later.' }); });
+    updater.on('error', failed);
   }
-  return {
+  const client = {
     status: () => ({ ...state }),
+    startChecks(timers = globalThis) {
+      stopChecks();
+      if (!supported) return () => {};
+      let stopped = false, timer;
+      const schedule = delay => { timer = timers.setTimeout(poll, delay); timer.unref?.(); };
+      const poll = () => {
+        if (stopped) return;
+        // Keep a downloaded update ready to install and avoid disturbing a
+        // transfer already in progress when a periodic check becomes due.
+        if (!['checking', 'available', 'downloading', 'downloaded'].includes(state.status)) void client.check();
+        schedule(desktopConfig.updater.checkIntervalMs);
+      };
+      stopChecks = () => { stopped = true; timers.clearTimeout(timer); };
+      schedule(desktopConfig.updater.startupDelayMs);
+      return stopChecks;
+    },
     async check() {
       if (!supported) return { ok: false, status: 'unsupported', message: 'Automatic updates require an installed Windows release. Portable and development builds update manually.' };
-      if (!checking) checking = updater.checkForUpdates().catch(() => { ready = false; notify({ status: 'error', message: 'Update service is unavailable. Try again later.' }); }).finally(() => { checking = null; });
+      if (!checking) checking = Promise.resolve().then(() => updater.checkForUpdates()).then(result => {
+        // Checking resolves before auto-download finishes. Observe its separate
+        // rejection without holding the settings Check button until it downloads.
+        if (result?.downloadPromise) void Promise.resolve(result.downloadPromise).catch(failed);
+      }).catch(failed).finally(() => { checking = null; });
       await checking; return { ok: state.status !== 'error', ...state };
     },
-    install() { if (!ready || state.status !== 'downloaded') return { ok: false, message: 'No verified update is ready.' }; ready = false; updater.quitAndInstall(false, true); return { ok: true }; }
+    install() { if (!ready || state.status !== 'downloaded') return { ok: false, message: 'No verified update is ready.' }; invalidate(); updater.quitAndInstall(false, true); return { ok: true }; }
   };
+  return client;
 }
 module.exports = { createUpdateClient, verifyDownload };
