@@ -456,6 +456,12 @@ let discoverPreviewGain = null;
 let discoverPreviewGeneration = 0;
 let discoverPreviewEnded;
 let replayUi;
+let phoneRemoteUi;
+let phoneRemoteEnabled = false;
+let phoneRemoteStateTimer;
+const phoneRemoteSoundIds = new Map();
+const phoneRemoteSoundPaths = new Map();
+const phoneRemotePendingCommands = new Map();
 let replayPreviewSource = null;
 let replayPreviewGeneration = 0;
 let replayPreviewEnded;
@@ -1477,6 +1483,7 @@ function renderLibraryEmptyState(hasLibraryItems) {
 }
 
 function syncSoundPlaybackVisuals() {
+  schedulePhoneRemoteState();
   const activePaths = new Set(Array.from(activeSoundNodes)
     .filter((entry) => !entry.stopped)
     .map((entry) => entry.itemPath));
@@ -1489,6 +1496,7 @@ function syncSoundPlaybackVisuals() {
 }
 
 function renderImportedLibrary() {
+  schedulePhoneRemoteState();
   if (!importedList) {
     return;
   }
@@ -2812,10 +2820,11 @@ async function getClipLoudnessGain(buffer, trimStart, trimEnd) {
 }
 
 async function playImportedSound(item, options = {}) {
+  if (options.signal?.aborted) return { ok: false, error: 'Playback was canceled.' };
   const metadata = getSoundMetadata(item);
   if (metadata.playbackMode === "once" && hasActiveSoundForPath(item.path)) {
     setLibraryState(`${metadata.name} is already playing.`);
-    return;
+    return { ok: true };
   }
 
   if (metadata.playbackMode === "restart") {
@@ -2825,19 +2834,21 @@ async function playImportedSound(item, options = {}) {
   if (metadata.playbackMode === "loop" && hasActiveSoundForPath(item.path)) {
     stopSoundsByPath(item.path);
     nowPlaying.textContent = `${metadata.name} loop stopped`;
-    return;
+    return { ok: true };
   }
 
   // Reserve playback before either engine startup or decoding can yield.
   const request = { itemPath: item.path, cancelled: false, autoPttEpoch: window.soundmuncher?.beginAutoPtt ? autoPttLeaseEpoch : 0, autoPttLease: null };
+  const cancel = () => { request.cancelled = true; if (request.autoPttLease) endAutoPttLease(request.autoPttLease); };
+  options.signal?.addEventListener('abort', cancel, { once: true });
   let entry;
   pendingSoundStarts.add(request);
   try {
     await setupMixer({ requestMic: false, routeOutput: false });
-    if (request.cancelled) return;
+    if (request.cancelled) return { ok: false, error: 'Playback was canceled.' };
 
     const buffer = await decodeImportedAudio(item);
-    if (request.cancelled) return;
+    if (request.cancelled) return { ok: false, error: 'Playback was canceled.' };
     const trimStart = Math.min(metadata.trimStart, Math.max(0, buffer.duration - 0.01));
     const trimEnd = Math.min(metadata.trimEnd, Math.max(0, buffer.duration - trimStart - 0.01));
     const playableDuration = Math.max(0.01, buffer.duration - trimStart - trimEnd);
@@ -2845,13 +2856,13 @@ async function playImportedSound(item, options = {}) {
     if (isMatchClipLoudnessEnabled && metadata.matchLoudness) {
       setLibraryState(`Balancing ${metadata.name}…`);
       loudnessGain = await getClipLoudnessGain(buffer, trimStart, trimEnd);
-      if (request.cancelled) return;
+      if (request.cancelled) return { ok: false, error: 'Playback was canceled.' };
       if (!isMatchClipLoudnessEnabled) loudnessGain = 1;
     }
     const clipVolume = metadata.volume * loudnessGain;
     let autoPttLease = null;
     if (options.autoPtt !== false && window.soundmuncher?.beginAutoPtt) autoPttLease = await beginAutoPttForSound(request, metadata.playbackMode === "loop" ? 0 : playableDuration * 1000, metadata.volume);
-    if (request.cancelled) return;
+    if (request.cancelled) return { ok: false, error: 'Playback was canceled.' };
     const source = audioContext.createBufferSource();
     const outputGain = audioContext.createGain();
 
@@ -2891,10 +2902,13 @@ async function playImportedSound(item, options = {}) {
 
     nowPlaying.textContent = metadata.name;
     if (isMatchClipLoudnessEnabled && metadata.matchLoudness) setLibraryState(`Playing ${metadata.name} with matched loudness.`);
+    return { ok: true };
   } catch (error) {
     if (entry) stopTrackedSound(entry);
     if (!request.cancelled) setLibraryState(`Could not play ${item.name}. ${mixerGraphFailed ? "Audio protection could not start. Restart Freqx and try again." : ""}`.trim());
+    return { ok: false, error: request.cancelled ? 'Playback was canceled.' : `Could not play ${metadata.name}. Check the sound on the desktop.` };
   } finally {
+    options.signal?.removeEventListener('abort', cancel);
     if (request.autoPttLease) endAutoPttLease(request.autoPttLease);
     pendingSoundStarts.delete(request);
   }
@@ -3313,6 +3327,7 @@ function updateMixStateText() {
 }
 
 function updateMixerGains() {
+  schedulePhoneRemoteState();
   if (window.soundmuncher?.releaseAutoPtt && (Number(masterGainSlider.value) <= 0 || Number(soundGainSlider.value) <= 0)) releaseAllAutoPttLeases();
   if (!audioContext || !micGainNode || mixerGraphFailed) {
     return;
@@ -4883,6 +4898,82 @@ function initializeReplay() {
     }, true);
   });
 }
+
+function schedulePhoneRemoteState() {
+  if (!phoneRemoteEnabled || phoneRemoteStateTimer) return;
+  phoneRemoteStateTimer = setTimeout(() => {
+    phoneRemoteStateTimer = null;
+    if (phoneRemoteEnabled) publishPhoneRemoteState();
+  }, 50);
+}
+
+function publishPhoneRemoteState() {
+  if (!phoneRemoteEnabled) return;
+  const remoteBoards = boards.slice(0, 128);
+  const paths = new Set(importedLibraryItems.map(item => item.path));
+  for (const [itemPath, id] of phoneRemoteSoundIds) if (!paths.has(itemPath)) { phoneRemoteSoundIds.delete(itemPath); phoneRemoteSoundPaths.delete(id); }
+  const sounds = importedLibraryItems.slice(0, 4096).flatMap(item => {
+    const metadata = getSoundMetadata(item);
+    if (!remoteBoards.includes(metadata.board)) return [];
+    let id = phoneRemoteSoundIds.get(item.path);
+    if (!id) { id = crypto.randomUUID(); phoneRemoteSoundIds.set(item.path, id); phoneRemoteSoundPaths.set(id, item.path); }
+    return [{ id, title: String(metadata.name).replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 180) || 'Untitled sound', board: metadata.board, color: metadata.color, playing: Array.from(activeSoundNodes).some(entry => entry.itemPath === item.path && !entry.stopped), favorite: Boolean(metadata.favorite) }];
+  });
+  window.soundmuncher.publishPhoneRemoteState({ boards: remoteBoards, selectedBoard: remoteBoards.includes(selectedBoard) ? selectedBoard : '__all__', sounds, volume: Math.min(1.5, Math.max(0, Number(soundGainSlider.value))) });
+}
+
+function updatePhoneRemoteStatus(status) {
+  phoneRemoteEnabled = Boolean(status?.enabled);
+  if (!phoneRemoteEnabled) {
+    clearTimeout(phoneRemoteStateTimer); phoneRemoteStateTimer = null;
+    phoneRemoteSoundIds.clear(); phoneRemoteSoundPaths.clear();
+    for (const controller of phoneRemotePendingCommands.values()) controller.abort();
+    phoneRemotePendingCommands.clear();
+  } else schedulePhoneRemoteState();
+  phoneRemoteUi?.update(status);
+}
+
+async function executePhoneRemoteCommand({ id, command } = {}) {
+  if (typeof id !== 'string' || !command || !phoneRemoteEnabled) return;
+  const controller = new AbortController(); phoneRemotePendingCommands.set(id, controller);
+  let result = { ok: false, error: 'That control is no longer available.' };
+  try {
+    if (command.type === 'play') {
+      const itemPath = phoneRemoteSoundPaths.get(command.soundId);
+      const item = importedLibraryItems.find(candidate => candidate.path === itemPath);
+      if (item) result = await playImportedSound(item, { signal: controller.signal });
+    } else if (command.type === 'stop-all') {
+      stopAllSounds(); result = { ok: true };
+    } else if (command.type === 'volume' && Number.isFinite(command.value) && command.value >= 0 && command.value <= 1.5) {
+      soundGainSlider.value = String(command.value); updateGainLabels(); saveMixerSettings(); updateMixerGains(); result = { ok: true };
+    } else if (command.type === 'board' && (command.board === '__all__' || boards.includes(command.board))) {
+      selectedBoard = command.board; saveLibraryView(); renderImportedLibrary(); result = { ok: true };
+    }
+  } catch { result = { ok: false, error: 'The desktop could not complete that control.' }; }
+  finally {
+    phoneRemotePendingCommands.delete(id);
+    if (controller.signal.aborted) result = { ok: false, error: 'The control was canceled.' };
+    if (phoneRemoteEnabled) publishPhoneRemoteState();
+    window.soundmuncher.acknowledgePhoneRemoteCommand({ id, ...result });
+  }
+}
+
+function initializePhoneRemote() {
+  if (!window.soundmuncher?.phoneRemoteStatus) return;
+  phoneRemoteUi = window.FreqxPhoneRemoteUi?.init({
+    status: () => window.soundmuncher.phoneRemoteStatus(),
+    start: options => window.soundmuncher.startPhoneRemote(options),
+    stop: () => window.soundmuncher.stopPhoneRemote(),
+    rotate: options => window.soundmuncher.rotatePhoneRemotePairing(options),
+    disconnect: () => window.soundmuncher.disconnectPhoneRemotes(),
+    onStatus: updatePhoneRemoteStatus,
+    beforeOpen: closeSettings, afterClose: openSettings
+  });
+  window.soundmuncher.onPhoneRemoteStatus(updatePhoneRemoteStatus);
+  window.soundmuncher.onPhoneRemoteCommand(payload => { void executePhoneRemoteCommand(payload); });
+  window.soundmuncher.onPhoneRemoteCommandCanceled(id => phoneRemotePendingCommands.get(id)?.abort());
+  window.soundmuncher.phoneRemoteStatus().then(updatePhoneRemoteStatus).catch(() => {});
+}
 window.addEventListener('freqx-cloud-preview', event => {
   previewDiscoverSound(event.detail.id, () => {}).catch(() => setLibraryState('Cloud preview is unavailable.'));
 });
@@ -4977,6 +5068,7 @@ async function initializeConfiguredApp() {
   })
   });
   initializeReplay();
+  initializePhoneRemote();
 
   await initializeApp();
 }

@@ -16,6 +16,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function main() {
   const checkVoicePresets = process.argv.includes('--voice-presets');
   const checkReplay = process.argv.includes('--replay');
+  const checkPhoneRemote = process.argv.includes('--phone-remote');
   const checkUpdates = process.argv.includes('--updates');
   const checkUpdateNotice = process.argv.includes('--update-notice');
   if (checkUpdates && checkUpdateNotice) throw new Error('Run live updates and the offline popup smoke separately.');
@@ -243,6 +244,15 @@ async function main() {
         };
       }
       let replayNativeStarts = 0;
+      if (${checkPhoneRemote}) {
+        const { PhoneRemoteService } = require('./runtime/phone-remote.cjs');
+        const startRemote = PhoneRemoteService.prototype.start;
+        PhoneRemoteService.prototype.enumerateAddresses = () => [{ address: '127.0.0.1', name: 'Isolated loopback fixture' }];
+        PhoneRemoteService.prototype.start = function(...args) {
+          this.allowLoopback = true; this.bindHost = '127.0.0.1';
+          return startRemote.apply(this, args);
+        };
+      }
       if (${checkReplay}) {
         const { ReplayCaptureService } = require('./runtime/replay-capture.cjs');
         ReplayCaptureService.prototype.list = async () => ({ ok: true, processCaptureSupported: true, sources: [] });
@@ -299,6 +309,9 @@ async function main() {
               const bytes = fs.readFileSync(savedPath);
               require('./runtime/replay-capture.cjs').validateReplayWav(bytes);
               state.replay.bytes = bytes.length;
+            }
+            if (${checkPhoneRemote}) {
+              state.phoneRemote = await (${checkPhoneRemote ? require('./phone-remote-smoke.cjs').run.toString() : 'async () => ({})'})({ window, BrowserWindow, directory, fs, path });
             }
             if (${checkUpdates}) {
               state.update = await window.webContents.executeJavaScript(${JSON.stringify(updateSmokeSource)});
@@ -387,6 +400,11 @@ async function main() {
       assert.equal(report.replay.metadata.board, report.replay.board);
       assert.ok(report.replay.bytes > 44 + 480 * 4);
       console.log('PASS packaged Replay records the synthetic mix, trims and saves a valid WAV through production main/preload/renderer.');
+    }
+    if (checkPhoneRemote) {
+      assert.equal(report.phoneRemote?.passed, true);
+      assert.deepEqual(report.phoneRemote.phoneErrors, []);
+      console.log('PASS phone browser pairs through production main/preload/renderer, plays audio, switches boards, changes volume, stops sounds, and revokes sessions.');
     }
     if (checkUpdates) {
       assert.equal(report.update.status, 'downloaded', JSON.stringify(report.update));

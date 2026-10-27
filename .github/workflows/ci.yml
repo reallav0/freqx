@@ -24,6 +24,7 @@ jobs:
       - run: npm run test:unit
       - run: npm run test:auth-desktop
       - run: npm run test:recovery
+      - run: npm run test:phone-remote-desktop
       - run: npm run test:driver
       - run: npm run test:voice-security
       - run: npm run test:mic-isolation
@@ -41,6 +42,8 @@ jobs:
         run: node tests/packaged-startup.cjs --voice-presets --replay --update-notice
       - name: Packaged Discover regression
         run: node tests/discover-library.cjs --app-root dist/win-unpacked/resources/app.asar
+      - name: Packaged phone remote regression
+        run: node tests/packaged-startup.cjs --phone-remote
       - name: Packaged microphone regression
         run: node tests/mic-isolation.cjs --app-root dist/win-unpacked/resources/app.asar
       - name: Packaged voice preset regression

@@ -50,6 +50,16 @@ contextBridge.exposeInMainWorld("soundmuncher", {
   onReplayCaptureData: handler => { const listener = (_event, packet) => handler(packet); ipcRenderer.on('replay:data', listener); return () => ipcRenderer.removeListener('replay:data', listener); },
   saveReplayClip: input => ipcRenderer.invoke('replay:save', input),
   exportReplayClip: input => ipcRenderer.invoke('replay:export', input),
+  phoneRemoteStatus: () => ipcRenderer.invoke('phone-remote:status'),
+  startPhoneRemote: (options = {}) => ipcRenderer.invoke('phone-remote:start', options),
+  stopPhoneRemote: () => ipcRenderer.invoke('phone-remote:stop'),
+  rotatePhoneRemotePairing: (options = {}) => ipcRenderer.invoke('phone-remote:rotate', options),
+  disconnectPhoneRemotes: () => ipcRenderer.invoke('phone-remote:disconnect-all'),
+  publishPhoneRemoteState: state => ipcRenderer.send('phone-remote:publish', state),
+  acknowledgePhoneRemoteCommand: result => ipcRenderer.send('phone-remote:acknowledge', result),
+  onPhoneRemoteStatus: handler => { const listener = (_, status) => handler(status); ipcRenderer.on('phone-remote:status', listener); return () => ipcRenderer.removeListener('phone-remote:status', listener); },
+  onPhoneRemoteCommand: handler => { const listener = (_, command) => handler(command); ipcRenderer.on('phone-remote:command', listener); return () => ipcRenderer.removeListener('phone-remote:command', listener); },
+  onPhoneRemoteCommandCanceled: handler => { const listener = (_, id) => handler(id); ipcRenderer.on('phone-remote:cancel-command', listener); return () => ipcRenderer.removeListener('phone-remote:cancel-command', listener); },
   onReferenceData: handler => {
     const listener = (event, packet) => {
       try { handler(packet); } finally { if (packet?.type === 'pcm') ipcRenderer.send('audio:reference-ack', packet.id); }

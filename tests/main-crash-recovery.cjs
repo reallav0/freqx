@@ -19,7 +19,7 @@ const checks = [];
 
 function fixture(options = {}) {
   const calls = {
-    nativeLoads: [], starts: 0, restarts: [], stops: [], recoveries: [], autoPttStops: 0, voiceOwnersStopped: [], voiceStops: 0, replayOwnersStopped: [], replayStops: 0,
+    nativeLoads: [], starts: 0, restarts: [], stops: [], recoveries: [], autoPttStops: 0, voiceOwnersStopped: [], voiceStops: 0, replayOwnersStopped: [], replayStops: 0, phoneRemoteStops: 0,
     exits: [], quits: 0, windows: [], writes: [], sends: [], referenceRequests: [], updateConfigs: [], switches: [], hardwareDisabled: 0,
   };
   const timers = [];
@@ -158,6 +158,11 @@ function fixture(options = {}) {
         stopOwner(owner) { calls.replayOwnersStopped.push(owner); }
         stopAll() { calls.replayStops++; }
       } };
+      if (name === './runtime/phone-remote.cjs') return { PhoneRemoteService: class {
+        status() { return { enabled: false, pairingUrl: '' }; }
+        stop() { calls.phoneRemoteStops++; return Promise.resolve(this.status()); }
+      } };
+      if (name === 'qrcode-generator') return () => { throw new Error('Unexpected pairing QR generation in recovery fixture'); };
       if (name === './runtime/app-mode.cjs') return require('../runtime/app-mode.cjs');
       if (name === './runtime/public-library.cjs') return {
         PublicLibrary: class {
@@ -339,7 +344,7 @@ async function main() {
     assert.deepEqual(subject.window.loaded, ['index.html']);
   });
 
-  await check('voice conversion and Replay stop on renderer replacement, failure, shutdown and fatal main errors', async () => {
+  await check('voice conversion, Replay and phone remote stop on renderer replacement, failure, shutdown and fatal main errors', async () => {
     for (const event of ['navigation', 'destroyed', 'render-process-gone', 'unresponsive']) {
       const subject = fixture(); await subject.ready();
       const owner = subject.window.webContents;
@@ -348,6 +353,7 @@ async function main() {
       else owner.emit(event, {}, { reason: 'crashed' });
       assert.deepEqual(subject.calls.voiceOwnersStopped, [owner], event);
       assert.deepEqual(subject.calls.replayOwnersStopped, [owner], event);
+      assert.ok(subject.calls.phoneRemoteStops > 0, event);
     }
     for (const event of ['uncaughtException', 'unhandledRejection', 'before-quit', 'will-quit', 'session-end']) {
       const subject = fixture(); await subject.ready();
@@ -356,6 +362,7 @@ async function main() {
       else subject.process.emit(event, new Error('Fixture fatal main error'));
       assert.equal(subject.calls.voiceStops, 1, event);
       assert.equal(subject.calls.replayStops, 1, event);
+      assert.ok(subject.calls.phoneRemoteStops > 0, event);
     }
   });
 

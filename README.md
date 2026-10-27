@@ -14,6 +14,7 @@ https://github.com/user-attachments/assets/40e06b0f-d9c8-447d-a0c6-7e8856d06956
 
 - **Find your next favorite sound.** Browse and preview the public library in Discover, then add sounds to your boards. Import your own audio files, too.
 - **Hit the moment.** Play from a pad or use keybinds while you're in a game or call. Pin favorites, search your collection, and stop every sound with one action.
+- **Keep your board within reach.** Open Settings → Phone remote, enable it, and scan the QR code with your phone on the same Wi-Fi. Use the browser to trigger sounds, switch boards, adjust soundboard volume, or stop playback. The local server runs only while enabled; no phone app or account is needed. See [phone remote setup](docs/implementation/phone-remote.md).
 - **Play through push-to-talk.** Optional Auto push-to-talk holds your chosen talk key while soundboard clips play in a selected app. Choose the app and match its talk key in the mixer. It works only while that app is focused, releases when clips stop or focus changes, and leaves preview and test-tone playback alone.
 - **Shape every clip.** Adjust volume, trim, fades, and color. Choose overlap, restart, play once, or toggle loop to suit the sound.
 - **Keep your voice clear.** Choose Light (RNNoise), High quality (local DeepFilterNet3), or Off, with adjustable strength to reduce microphone background noise before your voice joins the mix. Soundboard clips bypass isolation, and microphone audio is not uploaded for processing.
