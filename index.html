@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="discover.css" />
     <link rel="stylesheet" href="replay.css" />
+    <link rel="stylesheet" href="phone-remote.css" />
   </head>
   <body>
     <main class="app-shell">
@@ -571,6 +572,10 @@
           <button id="closeSettings" class="mixer-action compact-action" type="button">Close</button>
         </div>
         <div class="settings-grid">
+          <div class="phone-remote-setting">
+            <div><span class="update-title">Phone remote</span><p class="routing-tip">Play your pads from your phone's browser.</p><p id="phoneRemoteSettingState" class="phone-remote-setting-state">Off</p></div>
+            <button id="openPhoneRemote" class="mixer-action compact-action" type="button">Connect a phone</button>
+          </div>
           <label class="setting-toggle prominent-toggle" for="compactModeToggle">
             <input id="compactModeToggle" type="checkbox" />
             <span>Compact mode</span>
@@ -675,6 +680,22 @@
         </div>
       </div>
     </section>
+    <dialog id="phoneRemoteDialog" class="phone-remote-dialog" aria-labelledby="phoneRemoteTitle" aria-describedby="phoneRemoteDescription">
+      <div class="modal-head">
+        <div><h2 id="phoneRemoteTitle">Phone remote</h2><p id="phoneRemoteDescription" class="routing-tip">Your soundboard, within reach. Connect your phone to the same Wi-Fi as this computer.</p></div>
+        <button id="closePhoneRemote" class="mixer-action compact-action" type="button" aria-label="Close phone remote">Close</button>
+      </div>
+      <div class="phone-remote-status-row"><span id="phoneRemoteState" class="phone-remote-state" role="status">Remote off</span><button id="phoneRemoteEnable" class="mixer-action primary-action compact-action" type="button" aria-pressed="false">Enable phone remote</button></div>
+      <div id="phoneRemoteOff" class="phone-remote-off"><strong>A second screen for your sounds.</strong><p>Enable the remote, scan the code, and play. Your phone needs only a browser.</p></div>
+      <div id="phoneRemotePairing" class="phone-remote-pairing" hidden>
+        <label id="phoneRemoteNetworkField" class="form-field" for="phoneRemoteNetwork" hidden><span>Pairing network</span><select id="phoneRemoteNetwork" class="device-select"></select></label>
+        <div class="phone-remote-qr-panel"><strong>Scan with your phone camera</strong><img id="phoneRemoteQr" class="phone-remote-qr" alt="QR code to pair this soundboard with your phone" width="210" height="210" /><p id="phoneRemoteExpiry" class="phone-remote-expiry"></p></div>
+        <div class="form-field"><label for="phoneRemoteLink">Or open this link on your phone</label><div class="phone-remote-link-row"><input id="phoneRemoteLink" class="text-input" type="text" readonly spellcheck="false" /><button id="phoneRemoteCopy" class="mixer-action compact-action" type="button">Copy link</button></div></div>
+        <div class="phone-remote-actions"><button id="phoneRemoteRefresh" class="mixer-action quiet-action compact-action" type="button">Refresh pairing link</button><button id="phoneRemoteDisconnect" class="mixer-action quiet-action compact-action" type="button">Disconnect all phones</button></div>
+      </div>
+      <p id="phoneRemoteFeedback" class="phone-remote-feedback" role="status" aria-live="polite"></p>
+      <p class="phone-remote-note">Use a private network you trust. Anyone with the pairing link can control your sounds. If Windows asks, allow Freqx on private networks. Turning off the remote disconnects every phone. The remote stays off after you restart Freqx.</p>
+    </dialog>
     <script src="runtime/config-schema.js"></script>
     <script src="runtime/desktop-config.js"></script>
     <script src="audio/loopback-reference.js"></script>
@@ -686,6 +707,7 @@
     <script src="runtime/catalog-id.js"></script>
     <script src="discover.js"></script>
     <script src="replay.js"></script>
+    <script src="phone-remote.js"></script>
     <script src="update-notice.js"></script>
     <script src="renderer.js"></script>
     <script src="account.js"></script>

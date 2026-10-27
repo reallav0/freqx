@@ -27,6 +27,9 @@ const { downloadAudioLink } = require('./runtime/audio-link.cjs');
 const loopbackService = new LoopbackService({ appRoot: __dirname });
 const { ReplayCaptureService, validateReplayWav } = require('./runtime/replay-capture.cjs');
 const replayCaptureService = new ReplayCaptureService({ appRoot: __dirname });
+const { PhoneRemoteService } = require('./runtime/phone-remote.cjs');
+const { randomUUID } = require('node:crypto');
+const qrcode = require('qrcode-generator');
 const publicLibrary = new PublicLibrary({ appRoot: __dirname, development: !isPackaged, tempRoot: () => path.join(app.getPath('userData'), 'library-import-tmp') });
 const audioLinkService = new AudioLinkService({ download: (url, options) => downloadAudioLink(url, { ...options, toolsCache: path.join(app.getPath('userData'), 'link-tools') }), BrowserWindow, session, appRoot: __dirname,
   tempRoot: () => path.join(app.getPath('userData'), 'audio-link-tmp'),
@@ -42,6 +45,45 @@ let portAudio = null;
 let portAudioLoadAttempted = false;
 let globalKeybindRegistrations = [];
 let mainWindow;
+const phoneRemoteCommands = new Map();
+let phoneRemoteQrUrl = '', phoneRemoteQrData = '';
+const phoneRemoteService = new PhoneRemoteService({
+  onCommand: command => new Promise(resolve => {
+    const owner = mainWindow?.webContents;
+    if (!owner || owner.isDestroyed() || !phoneRemoteService.status().enabled || stripUrlState(owner.getURL()) !== getRendererUrl('index.html')) { resolve({ ok: false, error: 'The desktop is unavailable.' }); return; }
+    const id = randomUUID();
+    const timeout = setTimeout(() => {
+      phoneRemoteCommands.delete(id); resolve({ ok: false, error: 'The desktop did not respond. Try again.' });
+      if (!owner.isDestroyed()) owner.send('phone-remote:cancel-command', id);
+    }, 9000);
+    timeout.unref();
+    phoneRemoteCommands.set(id, { owner, resolve, timeout });
+    owner.send('phone-remote:command', { id, command });
+  }),
+  onStatus: status => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.send('phone-remote:status', phoneRemoteDesktopStatus(status));
+  }
+});
+
+function phoneRemoteDesktopStatus(status = phoneRemoteService.status()) {
+  if (status.pairingUrl !== phoneRemoteQrUrl) {
+    phoneRemoteQrUrl = status.pairingUrl; phoneRemoteQrData = '';
+    if (phoneRemoteQrUrl) {
+      const code = qrcode(0, 'M'); code.addData(phoneRemoteQrUrl); code.make();
+      phoneRemoteQrData = `data:image/svg+xml;base64,${Buffer.from(code.createSvgTag({ cellSize: 5, margin: 20, scalable: true })).toString('base64')}`;
+    }
+  }
+  return { ...status, qrDataUrl: phoneRemoteQrData };
+}
+
+function stopPhoneRemote() {
+  for (const [id, pending] of phoneRemoteCommands) {
+    clearTimeout(pending.timeout); pending.resolve({ ok: false, error: 'Phone remote was stopped.' });
+    if (!pending.owner.isDestroyed()) pending.owner.send('phone-remote:cancel-command', id);
+  }
+  phoneRemoteCommands.clear();
+  return phoneRemoteService.stop();
+}
 let authProtocolHandler = null;
 let keyHook = null;
 let keyHookLoadAttempted = false;
@@ -179,6 +221,7 @@ function registerProcessCrashHandlers() {
 
 function handleMainProcessCrash(type, error) {
   stopUpdateChecks();
+  void stopPhoneRemote();
   replayCaptureService.stopAll();
   autoPttService.stop();
   voiceConversionService.stopAll();
@@ -188,6 +231,7 @@ function handleMainProcessCrash(type, error) {
 
 function scheduleCrashRecovery(report) {
   if (isQuitting || recoveryScheduled) return;
+  void stopPhoneRemote();
   recoveryScheduled = true;
   // Electron 36 can crash its main process when navigation happens inside
   // render-process-gone. Leave that notification before touching the window.
@@ -1364,9 +1408,9 @@ function createWindow(options = {}) {
   });
   const referenceOwner = mainWindow.webContents;
   referenceOwner.on('did-start-navigation', (event, url, inPlace, isMainFrame) => {
-    if (isMainFrame && !inPlace) { loopbackService.stopOwner(referenceOwner); replayCaptureService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); voiceConversionService.stopOwner(referenceOwner); }
+    if (isMainFrame && !inPlace) { void stopPhoneRemote(); loopbackService.stopOwner(referenceOwner); replayCaptureService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); voiceConversionService.stopOwner(referenceOwner); }
   });
-  referenceOwner.on('destroyed', () => { loopbackService.stopOwner(referenceOwner); replayCaptureService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); voiceConversionService.stopOwner(referenceOwner); });
+  referenceOwner.on('destroyed', () => { void stopPhoneRemote(); loopbackService.stopOwner(referenceOwner); replayCaptureService.stopOwner(referenceOwner); audioLinkService.cancelOwner(referenceOwner); autoPttService.stop(); voiceConversionService.stopOwner(referenceOwner); });
 
   mainWindow.webContents.on("did-finish-load", () => {
     isShowingCrashScreen = isCrashScreenUrl(mainWindow.webContents.getURL());
@@ -1396,6 +1440,7 @@ function createWindow(options = {}) {
   });
 
   mainWindow.webContents.on("render-process-gone", (event, details) => {
+    void stopPhoneRemote();
     replayCaptureService.stopOwner(referenceOwner);
     autoPttService.stop();
     voiceConversionService.stopOwner(referenceOwner);
@@ -1413,6 +1458,7 @@ function createWindow(options = {}) {
 
   let unresponsiveTimer = null;
   mainWindow.on("unresponsive", () => {
+    void stopPhoneRemote();
     replayCaptureService.stopOwner(referenceOwner);
     autoPttService.stop();
     voiceConversionService.stopOwner(referenceOwner);
@@ -1430,6 +1476,7 @@ function createWindow(options = {}) {
   mainWindow.on("closed", () => clearTimeout(unresponsiveTimer));
   mainWindow.on("session-end", () => {
     stopUpdateChecks();
+    void stopPhoneRemote();
     replayCaptureService.stopAll();
     autoPttService.stop();
     voiceConversionService.stopAll();
@@ -1738,6 +1785,33 @@ function registerAudioIpc() {
     assertTrustedIpcSender(event);
     if (event.sender !== mainWindow?.webContents || event.senderFrame !== event.sender.mainFrame || stripUrlState(event.senderFrame?.url) !== getRendererUrl('index.html')) throw new Error('Link import requires the main app frame.');
   };
+  ipcMain.handle('phone-remote:status', event => { referenceSender(event); return phoneRemoteDesktopStatus(); });
+  ipcMain.handle('phone-remote:start', async (event, input = {}) => {
+    referenceSender(event);
+    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => key !== 'address') || input.address !== undefined && typeof input.address !== 'string') throw new Error('Invalid phone remote network.');
+    return phoneRemoteDesktopStatus(await phoneRemoteService.start(input));
+  });
+  ipcMain.handle('phone-remote:stop', async event => { referenceSender(event); return phoneRemoteDesktopStatus(await stopPhoneRemote()); });
+  ipcMain.handle('phone-remote:rotate', (event, input = {}) => {
+    referenceSender(event);
+    if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => key !== 'address') || input.address !== undefined && typeof input.address !== 'string') throw new Error('Invalid phone remote network.');
+    return phoneRemoteDesktopStatus(phoneRemoteService.rotatePairing(input));
+  });
+  ipcMain.handle('phone-remote:disconnect-all', event => { referenceSender(event); return phoneRemoteDesktopStatus(phoneRemoteService.disconnectAll()); });
+  ipcMain.on('phone-remote:publish', (event, state) => {
+    try { referenceSender(event); } catch { return; }
+    try { if (phoneRemoteService.status().enabled) phoneRemoteService.publish(state); } catch { void stopPhoneRemote(); }
+  });
+  ipcMain.on('phone-remote:acknowledge', (event, result) => {
+    try {
+      referenceSender(event);
+      if (!result || typeof result.id !== 'string' || typeof result.ok !== 'boolean') return;
+      const pending = phoneRemoteCommands.get(result.id);
+      if (!pending || pending.owner !== event.sender) return;
+      phoneRemoteCommands.delete(result.id); clearTimeout(pending.timeout);
+      pending.resolve({ ok: result.ok, error: typeof result.error === 'string' ? result.error.slice(0, 240) : undefined });
+    } catch {}
+  });
   ipcMain.handle('voice-conversion:list', (event, options) => { assertVoiceConversionSender(event); return voiceConversionService.list(options); });
   ipcMain.handle('voice-conversion:start', (event, configuration) => { assertVoiceConversionSender(event); return voiceConversionService.start(event.sender, configuration); });
   ipcMain.handle('voice-conversion:frame', (event, input) => { assertVoiceConversionSender(event); return voiceConversionService.frame(event.sender, input); });
@@ -2271,6 +2345,7 @@ if (hasSingleInstanceLock) {
 
   app.on("before-quit", () => {
     stopUpdateChecks();
+    void stopPhoneRemote();
     replayCaptureService.stopAll();
     autoPttService.stop();
     voiceConversionService.stopAll();
@@ -2282,6 +2357,7 @@ if (hasSingleInstanceLock) {
 
   app.on("will-quit", () => {
     stopUpdateChecks();
+    void stopPhoneRemote();
     replayCaptureService.stopAll();
     autoPttService.stop();
     voiceConversionService.stopAll();

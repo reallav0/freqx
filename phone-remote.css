@@ -1,0 +1,30 @@
+/* Pairing uses the existing carbon workspace; the printed QR is the focal point. */
+.phone-remote-setting { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-block: 14px; border-block: 1px solid var(--border); }
+.phone-remote-setting .routing-tip { margin-top: 4px; }
+.phone-remote-setting .mixer-action { flex-shrink: 0; }
+.phone-remote-setting-state { margin-top: 3px; color: var(--text-dim); font: 12px var(--font-mono); }
+.phone-remote-dialog { width: min(560px, calc(100vw - 40px)); max-height: calc(100dvh - 40px); margin: auto; padding: 28px; overflow: auto; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--panel); color: var(--text); box-shadow: 0 24px 80px #0007; }
+.phone-remote-dialog::backdrop { background: #0009; }
+.phone-remote-dialog .modal-head { align-items: flex-start; gap: 16px; margin-bottom: 20px; }
+.phone-remote-dialog h2 { font-size: 24px; font-weight: 600; line-height: 1.2; letter-spacing: -.5px; }
+.phone-remote-dialog .modal-head .routing-tip { margin-top: 8px; max-width: 330px; }
+.phone-remote-status-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-block: 12px 20px; }
+.phone-remote-state { color: var(--text-muted); font-size: 13px; }
+.phone-remote-state::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: var(--text-dim); }
+.phone-remote-state[data-enabled="true"]::before { background: var(--accent); }
+.phone-remote-off { padding: 28px 16px; text-align: center; background: var(--bg); border-radius: 10px; }
+.phone-remote-off strong { display: block; margin-bottom: 8px; font-size: 17px; font-weight: 600; }
+.phone-remote-off p { max-width: 320px; margin: auto; color: var(--text-muted); font-size: 13px; }
+.phone-remote-pairing { display: grid; gap: 16px; }
+.phone-remote-qr-panel { display: grid; justify-items: center; gap: 14px; padding: 24px 18px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.phone-remote-qr-panel strong { font-size: 17px; font-weight: 600; }
+.phone-remote-qr { width: 210px; height: 210px; max-width: 100%; background: #fff; border-radius: 3px; }
+.phone-remote-expiry { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
+.phone-remote-link-row { display: flex; gap: 8px; }
+.phone-remote-link-row .text-input { flex: 1; height: 38px; font: 12px var(--font-mono); }
+.phone-remote-dialog .form-field { display: grid; gap: 7px; }
+.phone-remote-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.phone-remote-feedback { min-height: 20px; margin-top: 12px; color: var(--text-muted); font-size: 13px; }
+.phone-remote-feedback[data-error="true"] { color: var(--danger); }
+.phone-remote-note { margin-top: 18px; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+@media (max-width: 520px) { .phone-remote-dialog { padding: 20px; } .phone-remote-setting { align-items: flex-start; gap: 12px; } .phone-remote-qr { width: 184px; height: 184px; } }

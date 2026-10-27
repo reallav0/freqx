@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111111" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Freqx · Phone remote</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="remote-shell">
+    <header class="remote-header">
+      <div class="brand"><span class="wordmark">FREQX<span class="brand-dot" aria-hidden="true"></span></span><span class="brand-caption">Phone remote</span></div>
+      <span id="connectionState" class="connection-state" role="status" data-status="connecting"><i aria-hidden="true"></i><span>Connecting</span></span>
+    </header>
+
+    <section id="pairingPanel" class="pairing-panel" aria-labelledby="pairingTitle" hidden>
+      <span class="section-label">Your phone. Your sounds.</span>
+      <h1 id="pairingTitle">Bring your board<br />within reach.</h1>
+      <p>Open <strong>Settings → Phone remote</strong> in Freqx on your computer. Enable the remote, then scan its QR code with your phone camera.</p>
+      <p class="muted">Keep both devices on the same Wi-Fi. Sounds play through your computer’s current mix.</p>
+      <form id="pairingForm" class="pairing-form">
+        <label for="pairingLink">Or paste the pairing link</label>
+        <input id="pairingLink" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste the link from Freqx" required />
+        <button id="pairButton" class="button primary-button" type="submit">Connect to Freqx <span aria-hidden="true">↗</span></button>
+      </form>
+      <p id="pairingFeedback" class="feedback" role="alert"></p>
+    </section>
+
+    <section id="controllerPanel" aria-label="Soundboard remote" hidden>
+      <div class="board-heading"><div><span class="section-label">Ready when you are</span><h1>Your soundboard.</h1></div><span id="soundCount" class="sound-count">00 sounds</span></div>
+      <div class="board-controls">
+        <label for="boardSelect"><span>Board</span><select id="boardSelect"><option value="__all__">All boards</option></select></label>
+        <button id="favoritesToggle" class="button favorites-button" type="button" aria-pressed="false">Favorites</button>
+      </div>
+      <label class="search-control" for="soundSearch"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span class="sr-only">Search sounds</span><input id="soundSearch" type="search" placeholder="Find a sound…" maxlength="120" autocomplete="off" /></label>
+      <p id="connectionHelp" class="connection-help" role="status" hidden>Reconnecting. Keep Freqx open and check your Wi-Fi.</p>
+      <p id="commandFeedback" class="feedback command-feedback" role="status" aria-live="polite"></p>
+      <div id="soundPads" class="sound-pads" aria-label="Sound pads"></div>
+      <div id="emptyState" class="empty-state" hidden><span aria-hidden="true">⌁</span><h2 id="emptyTitle">A little quiet here.</h2><p id="emptyCopy">Import sounds in Freqx on your computer. They’ll appear here automatically.</p></div>
+      <footer class="remote-footnote"><span>Playing through your computer</span><button id="disconnectButton" class="text-button" type="button">Disconnect</button></footer>
+    </section>
+
+    <section id="transport" class="transport" aria-label="Playback controls" hidden>
+      <div class="volume-control"><label for="soundVolume">Soundboard volume</label><output id="volumeValue" for="soundVolume">100%</output><input id="soundVolume" type="range" min="0" max="1.5" step="0.01" value="1" /></div>
+      <button id="stopAll" class="button stop-button" type="button"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Stop all sounds</button>
+    </section>
+  </main>
+</body>
+</html>
