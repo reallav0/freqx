@@ -153,7 +153,7 @@
   "devDependencies": {
     "@shiguredo/rnnoise-wasm": "2025.1.5",
     "electron": "44.5.1",
-    "electron-builder": "26.15.3",
+    "electron-builder": "26.18.0",
     "eslint": "10.11.0",
     "rcedit": "5.0.2"
   }
