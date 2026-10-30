@@ -146,7 +146,7 @@
     "@electron/get": "5.1.0"
   },
   "dependencies": {
-    "electron-updater": "6.8.9",
+    "electron-updater": "6.8.11",
     "naudiodon": "^2.3.6",
     "uiohook-napi": "^1.5.5"
   },
